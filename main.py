@@ -13,17 +13,17 @@ import matplotlib.colors as colors
 length_x = 40  # cm
 length_y = 3.2  # cm
 resolution = (4000, 320)
-dx = length_x / resolution[0]
-dy = length_y / resolution[1]
+dx = length_x / resolution[0]  # cm
+dy = length_y / resolution[1]  # cm
 swarm_num_x = 5
 swarm_num_y = 5
-swarm_member_rad = 0.16
+swarm_member_rad = 0.16  # cm
 inflow_freq = 1  # Hz
 inflow_amplitude = 30  # cm/s
 inflow_center_x = 50 * dx
 inflow_center_y = length_y / 2
 inflow_radius = 20 * dy
-viscosity = 1e-07  # N*s/cm^2
+viscosity = 1e-03  # Pa*s
 dt = 0.05  # s
 total_time = 50  # s
 
@@ -33,9 +33,8 @@ box = Box['x,y', 0:length_x, 0:length_y]
 # -------------- Swarm Generation ------------------
 swarm = []
 
-
 for i in np.linspace(35, 38, swarm_num_x):
-    for j in np.linspace(length_y/(swarm_num_y*2), length_y - length_y/(swarm_num_y*2), swarm_num_y):
+    for j in np.linspace(length_y / (swarm_num_y * 2), length_y - length_y / (swarm_num_y * 2), swarm_num_y):
         swarm.append(Obstacle(Sphere(x=i, y=j, radius=swarm_member_rad)))
 
 
@@ -44,7 +43,7 @@ def step(velocity_prev, inflow, inflow_amplitude, inflow_freq, dt, t):
     # inflow = advect.mac_cormack(inflow, velocity_prev, dt)
     velocity_tent = advect.semi_lagrangian(velocity_prev, velocity_prev, dt) + inflow_amplitude * inflow
     # inflow_component = (inflow_amplitude * 0.5 * math.cos(inflow_freq * math.pi * t) + 0.5) * inflow * dt
-    velocity_tent = diffuse.explicit(velocity_tent, viscosity, dt, substeps=100)
+    velocity_tent = diffuse.explicit(velocity_tent, viscosity, dt, substeps=10_000)
     velocity_next, pressure = fluid.make_incompressible(velocity_tent, swarm,
                                                         Solve(rel_tol=1e-05, abs_tol=1e-05, max_iterations=100_000))
     return velocity_next, pressure, inflow
@@ -81,7 +80,8 @@ pressure_box_grid = pressure_box @ inflow_grid
 # pressure_box_u = math.tensor(pressure_box_u, spatial('x,y'))
 # pressure_box_v = math.tensor(pressure_box_v, spatial('x,y'))
 # pressure_box = math.stack([pressure_box_u, pressure_box_v], channel('vector'))
-inflow = StaggeredGrid(pressure_box_grid * vec(x=1, y=0), extrapolation=velocity_boundaries, bounds=box, x=resolution[0],
+inflow = StaggeredGrid(pressure_box_grid * vec(x=1, y=0), extrapolation=velocity_boundaries, bounds=box,
+                       x=resolution[0],
                        y=resolution[1])
 vis.plot(inflow['x'], inflow['y'])
 plt.show()

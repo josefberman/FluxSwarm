@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="011fd143-0d4d-4ffe-82c4-bf547896fdff" name="Changes" comment="Radial constant inflow - not working">
+    <list default="true" id="011fd143-0d4d-4ffe-82c4-bf547896fdff" name="Changes" comment="Rectengular flow working - cm">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
@@ -23,10 +23,11 @@
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
-        <entry key="$PROJECT_DIR$" value="master" />
+        <entry key="$PROJECT_DIR$" value="constant_x" />
       </map>
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+    <option name="RESET_MODE" value="HARD" />
   </component>
   <component name="ProjectColorInfo"><![CDATA[{
   "associatedIndex": 6
@@ -115,7 +116,15 @@
       <option name="project" value="LOCAL" />
       <updated>1724920108013</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="Rectengular flow working - cm">
+      <option name="closed" value="true" />
+      <created>1724925878213</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1724925878213</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -123,7 +132,19 @@
       <map>
         <entry key="MAIN">
           <value>
-            <State />
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="origin/constant_x" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
           </value>
         </entry>
       </map>
@@ -133,6 +154,7 @@
     <MESSAGE value="Initial commit" />
     <MESSAGE value="Radial constant inflow" />
     <MESSAGE value="Radial constant inflow - not working" />
-    <option name="LAST_COMMIT_MESSAGE" value="Radial constant inflow - not working" />
+    <MESSAGE value="Rectengular flow working - cm" />
+    <option name="LAST_COMMIT_MESSAGE" value="Rectengular flow working - cm" />
   </component>
 </project>

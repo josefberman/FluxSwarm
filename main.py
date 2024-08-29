@@ -1,6 +1,7 @@
 import os
 import pickle
 
+import numpy as np
 import phi.field
 from phi.flow import *
 import matplotlib.pyplot as plt
@@ -10,12 +11,17 @@ from datetime import datetime
 # -------------- Parameter Definition -------------
 length_x = 40  # cm
 length_y = 3.2  # cm
-resolution = (1024, 255)
+resolution = (4000, 320)
+dx = length_x / resolution[0]
+dy = length_y / resolution[1]
 swarm_num_x = 5
 swarm_num_y = 5
 swarm_member_rad = 0.04
 inflow_freq = 1  # Hz
 inflow_amplitude = 0.1  # cm/s
+inflow_center_x = 50 * dx
+inflow_center_y = length_y / 2
+inflow_radius = 20 * dy
 viscosity = 0.0089  # dyne*s/cm^2
 dt = 0.05  # s
 total_time = 50  # s
@@ -34,12 +40,11 @@ swarm = []
 
 # -------------- Step Definition -------------------
 def step(velocity_prev, inflow, inflow_amplitude, inflow_freq, dt, t):
-    advection_component = advect.semi_lagrangian(velocity_prev, velocity_prev, dt)
+    inflow = advect.mac_cormack(inflow,velocity_prev, dt)
+    velocity_tent = advect.semi_lagrangian(velocity_prev, velocity_prev, dt) + inflow
     # inflow_component = (inflow_amplitude * 0.5 * math.cos(inflow_freq * math.pi * t) + 0.5) * inflow * dt
-    inflow_component = inflow * dt
-    velocity_tent = advection_component + inflow_component
-    velocity_tent = diffuse.explicit(velocity_tent, viscosity, dt, substeps=2000)
-    velocity_next, pressure = fluid.make_incompressible(velocity_tent, swarm, Solve(rel_tol=1e-03, abs_tol=1e-03))
+    velocity_tent = diffuse.explicit(velocity_tent, viscosity, dt, substeps=100)
+    velocity_next, pressure = fluid.make_incompressible(velocity_tent, swarm, Solve(rel_tol=1e-04, abs_tol=1e-04))
     return velocity_next, pressure, inflow
 
 
@@ -61,12 +66,20 @@ def plot_scalar_field_with_patches(field, box, ax, title):
 # ---- initial u and p vector field Generation ----
 velocity_boundaries = extrapolation.combine_sides(x=extrapolation.BOUNDARY, y=extrapolation.ZERO)
 velocity = StaggeredGrid(0, extrapolation=extrapolation.BOUNDARY, bounds=box, x=resolution[0], y=resolution[1])
-dx = length_x / resolution[0]
-dy = length_y / resolution[1]
-inflow_grid = StaggeredGrid(0, extrapolation=extrapolation.BOUNDARY, bounds=box, x=resolution[0], y=resolution[1])
+inflow_grid = CenteredGrid(0.0, extrapolation=extrapolation.BOUNDARY, bounds=box, x=resolution[0], y=resolution[1])
 # pressure_box = Box['x,y', length_x // 2:length_x // 2 + 20 * dx, 50 * dy:length_y - 49 * dy]
-pressure_box = Sphere(x=length_x / 2, y=length_y / 2, radius=20 * dy)
-inflow = resample(pressure_box, to=inflow_grid, soft=True)
+pressure_box = Sphere(x=inflow_center_x, y=inflow_center_y, radius=inflow_radius) @ inflow_grid
+pressure_box_u = pressure_box.numpy().astype(float)
+pressure_box_v = pressure_box.numpy().astype(float)
+for index in np.transpose(np.nonzero(pressure_box_u)):
+    pressure_box_u[index[0], index[1]] = (index[0] - inflow_center_x / dx) / inflow_radius
+    pressure_box_v[index[0], index[1]] = (index[1] - inflow_center_y / dy) / inflow_radius
+pressure_box_u = math.tensor(pressure_box_u, spatial('x,y'))
+pressure_box_v = math.tensor(pressure_box_v, spatial('x,y'))
+pressure_box = math.stack([pressure_box_u, pressure_box_v], channel('vector'))
+inflow = StaggeredGrid(pressure_box, extrapolation=extrapolation.BOUNDARY, bounds=box, x=resolution[0], y=resolution[1])
+vis.plot(inflow['x'], inflow['y'])
+plt.show()
 velocity, pressure = fluid.make_incompressible(velocity=velocity, obstacles=swarm)
 
 # ----------------- Calculation --------------------

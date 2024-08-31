@@ -113,3 +113,13 @@ for time_step in range(total_time):
     phi.field.write(velocity, f'./run_{folder_name}/velocity/{time_step * dt:.3f}')
     phi.field.write(pressure, f'./run_{folder_name}/pressure/{time_step * dt:.3f}')
 
+
+def update(frame):
+    im1.set_data(velocity_data[frame]['data'][:, :, 0].T)
+    im2.set_data(velocity_data[frame]['data'][:, :, 1].T)
+    im3.set_data(pressure_data[frame]['data'].T)
+    return [im1, im2, im3]
+
+
+ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), interval=200, blit=True)
+ani.save(f'./run_{folder_name}/animation.gif', writer='pillow')

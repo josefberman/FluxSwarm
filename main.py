@@ -11,7 +11,7 @@ from datetime import datetime
 # -------------- Parameter Definition -------------
 length_x = 100  # um
 length_y = 10  # um
-resolution = (400, 320)
+resolution = (1000, 100)
 dx = length_x / resolution[0]
 dy = length_y / resolution[1]
 swarm_num_x = 5
@@ -19,12 +19,12 @@ swarm_num_y = 5
 swarm_member_rad = 0.04
 inflow_freq = 1  # Hz
 inflow_amplitude = 1000  # um/s
-inflow_center_x = 50 * dx
+inflow_radius = length_y/4
+inflow_center_x = inflow_radius+dx
 inflow_center_y = length_y / 2
-inflow_radius = 20 * dy
 viscosity = 0.0089  # Pa*s
 dt = 0.05  # s
-total_time = 50  # s
+total_time = 2  # s
 
 # -------------- Container Generation --------------
 box = Box['x,y', 0:length_x, 0:length_y]

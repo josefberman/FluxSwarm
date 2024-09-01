@@ -9,8 +9,8 @@ import matplotlib.patches as patches
 from datetime import datetime
 
 # -------------- Parameter Definition -------------
-length_x = 40  # cm
-length_y = 3.2  # cm
+length_x = 100  # um
+length_y = 10  # um
 resolution = (400, 320)
 dx = length_x / resolution[0]
 dy = length_y / resolution[1]
@@ -18,11 +18,11 @@ swarm_num_x = 5
 swarm_num_y = 5
 swarm_member_rad = 0.04
 inflow_freq = 1  # Hz
-inflow_amplitude = 0.1  # cm/s
+inflow_amplitude = 1000  # um/s
 inflow_center_x = 50 * dx
 inflow_center_y = length_y / 2
 inflow_radius = 20 * dy
-viscosity = 0.0089  # dyne*s/cm^2
+viscosity = 0.0089  # Pa*s
 dt = 0.05  # s
 total_time = 50  # s
 

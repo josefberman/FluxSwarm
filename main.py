@@ -19,8 +19,8 @@ swarm_num_y = 5
 swarm_member_rad = 0.04
 inflow_freq = 1  # Hz
 inflow_amplitude = 1000  # um/s
-inflow_radius = length_y/4
-inflow_center_x = inflow_radius+dx
+inflow_radius = length_y / 4
+inflow_center_x = inflow_radius + dx
 inflow_center_y = length_y / 2
 viscosity = 0.0089  # Pa*s
 dt = 0.05  # s
@@ -92,26 +92,26 @@ for time_step in range(total_time):
     calc_start = datetime.now()
     velocity, pressure, inflow = step(velocity, inflow, None, dt)
     print('Calculation time:', datetime.now() - calc_start)
-    fig, axes = plt.subplots(3, 1, figsize=(10, 20))
-    fields = [velocity['x'], velocity['y'], pressure]
-    field_names = ['Velocity - x component', 'Velocity - y component', 'Pressure']
+    fig, axes = plt.subplots(4, 1, figsize=(20, 20))
+    fields = [velocity['x'], velocity['y'], pressure, inflow]
+    field_names = ['Velocity - x component', 'Velocity - y component', 'Pressure', 'Inflow']
     ax_handlers = []
     # Velocity - x component
-    ax_handlers.append(
-        plot_scalar_field_with_patches(field=fields[0], box=pressure_box, ax=axes[0], title=field_names[0]))
+    ax_handlers.append(plot_scalar_field_with_patches(field=fields[0], box=None, ax=axes[0], title=field_names[0]))
     fig.colorbar(ax_handlers[-1], ax=axes[0], orientation='vertical', pad=0.04, fraction=0.02)
     # Velocity - y component
-    ax_handlers.append(
-        plot_scalar_field_with_patches(field=fields[1], box=pressure_box, ax=axes[1], title=field_names[1]))
+    ax_handlers.append(plot_scalar_field_with_patches(field=fields[1], box=None, ax=axes[1], title=field_names[1]))
     fig.colorbar(ax_handlers[-1], ax=axes[1], orientation='vertical', pad=0.04, fraction=0.02)
     # Pressure
-    ax_handlers.append(
-        plot_scalar_field_with_patches(field=fields[2], box=pressure_box, ax=axes[2], title=field_names[2]))
+    ax_handlers.append(plot_scalar_field_with_patches(field=fields[2], box=None, ax=axes[2], title=field_names[2]))
     fig.colorbar(ax_handlers[-1], ax=axes[2], orientation='vertical', pad=0.04, fraction=0.02)
+    ax_handlers.append(plot_scalar_field_with_patches(field=fields[3], box=None, ax=axes[3], title=field_names[3]))
+    fig.colorbar(ax_handlers[-1], ax=axes[3], orientation='vertical', pad=0.04, fraction=0.02)
     plt.savefig(f'./run_{folder_name}/figures/timestep_{time_step * dt:.3f}.jpg', dpi=300)
     plt.close(fig)
-    phi.field.write(velocity, f'./run_{folder_name}/velocity/{time_step * dt:.3f}')
-    phi.field.write(pressure, f'./run_{folder_name}/pressure/{time_step * dt:.3f}')
+    phi.field.write(velocity, f'./run_{folder_name}/velocity/{time_step:04}')
+    phi.field.write(pressure, f'./run_{folder_name}/pressure/{time_step:04}')
+    phi.field.write(inflow,f'./run_{folder_name}/inflow/{time_step:04}')
 
 
 def update(frame):

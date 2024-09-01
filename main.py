@@ -7,6 +7,8 @@ from phi.flow import *
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from datetime import datetime
+from glob import glob
+import matplotlib.animation as animation
 
 # -------------- Parameter Definition -------------
 length_x = 100  # um
@@ -111,14 +113,35 @@ for time_step in range(total_time):
     plt.close(fig)
     phi.field.write(velocity, f'./run_{folder_name}/velocity/{time_step:04}')
     phi.field.write(pressure, f'./run_{folder_name}/pressure/{time_step:04}')
-    phi.field.write(inflow,f'./run_{folder_name}/inflow/{time_step:04}')
+    phi.field.write(inflow, f'./run_{folder_name}/inflow/{time_step:04}')
+
+velocity_file_list = sorted(glob(f'./run_{folder_name}/velocity/*.npz'))
+pressure_file_list = sorted(glob(f'./run_{folder_name}/pressure/*.npz'))
+inflow_file_list = sorted(glob(f'./run_{folder_name}/inflow/*.npz'))
+velocity_data = [np.load(file) for file in velocity_file_list]
+pressure_data = [np.load(file) for file in pressure_file_list]
+inflow_data = [np.load(file) for file in inflow_file_list]
+max_abs_velocity_x = np.max(np.abs([file['data'][:, :, 0] for file in velocity_data]))
+max_abs_velocity_y = np.max(np.abs([file['data'][:, :, 1] for file in velocity_data]))
+max_abs_pressure = np.max(np.abs([file['data'] for file in pressure_data]))
+max_abs_inflow = np.max(np.abs([file['data'] for file in inflow_data]))
+fig, ax = plt.subplots(nrows=4, figsize=(20, 20))
+im1 = ax[0].imshow(velocity_data[0]['data'][:, :, 0].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_x,
+                   vmax=max_abs_velocity_x)
+im2 = ax[1].imshow(velocity_data[0]['data'][:, :, 1].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_y,
+                   vmax=max_abs_velocity_y)
+im3 = ax[2].imshow(pressure_data[0]['data'].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_pressure,
+                   vmax=max_abs_pressure)
+im4 = ax[3].imshow(inflow_data[0]['data'].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_inflow,
+                   vmax=max_abs_inflow)
 
 
 def update(frame):
     im1.set_data(velocity_data[frame]['data'][:, :, 0].T)
     im2.set_data(velocity_data[frame]['data'][:, :, 1].T)
     im3.set_data(pressure_data[frame]['data'].T)
-    return [im1, im2, im3]
+    im4.set_data(inflow_data[frame]['data'].T)
+    return [im1, im2, im3, im4]
 
 
 ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), interval=200, blit=True)

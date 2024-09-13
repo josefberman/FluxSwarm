@@ -1,11 +1,7 @@
 import os
-import pickle
-
-import numpy as np
 import phi.field
 from phi.flow import *
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 from datetime import datetime
 from glob import glob
 import matplotlib.animation as animation
@@ -13,7 +9,7 @@ import matplotlib.animation as animation
 # -------------- Parameter Definition -------------
 length_x = 100  # um
 length_y = 10  # um
-resolution = (1000, 100)
+resolution = (1000, 1000)
 dx = length_x / resolution[0]
 dy = length_y / resolution[1]
 swarm_num_x = 5
@@ -25,8 +21,8 @@ inflow_radius = length_y / 4
 inflow_center_x = inflow_radius + dx
 inflow_center_y = length_y / 2
 viscosity = 0.0089  # Pa*s
-dt = 0.05  # s
-total_time = 2  # s
+dt = 0.1  # s
+total_time = 0.2  # s
 
 # -------------- Container Generation --------------
 box = Box['x,y', 0:length_x, 0:length_y]
@@ -51,7 +47,7 @@ def step(v, inflow, p, dt):
     inflow = advect.mac_cormack(inflow, v, dt) + inflow_amplitude * resample(inflow_sphere, to=inflow, soft=True)
     inflow_velocity = resample(inflow * (1, 0), to=v)
     v = advect.semi_lagrangian(v, v, dt) + inflow_velocity * dt
-    v, p = fluid.make_incompressible(v, swarm, Solve(rel_tol=1e-03, abs_tol=1e-03, x0=p, max_iterations=10_000))
+    v, p = fluid.make_incompressible(v, swarm, Solve(rel_tol=1e-03, abs_tol=1e-03, x0=p, max_iterations=100_000))
     return v, p, inflow
 
 
@@ -75,21 +71,27 @@ folder_name = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day
 os.makedirs(f'./run_{folder_name}', exist_ok=True)
 os.makedirs(f'./run_{folder_name}/velocity', exist_ok=True)
 os.makedirs(f'./run_{folder_name}/pressure', exist_ok=True)
+os.makedirs(f'./run_{folder_name}/inflow', exist_ok=True)
 os.makedirs(f'./run_{folder_name}/figures', exist_ok=True)
 with open(f'./run_{folder_name}/configuration.txt', 'w') as f:
     f.write(f'{length_x=}\n')
     f.write(f'{length_y=}\n')
     f.write(f'{resolution=}\n')
+    f.write(f'{dx=}\n')
+    f.write(f'{dy=}\n')
     f.write(f'{swarm_num_x=}\n')
     f.write(f'{swarm_num_y=}\n')
     f.write(f'{swarm_member_rad=}\n')
     f.write(f'{inflow_freq=}\n')
     f.write(f'{inflow_amplitude=}\n')
+    f.write(f'{inflow_radius=}\n')
+    f.write(f'{inflow_center_x=}\n')
+    f.write(f'{inflow_center_y=}\n')
     f.write(f'{viscosity=}\n')
     f.write(f'{dt=}\n')
     f.write(f'{total_time=}\n')
 
-for time_step in range(total_time):
+for time_step in range(1, int(total_time / dt) + 1):
     print('Time Step:', time_step * dt)
     calc_start = datetime.now()
     velocity, pressure, inflow = step(velocity, inflow, None, dt)
@@ -109,12 +111,13 @@ for time_step in range(total_time):
     fig.colorbar(ax_handlers[-1], ax=axes[2], orientation='vertical', pad=0.04, fraction=0.02)
     ax_handlers.append(plot_scalar_field_with_patches(field=fields[3], box=None, ax=axes[3], title=field_names[3]))
     fig.colorbar(ax_handlers[-1], ax=axes[3], orientation='vertical', pad=0.04, fraction=0.02)
-    plt.savefig(f'./run_{folder_name}/figures/timestep_{time_step * dt:.3f}.jpg', dpi=300)
+    plt.savefig(f'./run_{folder_name}/figures/timestep_{time_step * dt:.3f}.jpg', dpi=100)
     plt.close(fig)
     phi.field.write(velocity, f'./run_{folder_name}/velocity/{time_step:04}')
     phi.field.write(pressure, f'./run_{folder_name}/pressure/{time_step:04}')
     phi.field.write(inflow, f'./run_{folder_name}/inflow/{time_step:04}')
 
+# ----------------- Animation --------------------
 velocity_file_list = sorted(glob(f'./run_{folder_name}/velocity/*.npz'))
 pressure_file_list = sorted(glob(f'./run_{folder_name}/pressure/*.npz'))
 inflow_file_list = sorted(glob(f'./run_{folder_name}/inflow/*.npz'))
@@ -125,15 +128,30 @@ max_abs_velocity_x = np.max(np.abs([file['data'][:, :, 0] for file in velocity_d
 max_abs_velocity_y = np.max(np.abs([file['data'][:, :, 1] for file in velocity_data]))
 max_abs_pressure = np.max(np.abs([file['data'] for file in pressure_data]))
 max_abs_inflow = np.max(np.abs([file['data'] for file in inflow_data]))
-fig, ax = plt.subplots(nrows=4, figsize=(20, 20))
-im1 = ax[0].imshow(velocity_data[0]['data'][:, :, 0].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_x,
-                   vmax=max_abs_velocity_x)
-im2 = ax[1].imshow(velocity_data[0]['data'][:, :, 1].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_y,
-                   vmax=max_abs_velocity_y)
-im3 = ax[2].imshow(pressure_data[0]['data'].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_pressure,
-                   vmax=max_abs_pressure)
-im4 = ax[3].imshow(inflow_data[0]['data'].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_inflow,
-                   vmax=max_abs_inflow)
+fig, ax = plt.subplots(nrows=4, ncols=2, figsize=(20, 40))
+im1 = ax[0][0].imshow(velocity_data[0]['data'][:, :, 0].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_x,
+                      vmax=max_abs_velocity_x, extent=[0, length_x, 0, length_y])
+fig.colorbar(im1, ax=ax[0][0], orientation='vertical', pad=0.04, fraction=0.02)
+ax[0][0].set_title('Velocity - x component [um/s]')
+plot1 = ax[0][1].plot(np.linspace(0, length_x, resolution[0]), velocity_data[0]['data'][:, int(resolution[1] / 2), 0],
+                      c='k')
+im2 = ax[1][0].imshow(velocity_data[0]['data'][:, :, 1].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_y,
+                      vmax=max_abs_velocity_y, extent=[0, length_x, 0, length_y])
+fig.colorbar(im2, ax=ax[1][0], orientation='vertical', pad=0.04, fraction=0.02)
+ax[1][0].set_title('Velocity = y component [um/s]')
+plot2 = ax[1][1].plot(np.linspace(0, length_x, resolution[0]), velocity_data[0]['data'][:, int(resolution[1] / 2), 1],
+                      c='k')
+im3 = ax[2][0].imshow(pressure_data[0]['data'].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_pressure,
+                      vmax=max_abs_pressure, extent=[0, length_x, 0, length_y])
+fig.colorbar(im3, ax=ax[2][0], orientation='vertical', pad=0.04, fraction=0.02)
+ax[2][0].set_title('Pressure [uPa]')
+plot3 = ax[2][1].plot(np.linspace(0, length_x, resolution[0]), pressure_data[0]['data'][:, int(resolution[1] / 2)],
+                      c='k')
+im4 = ax[3][0].imshow(inflow_data[0]['data'].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_inflow,
+                      vmax=max_abs_inflow, extent=[0, length_x, 0, length_y])
+fig.colorbar(im4, ax=ax[3][0], orientation='vertical', pad=0.04, fraction=0.02)
+ax[3][0].set_title('Inflow [um/s]')
+plot4 = ax[3][1].plot(np.linspace(0, length_x, resolution[0]), inflow_data[0]['data'][:, int(resolution[1] / 2)], c='k')
 
 
 def update(frame):
@@ -141,8 +159,12 @@ def update(frame):
     im2.set_data(velocity_data[frame]['data'][:, :, 1].T)
     im3.set_data(pressure_data[frame]['data'].T)
     im4.set_data(inflow_data[frame]['data'].T)
-    return [im1, im2, im3, im4]
+    plot1.set_data(velocity_data[frame]['data'][:, int(resolution[1] / 2), 0])
+    plot2.set_data(velocity_data[frame]['data'][:, int(resolution[1] / 2), 1])
+    plot3.set_data(pressure_data[frame]['data'][:, int(resolution[1] / 2)])
+    plot4.set_data(inflow_data[frame]['data'][:, int(resolution[1] / 2)])
+    return [im1, im2, im3, im4, plot1, plot2, plot3, plot4]
 
 
-ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), interval=200, blit=True)
+ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), interval=400, blit=True)
 ani.save(f'./run_{folder_name}/animation.gif', writer='pillow')

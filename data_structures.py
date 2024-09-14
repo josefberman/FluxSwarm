@@ -1,4 +1,3 @@
-import phi.field
 from phi.flow import *
 from math import floor
 

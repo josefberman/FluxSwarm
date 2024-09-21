@@ -58,24 +58,24 @@ def animate_save_simulation(sim: Simulation, folder_name: str) -> None:
     im1, plot1 = create_animation_frame_row(fig=fig, axis=ax[0], sim=sim,
                                             imshow_data=velocity_data[0]['data'][:, :, 0].T,
                                             plot_data=savgol_filter(
-                                                velocity_data[0]['data'][:-1, int(sim.resolution[1] / 2), 0], 50, 5),
+                                                velocity_data[0]['data'][:-1, int(sim.resolution[1] / 2), 0], 100, 5),
                                             max_abs_value=max_abs_velocity_x,
                                             title=u'Velocity - x component [\u03bcm/s]')
     im2, plot2 = create_animation_frame_row(fig=fig, axis=ax[1], sim=sim,
                                             imshow_data=velocity_data[0]['data'][:, :, 1].T,
                                             plot_data=savgol_filter(
-                                                velocity_data[0]['data'][:-1, int(sim.resolution[1] / 2), 1], 50, 5),
+                                                velocity_data[0]['data'][:-1, int(sim.resolution[1] / 2), 1], 100, 5),
                                             max_abs_value=max_abs_velocity_y,
                                             title=u'Velocity = y component [\u03bcm/s]')
     im3, plot3 = create_animation_frame_row(fig=fig, axis=ax[2], sim=sim,
                                             imshow_data=pressure_data[0]['data'].T,
                                             plot_data=savgol_filter(
-                                                pressure_data[0]['data'][:, int(sim.resolution[1] / 2)], 50, 5),
+                                                pressure_data[0]['data'][:, int(sim.resolution[1] / 2)], 100, 5),
                                             max_abs_value=max_abs_pressure, title='Pressure [uPa]')
     im4, plot4 = create_animation_frame_row(fig=fig, axis=ax[3], sim=sim,
                                             imshow_data=inflow_data[0]['data'].T,
                                             plot_data=savgol_filter(
-                                                inflow_data[0]['data'][:, int(sim.resolution[1] / 2)], 50, 5),
+                                                inflow_data[0]['data'][:, int(sim.resolution[1] / 2)], 100, 5),
                                             max_abs_value=max_abs_inflow, title=u'Inflow [\u03bcm/s]')
     fig.suptitle(f'Simulation time: 0.0 seconds')
     plt.tight_layout()
@@ -85,10 +85,10 @@ def animate_save_simulation(sim: Simulation, folder_name: str) -> None:
         im2.set_data(velocity_data[frame]['data'][:, :, 1].T)
         im3.set_data(pressure_data[frame]['data'].T)
         im4.set_data(inflow_data[frame]['data'].T)
-        plot1.set_ydata(savgol_filter(velocity_data[frame]['data'][:-1, int(sim.resolution[1] / 2), 0], 50, 1))
-        plot2.set_ydata(savgol_filter(velocity_data[frame]['data'][:-1, int(sim.resolution[1] / 2), 1], 50, 1))
-        plot3.set_ydata(savgol_filter(pressure_data[frame]['data'][:, int(sim.resolution[1] / 2)], 50, 1))
-        plot4.set_ydata(savgol_filter(inflow_data[frame]['data'][:, int(sim.resolution[1] / 2)], 50, 1))
+        plot1.set_ydata(savgol_filter(velocity_data[frame]['data'][:-1, int(sim.resolution[1] / 2), 0], 100, 1))
+        plot2.set_ydata(savgol_filter(velocity_data[frame]['data'][:-1, int(sim.resolution[1] / 2), 1], 100, 1))
+        plot3.set_ydata(savgol_filter(pressure_data[frame]['data'][:, int(sim.resolution[1] / 2)], 100, 1))
+        plot4.set_ydata(savgol_filter(inflow_data[frame]['data'][:, int(sim.resolution[1] / 2)], 100, 1))
         fig.suptitle(f'Simulation time: {frame * sim.dt:.1f} seconds')
         for i in range(4):
             ax[i][1].relim()
@@ -96,5 +96,6 @@ def animate_save_simulation(sim: Simulation, folder_name: str) -> None:
         return [im1, im2, im3, im4, plot1, plot2, plot3, plot4]
 
     ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), interval=2000, blit=True)
-    ani.save(f'./run_{folder_name}/animation.gif', writer='pillow')
+    ani.save(f'./run_{folder_name}/animation_slow.gif', writer='pillow', fps=1)
+    ani.save(f'./run_{folder_name}/animation_fast.gif', writer='pillow', fps=10)
     return None

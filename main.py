@@ -6,9 +6,9 @@ from simulation import run_simulation
 
 # -------------- Parameter Definition -------------
 # Simulation dimensions are μm and second
-sim = Simulation(length_x=100, length_y=10, resolution=(1000, 1000), dt=0.1, total_time=1)
+sim = Simulation(length_x=100, length_y=10, resolution=(1000, 1000), dt=0.1, total_time=10)
 swarm = Swarm(num_x=5, num_y=5, member_radius=0.04)
-inflow = Inflow(frequency=1, amplitude=1000, radius=sim.length_y / 4, center_y=sim.length_y / 2)
+inflow = Inflow(frequency=2, amplitude=1000, radius=sim.length_y / 2, center_y=sim.length_y / 2)
 #inflow.center_x = inflow.radius + sim.dx
 inflow.center_x = 0
 fluid = Fluid(viscosity=0.0089)

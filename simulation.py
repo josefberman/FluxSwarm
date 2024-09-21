@@ -5,9 +5,12 @@ from plotting import plot_save_current_step
 import phi.field
 
 
-def step(v: Field, p: Field, inflow_field: Field, inflow_sphere: Sphere, inflow: Inflow, sim: Simulation, swarm: Swarm):
-    inflow_field = advect.mac_cormack(inflow_field, v, sim.dt) + inflow.amplitude * resample(inflow_sphere,
-                                                                                             to=inflow_field, soft=True)
+def step(v: Field, p: Field, inflow_field: Field, inflow_sphere: Sphere, inflow: Inflow, sim: Simulation, swarm: Swarm,
+         t: float):
+    inflow_field = advect.mac_cormack(inflow_field, v, sim.dt) + (0.5 * inflow.amplitude * 4 / np.pi * (np.sin(
+        inflow.frequency * t) + 1 / 3 * np.sin(3 * inflow.frequency * t) + 1 / 5 * np.sin(
+        5 * inflow.frequency * t)) + 1 / 7 * np.sin(7 * inflow.frequency * t) + 0.5 * inflow.amplitude) * resample(
+        inflow_sphere, to=inflow_field, soft=True)
     inflow_velocity = resample(inflow_field * (1, 0), to=v)
     v = advect.semi_lagrangian(v, v, sim.dt) + inflow_velocity * sim.dt
     v, p = fluid.make_incompressible(v, swarm.as_obstacle_list(),
@@ -23,7 +26,7 @@ def run_simulation(velocity_field: Field, pressure_field: Field | None, inflow_f
         velocity_field, pressure_field, inflow_field = step(v=velocity_field, p=pressure_field,
                                                             inflow_field=inflow_field,
                                                             inflow_sphere=inflow_sphere, inflow=inflow, sim=sim,
-                                                            swarm=swarm)
+                                                            swarm=swarm, t=time_step * sim.dt)
         print('Calculation time:', datetime.now() - calc_start)
         plot_save_current_step(time_step=time_step, folder_name=folder_name, v_field=velocity_field,
                                p_field=pressure_field,

@@ -4,9 +4,12 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="011fd143-0d4d-4ffe-82c4-bf547896fdff" name="Changes" comment="sphere flow - cm">
+    <list default="true" id="011fd143-0d4d-4ffe-82c4-bf547896fdff" name="Changes" comment="Organized project">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data_structures.py" beforeDir="false" afterPath="$PROJECT_DIR$/data_structures.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/plotting.py" beforeDir="false" afterPath="$PROJECT_DIR$/plotting.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -23,11 +26,11 @@
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
-        <entry key="$PROJECT_DIR$" value="6e6765999482067d5fd69c2e7318ba18fbde4965" />
+        <entry key="$PROJECT_DIR$" value="6f2438a3f50e2e8dab7746038e1bf898e74956bb" />
       </map>
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
-    <option name="RESET_MODE" value="MIXED" />
+    <option name="RESET_MODE" value="HARD" />
   </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 6
@@ -44,7 +47,7 @@
     &quot;Python.trial.executor&quot;: &quot;Run&quot;,
     &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;master&quot;
+    &quot;git-widget-placeholder&quot;: &quot;Capillary&quot;
   }
 }</component>
   <component name="RecentsManager">
@@ -108,7 +111,71 @@
       <option name="project" value="LOCAL" />
       <updated>1724875604415</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="Aorta parameters">
+      <option name="closed" value="true" />
+      <created>1725190842053</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1725190842053</updated>
+    </task>
+    <task id="LOCAL-00004" summary="Capillary parameters">
+      <option name="closed" value="true" />
+      <created>1725191042664</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1725191042664</updated>
+    </task>
+    <task id="LOCAL-00005" summary="Capillary parameters">
+      <option name="closed" value="true" />
+      <created>1725196190437</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1725196190437</updated>
+    </task>
+    <task id="LOCAL-00006" summary="Capillary parameters">
+      <option name="closed" value="true" />
+      <created>1726245687173</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1726245687173</updated>
+    </task>
+    <task id="LOCAL-00007" summary="Organized project">
+      <option name="closed" value="true" />
+      <created>1726305644084</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1726305644084</updated>
+    </task>
+    <task id="LOCAL-00008" summary="Organized project">
+      <option name="closed" value="true" />
+      <created>1726346447524</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1726346447524</updated>
+    </task>
+    <task id="LOCAL-00009" summary="Organized project">
+      <option name="closed" value="true" />
+      <created>1726903640267</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1726903640267</updated>
+    </task>
+    <task id="LOCAL-00010" summary="Organized project">
+      <option name="closed" value="true" />
+      <created>1726918706835</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1726918706835</updated>
+    </task>
+    <option name="localTasksCounter" value="11" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -116,7 +183,19 @@
       <map>
         <entry key="MAIN">
           <value>
-            <State />
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="Capillary" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
           </value>
         </entry>
       </map>
@@ -125,6 +204,9 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Initial commit" />
     <MESSAGE value="Radial constant inflow" />
-    <option name="LAST_COMMIT_MESSAGE" value="Radial constant inflow" />
+    <MESSAGE value="Aorta parameters" />
+    <MESSAGE value="Capillary parameters" />
+    <MESSAGE value="Organized project" />
+    <option name="LAST_COMMIT_MESSAGE" value="Organized project" />
   </component>
 </project>

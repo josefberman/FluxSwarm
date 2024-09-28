@@ -6,10 +6,11 @@ from simulation import run_simulation
 
 # -------------- Parameter Definition -------------
 # Simulation dimensions are μm and second
-sim = Simulation(length_x=300, length_y=10, resolution=(1500, 50), dt=0.1, total_time=10)
-swarm = Swarm(num_x=5, num_y=5, member_radius=0.04)
-inflow = Inflow(frequency=2, amplitude=1000, radius=sim.length_y / 2, center_y=sim.length_y / 2)
-#inflow.center_x = inflow.radius + sim.dx
+sim = Simulation(length_x=15000, length_y=500, resolution=(1500, 50), dt=0.1, total_time=10)
+swarm = Swarm(num_x=5, num_y=5, left_location=10000, bottom_location=50, member_interval_x=100, member_interval_y=100,
+              member_radius=10)
+inflow = Inflow(frequency=2*np.pi, amplitude=5940, radius=sim.length_y / 2, center_y=sim.length_y / 2)
+# inflow.center_x = inflow.radius + sim.dx
 inflow.center_x = 0
 fluid = Fluid(viscosity=0.0089)
 
@@ -31,4 +32,4 @@ run_simulation(velocity_field=velocity_field, pressure_field=None, inflow_field=
                inflow_sphere=inflow_sphere, inflow=inflow, sim=sim, swarm=swarm, folder_name=folder_name)
 
 # ----------------- Animation --------------------
-animate_save_simulation(sim=sim, folder_name=folder_name)
+animate_save_simulation(sim=sim, swarm=swarm, folder_name=folder_name)

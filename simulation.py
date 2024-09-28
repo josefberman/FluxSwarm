@@ -8,7 +8,7 @@ import phi.field
 def step(v: Field, p: Field, inflow_field: Field, inflow_sphere: Sphere, inflow: Inflow, sim: Simulation, swarm: Swarm,
          t: float):
     rect_wave = 4 / np.pi * np.sin(inflow.frequency * t)
-    for n in range(3, 22, 2):
+    for n in range(3, 100, 2):
         rect_wave += 4 / np.pi * 1 / n * np.sin(n * inflow.frequency * t)
     inflow_field = advect.mac_cormack(inflow_field, v, sim.dt) + (
             0.5 * inflow.amplitude * rect_wave + 0.5 * inflow.amplitude) * resample(inflow_sphere, to=inflow_field,
@@ -32,7 +32,7 @@ def run_simulation(velocity_field: Field, pressure_field: Field | None, inflow_f
         print('Calculation time:', datetime.now() - calc_start)
         plot_save_current_step(time_step=time_step, folder_name=folder_name, v_field=velocity_field,
                                p_field=pressure_field,
-                               inflow_field=inflow_field, sim=sim)
+                               inflow_field=inflow_field, sim=sim, swarm=swarm)
         phi.field.write(velocity_field, f'./run_{folder_name}/velocity/{time_step:04}')
         phi.field.write(pressure_field, f'./run_{folder_name}/pressure/{time_step:04}')
         phi.field.write(inflow_field, f'./run_{folder_name}/inflow/{time_step:04}')

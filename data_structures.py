@@ -3,16 +3,36 @@ from math import floor
 
 
 class Swarm:
-    def __init__(self, num_x: int = 0, num_y: int = 0, member_radius: float = 0):
+    def __init__(self, num_x: int = 0, num_y: int = 0, left_location: float = 0, bottom_location: float = 0,
+                 member_interval_x: float = 0, member_interval_y: float = 0, member_radius: float = 0):
         self.num_x = num_x
         self.num_y = num_y
+        self.left_location = left_location
+        self.bottom_location = bottom_location
+        self.member_interval_x = member_interval_x
+        self.member_interval_y = member_interval_y
         self.member_radius = member_radius
 
     def as_obstacle_list(self) -> list:
         swarm = []
-        for i in np.linspace(2, 3, self.num_x):
-            for j in np.linspace(0.1, 0.9, self.num_y):
+        for i in np.linspace(self.left_location,
+                             self.left_location + self.member_interval_x * (self.num_x - 1),
+                             self.num_x):
+            for j in np.linspace(self.bottom_location,
+                                 self.bottom_location + self.member_interval_y * (self.num_y - 1),
+                                 self.num_y):
                 swarm.append(Obstacle(Sphere(x=i, y=j, radius=self.member_radius)))
+        return swarm
+
+    def as_coordinate_list(self) -> list:
+        swarm = []
+        for i in np.linspace(self.left_location,
+                             self.left_location + self.member_interval_x * (self.num_x - 1),
+                             self.num_x):
+            for j in np.linspace(self.bottom_location,
+                                 self.bottom_location + self.member_interval_y * (self.num_y - 1),
+                                 self.num_y):
+                swarm.append((i, j))
         return swarm
 
 

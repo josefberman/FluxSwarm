@@ -31,4 +31,4 @@ run_simulation(velocity_field=velocity_field, pressure_field=None, inflow_field=
                inflow_sphere=inflow_sphere, inflow=inflow, sim=sim, swarm=swarm, folder_name=folder_name)
 
 # ----------------- Animation --------------------
-animate_save_simulation(sim=sim, folder_name=folder_name)
+animate_save_simulation(sim=sim, swarm=swarm, folder_name=folder_name)

@@ -14,7 +14,8 @@ def step(v: Field, p: Field, inflow_field: Field, inflow_sphere: Sphere, inflow:
             0.5 * inflow.amplitude * rect_wave + 0.5 * inflow.amplitude) * resample(inflow_sphere, to=inflow_field,
                                                                                     soft=True)
     inflow_velocity = resample(inflow_field * (1, 0), to=v)
-    v = advect.semi_lagrangian(v, v, sim.dt) + inflow_velocity * sim.dt
+    # v = advect.semi_lagrangian(v, v, sim.dt) + inflow_velocity * sim.dt
+    v = advect.semi_lagrangian(v, v, sim.dt) + inflow_velocity
     v, p = fluid.make_incompressible(v, swarm.as_obstacle_list(),
                                      Solve(rel_tol=1e-05, abs_tol=1e-05, x0=p, max_iterations=100_000))
     return v, p, inflow_field

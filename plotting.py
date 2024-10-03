@@ -18,11 +18,12 @@ def plot_scalar_field(field, ax, length_x, length_y, title):
 def plot_save_current_step(time_step: int, folder_name: str, v_field: Field, p_field: Field, inflow_field: Field,
                            sim: Simulation, swarm: Swarm) -> None:
     fig, axes = plt.subplots(4, 1, figsize=(10, 10))
-    fields = [v_field['x'], v_field['y'], p_field]
-    field_names = [u'Velocity - x component [\u03bcm/s]', u'Velocity = y component [\u03bcm/s]', 'Pressure [uPa]']
+    fields = [v_field['x'], v_field['y'], p_field, inflow_field]
+    field_names = [u'Velocity - x component [\u03bcm/s]', u'Velocity = y component [\u03bcm/s]', 'Pressure [uPa]',
+                   'Inflow [\u03bcm/s']
     ax_handlers = []
-    #axes[0].streamplot(v_field.cells,)
-    for i in range(0,3):
+    # axes[0].streamplot(v_field.cells,)
+    for i in range(0, 4):
         ax_handlers.append(plot_scalar_field(field=fields[i], ax=axes[i], length_x=sim.length_x, length_y=sim.length_y,
                                              title=field_names[i]))
         fig.colorbar(ax_handlers[-1], ax=axes[i], orientation='vertical', pad=0.04, fraction=0.02)
@@ -57,7 +58,8 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
     max_abs_velocity_x = np.max(np.abs([file['data'][:, :, 0] for file in velocity_data]))
     max_abs_velocity_y = np.max(np.abs([file['data'][:, :, 1] for file in velocity_data]))
     max_abs_pressure = np.max(np.abs([file['data'] for file in pressure_data]))
-    fig, ax = plt.subplots(nrows=3, ncols=2, figsize=(20, 10))
+    max_abs_inflow = np.max(np.abs([file['data'] for file in inflow_data]))
+    fig, ax = plt.subplots(nrows=4, ncols=2, figsize=(20, 10))
     im1, plot1 = create_animation_frame_row(fig=fig, axis=ax[0], sim=sim, swarm=swarm,
                                             imshow_data=velocity_data[0]['data'][:, :, 0].T,
                                             plot_data=savgol_filter(
@@ -75,6 +77,11 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
                                             plot_data=savgol_filter(
                                                 pressure_data[0]['data'][:, int(sim.resolution[1] / 2)], 100, 5),
                                             max_abs_value=max_abs_pressure, title='Pressure [uPa]')
+    im4, plot4 = create_animation_frame_row(fig=fig, axis=ax[3], sim=sim, swarm=swarm,
+                                            imshow_data=inflow_data[0]['data'].T,
+                                            plot_data=savgol_filter(
+                                                inflow_data[0]['data'][: int(sim.resolution[1] / 2)], 100, 5),
+                                            max_abs_value=max_abs_inflow, title='Inflow [\u03bcm/s]')
     fig.suptitle(f'Simulation time: 0.0 seconds')
     plt.tight_layout()
 
@@ -82,14 +89,16 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
         im1.set_data(velocity_data[frame]['data'][:, :, 0].T)
         im2.set_data(velocity_data[frame]['data'][:, :, 1].T)
         im3.set_data(pressure_data[frame]['data'].T)
+        im4.set_data(inflow_data[frame]['data'].T)
         plot1.set_ydata(savgol_filter(velocity_data[frame]['data'][:-1, int(sim.resolution[1] / 2), 0], 100, 1))
         plot2.set_ydata(savgol_filter(velocity_data[frame]['data'][:-1, int(sim.resolution[1] / 2), 1], 100, 1))
         plot3.set_ydata(savgol_filter(pressure_data[frame]['data'][:, int(sim.resolution[1] / 2)], 100, 1))
+        plot4.set_ydata(savgol_filter(inflow_data[frame]['data'][:, int(sim.resolution[1] / 2)], 100, 1))
         fig.suptitle(f'Simulation time: {frame * sim.dt:.1f} seconds')
         for i in range(3):
             ax[i][1].relim()
             ax[i][1].autoscale()
-        return [im1, im2, im3, plot1, plot2, plot3]
+        return [im1, im2, im3, im4, plot1, plot2, plot3, plot4]
 
     ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), interval=2000, blit=True)
     ani.save(f'./run_{folder_name}/animation_slow.gif', writer='pillow', fps=1)

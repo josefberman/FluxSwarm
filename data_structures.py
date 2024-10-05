@@ -1,10 +1,28 @@
 from phi.flow import *
 from math import floor
+from numpy.random import rand
+
+
+class Member:
+    def __init__(self, location=None, radius: float = 0, direction: float = 0):
+        if location is None:
+            location = {'x': 0, 'y': 0}
+        self.location = location
+        self.radius = radius
+        self.direction = direction
 
 
 class Swarm:
     def __init__(self, num_x: int = 0, num_y: int = 0, left_location: float = 0, bottom_location: float = 0,
                  member_interval_x: float = 0, member_interval_y: float = 0, member_radius: float = 0):
+        s = []
+        for i in range(num_x):
+            for j in range(num_y):
+                s.append(
+                    Member(location={'x': left_location + i * member_interval_x,
+                                     'y': bottom_location + j * member_interval_y}, radius=member_radius,
+                           direction=rand() * 2 * np.pi))
+        self.members = s
         self.num_x = num_x
         self.num_y = num_y
         self.left_location = left_location
@@ -14,26 +32,7 @@ class Swarm:
         self.member_radius = member_radius
 
     def as_obstacle_list(self) -> list:
-        swarm = []
-        for i in np.linspace(self.left_location,
-                             self.left_location + self.member_interval_x * (self.num_x - 1),
-                             self.num_x):
-            for j in np.linspace(self.bottom_location,
-                                 self.bottom_location + self.member_interval_y * (self.num_y - 1),
-                                 self.num_y):
-                swarm.append(Obstacle(Sphere(x=i, y=j, radius=self.member_radius)))
-        return swarm
-
-    def as_coordinate_list(self) -> list:
-        swarm = []
-        for i in np.linspace(self.left_location,
-                             self.left_location + self.member_interval_x * (self.num_x - 1),
-                             self.num_x):
-            for j in np.linspace(self.bottom_location,
-                                 self.bottom_location + self.member_interval_y * (self.num_y - 1),
-                                 self.num_y):
-                swarm.append((i, j))
-        return swarm
+        return [Obstacle(Sphere(x=m.location['x'], y=m.location['y'], radius=m.radius)) for m in self.members]
 
 
 class Inflow:

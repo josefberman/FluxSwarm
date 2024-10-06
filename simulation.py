@@ -1,8 +1,11 @@
+import numpy as np
+
 from data_structures import Simulation, Swarm, Inflow, Fluid
 from phi.flow import *
 from datetime import datetime
 from plotting import plot_save_current_step
 import phi.field
+import phi.math
 
 
 def step(v: Field, p: Field, inflow_field: Field, inflow_sphere: Sphere, inflow: Inflow, sim: Simulation, swarm: Swarm,
@@ -13,15 +16,22 @@ def step(v: Field, p: Field, inflow_field: Field, inflow_sphere: Sphere, inflow:
     # inflow_field = advect.mac_cormack(inflow_field, v, sim.dt) + (
     #         0.5 * inflow.amplitude * rect_wave + 0.5 * inflow.amplitude) * resample(inflow_sphere, to=inflow_field,
     #                                                                                 soft=True)
-    inflow_velocity = resample(inflow_field * (1, 0), to=v)
-    inflow_field = advect.finite_difference(u=inflow_field, velocity=v, order=6) + (
-            0.5 * inflow.amplitude * rect_wave + 0.5 * inflow.amplitude) * resample(inflow_sphere, to=inflow_field,
-                                                                                    soft=True)
+    # inflow_velocity = resample(inflow_field * (1, 0), to=v)
+    # inflow_field = advect.finite_difference(u=inflow_field, velocity=v, order=6) + (
+    #         0.5 * inflow.amplitude * rect_wave + 0.5 * inflow.amplitude) * resample(inflow_sphere, to=inflow_field,
+    #                                                                                 soft=True)
     # v = advect.semi_lagrangian(v, v, sim.dt) + inflow_velocity * sim.dt
-    v = advect.semi_lagrangian(v, v, sim.dt) + inflow_velocity
-    v = advect.finite_difference(u=v, velocity=v, order=6)
-    v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(), order=6, wide_stencil=True,
-                                     correct_skew=True,
+    v_tensor_u = v.staggered_tensor()[0].numpy('x,y')
+    v_tensor_u[:33, :] = 5940
+    v_tensor_u = tensor(v_tensor_u[:, :-1], spatial('x,y'))
+    v_tensor_v = v.staggered_tensor()[1].numpy('x,y')
+    v_tensor_v = tensor(v_tensor_v[:-1, :-2], spatial('x,y'))
+    v = StaggeredGrid(math.stack([v_tensor_u, v_tensor_v], dual(vector='x,y')), boundary=v.boundary, bounds=v.bounds,
+                      x=sim.resolution[0], y=sim.resolution[1])
+    # v = advect.semi_lagrangian(v, v, sim.dt) + inflow_velocity
+    v = advect.semi_lagrangian(v, v, sim.dt)
+    # v = advect.finite_difference(u=v, velocity=v, order=2)
+    v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
                                      solve=Solve(rel_tol=1e-05, abs_tol=1e-05, x0=p, max_iterations=100_000))
     return v, p, inflow_field
 

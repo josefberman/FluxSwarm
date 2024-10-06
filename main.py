@@ -6,7 +6,7 @@ from simulation import run_simulation
 
 # -------------- Parameter Definition -------------
 # Simulation dimensions are μm and second
-sim = Simulation(length_x=18000, length_y=800, resolution=(6000, 200), dt=0.05, total_time=1)
+sim = Simulation(length_x=18000, length_y=800, resolution=(6000, 200), dt=0.05, total_time=10)
 swarm = Swarm(num_x=5, num_y=5, left_location=12000, bottom_location=80, member_interval_x=200, member_interval_y=160,
               member_radius=25)
 # swarm = Swarm(num_x=1, num_y=1, left_location=12000, bottom_location=400, member_radius=50)

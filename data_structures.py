@@ -4,13 +4,17 @@ from numpy.random import rand
 
 
 class Member:
-    def __init__(self, location=None, radius: float = 0, direction: float = 0, density=1):
+    def __init__(self, location=None, velocity=None, radius: float = 0, direction: float = 0, density=1):
         if location is None:
             location = {'x': 0, 'y': 0}
         self.location = location
+        if velocity is None:
+            velocity = {'x': 0, 'y': 0}
+        self.velocity = velocity
         self.radius = radius
         self.direction = direction
         self.density = density
+        self.mass = self.density * np.pi * self.radius ** 2
 
     def as_sphere(self):
         return Sphere(x=self.location['x'], y=self.location['y'], radius=self.radius)

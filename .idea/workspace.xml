@@ -4,9 +4,14 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="011fd143-0d4d-4ffe-82c4-bf547896fdff" name="Changes" comment="Capillary properties">
+    <list default="true" id="011fd143-0d4d-4ffe-82c4-bf547896fdff" name="Changes" comment="Capillary constant uniform inflow">
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/phiflow_sim.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/phiflow_sim.iml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data_structures.py" beforeDir="false" afterPath="$PROJECT_DIR$/data_structures.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logs.py" beforeDir="false" afterPath="$PROJECT_DIR$/logs.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/plotting.py" beforeDir="false" afterPath="$PROJECT_DIR$/plotting.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -41,11 +46,12 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
-    "Python.main.executor": "Run",
+    "Python.main.executor": "Debug",
     "Python.trial.executor": "Run",
     "RunOnceActivity.OpenProjectViewOnStart": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
-    "git-widget-placeholder": "Capillary"
+    "git-widget-placeholder": "Capillary",
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
   }
 }]]></component>
   <component name="RecentsManager">
@@ -197,7 +203,15 @@
       <option name="project" value="LOCAL" />
       <updated>1728108842360</updated>
     </task>
-    <option name="localTasksCounter" value="14" />
+    <task id="LOCAL-00014" summary="Capillary constant uniform inflow">
+      <option name="closed" value="true" />
+      <created>1728185495358</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1728185495358</updated>
+    </task>
+    <option name="localTasksCounter" value="15" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -230,6 +244,7 @@
     <MESSAGE value="Capillary parameters" />
     <MESSAGE value="Organized project" />
     <MESSAGE value="Capillary properties" />
-    <option name="LAST_COMMIT_MESSAGE" value="Capillary properties" />
+    <MESSAGE value="Capillary constant uniform inflow" />
+    <option name="LAST_COMMIT_MESSAGE" value="Capillary constant uniform inflow" />
   </component>
 </project>

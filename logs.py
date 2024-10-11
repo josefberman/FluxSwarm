@@ -4,10 +4,19 @@ from data_structures import Simulation, Swarm, Inflow, Fluid
 
 
 def create_run_name() -> str:
+    """
+    Creates a run name based on the date and time of the run in the format "run_%Y-%m-%d_%H-%M-%S".
+    :return: Run name
+    """
     return f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
 
 
 def create_folders_for_run(folder_name) -> None:
+    """
+    Creates a main folder for the run with four subfolders for velocity, pressure, inflow data, and figures.
+    :param folder_name:
+    :return: None
+    """
     os.makedirs(f'./run_{folder_name}', exist_ok=True)
     os.makedirs(f'./run_{folder_name}/velocity', exist_ok=True)
     os.makedirs(f'./run_{folder_name}/pressure', exist_ok=True)
@@ -17,6 +26,15 @@ def create_folders_for_run(folder_name) -> None:
 
 
 def log_parameters(folder_name, sim: Simulation, swarm: Swarm, inflow: Inflow, fluid:Fluid) -> None:
+    """
+    Logs all initial parameters of the simulation, swarm members, inflow and fluid in a configuration.txt file.
+    :param folder_name: Name of the run folder to save configuration file.
+    :param sim: Simulation object to save simulation parameters.
+    :param swarm: Swarm object to save swarm members parameters.
+    :param inflow: Inflow object to save inflow parameters.
+    :param fluid: Fluid object to save fluid properties.
+    :return: None
+    """
     with open(f'./run_{folder_name}/configuration.txt', 'w') as f:
         f.write(f'{sim.length_x=}\n')
         f.write(f'{sim.length_y=}\n')

@@ -6,6 +6,7 @@ from datetime import datetime
 from plotting import plot_save_current_step
 import phi.field as field
 import phi.math
+from auxiliary import KG_TO_UG
 
 
 def step(v: Field, p: Field, inflow_field: Field, inflow: Inflow, sim: Simulation, swarm: Swarm,
@@ -29,13 +30,12 @@ def step(v: Field, p: Field, inflow_field: Field, inflow: Inflow, sim: Simulatio
                                      solve=Solve(rel_tol=1e-05, abs_tol=1e-05, x0=p, max_iterations=100_000))
     # Calculate movement and rotation of swarm members
     for member in swarm.members:
-        pressure_profile = sample_pressure_around_obstacle(p=p, member=member, sim=sim)
+        pressure_profile = sample_pressure_around_obstacle(p=p, member=member,
+                                                           sim=sim) * KG_TO_UG  # From kg/(μm*s^2) to μg/(μm*s^2)
         lin_force_y = lin_force_x = 0
         for i, angle in enumerate(np.arange(start=0, stop=2 * np.pi, step=np.pi / 4)):
             lin_force_y += pressure_profile[i] * member.radius * np.sin(angle - np.pi / 2) * np.pi / 4
             lin_force_x += pressure_profile[i] * member.radius * np.sin(angle - np.pi) * np.pi / 4
-        lin_force_y *= 10E-3  # From Pascal to μg/(μm*s^2)
-        lin_force_x *= 10E-3  # From Pascal to μg/(μm*s^2)
         lin_acceleration_y = lin_force_y / member.mass
         lin_acceleration_x = lin_force_x / member.mass
         print(f'location before: {member.location}')
@@ -75,8 +75,8 @@ def sample_pressure_around_obstacle(p: Field, member: Member, sim: Simulation) -
     y_add = np.roll(x_add, -2)
     for i, angle in enumerate(np.arange(start=0, stop=2 * np.pi, step=np.pi / 4)):
         x = int((member.location['x'] + member.radius * np.cos(np.pi / 2 - angle)) * sim.resolution[
-            0] / sim.length_x) + x_add[i]
+            0] / sim.length_x) + int(x_add[i])
         y = int((member.location['y'] + member.radius * np.sin(np.pi / 2 - angle)) * sim.resolution[
-            1] / sim.length_y) + y_add[i]
+            1] / sim.length_y) + int(y_add[i])
         pressure_samples[i] = p.values.x[x].y[y]
     return pressure_samples

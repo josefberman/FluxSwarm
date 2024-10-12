@@ -1,0 +1,2 @@
+TO_MMHG = 1 / 7501
+KG_TO_UG = 1E-9

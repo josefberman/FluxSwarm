@@ -3,13 +3,14 @@ from plotting import animate_save_simulation
 from logs import create_run_name, create_folders_for_run, log_parameters
 from data_structures import Simulation, Swarm, Inflow, Fluid
 from simulation import run_simulation
+from auxiliary import KG_TO_UG
 
 # -------------- Parameter Definition -------------
 # Simulation dimensions are length=μm and time=second, mass=μg
-sim = Simulation(length_x=18000, length_y=800, resolution=(6000, 200), dt=0.05, total_time=0.5)
-swarm = Swarm(num_x=5, num_y=5, left_location=12000, bottom_location=80, member_interval_x=200, member_interval_y=160,
+sim = Simulation(length_x=18000, length_y=800, resolution=(3600, 160), dt=0.05, total_time=1)
+swarm = Swarm(num_x=1, num_y=5, left_location=12000, bottom_location=80, member_interval_x=200, member_interval_y=160,
               member_radius=25, member_density=2.33E-6)  # density in μg/μm^3
-inflow = Inflow(frequency=2 * np.pi, amplitude=3 * 5940, radius=sim.length_y / 2, center_y=sim.length_y / 2)
+inflow = Inflow(frequency=2 * np.pi, amplitude=5940, radius=sim.length_y / 2, center_y=sim.length_y / 2)
 inflow.center_x = 0
 fluid = Fluid(viscosity=0.6913)  # viscosity in μg/(μm*s)
 

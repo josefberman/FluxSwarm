@@ -5,7 +5,7 @@ from phi.flow import *
 from data_structures import Simulation, Swarm
 from glob import glob
 from scipy.signal import savgol_filter
-from auxiliary import TO_MMHG
+from auxiliary import TO_MMHG, P_TO_WATER
 
 
 def plot_scalar_field(field, ax, length_x, length_y, title):
@@ -19,7 +19,7 @@ def plot_scalar_field(field, ax, length_x, length_y, title):
 def plot_save_current_step(time_step: int, folder_name: str, v_field: Field, p_field: Field, inflow_field: Field,
                            sim: Simulation, swarm: Swarm) -> None:
     fig, axes = plt.subplots(3, 1, figsize=(20, 10))
-    fields = [v_field['x'], v_field['y'], p_field * TO_MMHG]
+    fields = [v_field['x'], v_field['y'], p_field * P_TO_WATER * TO_MMHG]
     field_names = [u'Velocity - x component [\u03bcm/s]', u'Velocity = y component [\u03bcm/s]', 'Pressure [mmHg]']
     ax_handlers = []
     for i in range(0, 3):
@@ -79,10 +79,11 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
                                             title=u'Velocity = y component',
                                             x_label='Tube length [\u03bcm]', y_label='Velocity [\u03bcm/s]')
     im3, plot3 = create_animation_frame_row(fig=fig, axis=ax[2], sim=sim, swarm=swarm,
-                                            imshow_data=pressure_data[0]['data'].T * TO_MMHG,
+                                            imshow_data=pressure_data[0]['data'].T * P_TO_WATER * TO_MMHG,
                                             plot_data=savgol_filter(
                                                 pressure_data[0]['data'][:, int(sim.resolution[1] / 2)], 100,
-                                                5) * TO_MMHG, max_abs_value=max_abs_pressure * TO_MMHG,
+                                                5) * P_TO_WATER * TO_MMHG,
+                                            max_abs_value=max_abs_pressure * P_TO_WATER * TO_MMHG,
                                             title='Pressure', x_label='Tube length [\u03bcm]',
                                             y_label='Pressure [mmHg]')
     fig.suptitle(f'Simulation time: 0.0 seconds')
@@ -91,10 +92,11 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
     def update(frame):
         im1.set_data(velocity_data[frame]['data'][:, :, 0].T)
         im2.set_data(velocity_data[frame]['data'][:, :, 1].T)
-        im3.set_data(pressure_data[frame]['data'].T * TO_MMHG)
+        im3.set_data(pressure_data[frame]['data'].T * P_TO_WATER * TO_MMHG)
         plot1.set_ydata(savgol_filter(velocity_data[frame]['data'][:-1, int(sim.resolution[1] / 2), 0], 100, 1))
         plot2.set_ydata(savgol_filter(velocity_data[frame]['data'][:-1, int(sim.resolution[1] / 2), 1], 100, 1))
-        plot3.set_ydata(savgol_filter(pressure_data[frame]['data'][:, int(sim.resolution[1] / 2)] * 7.5E-9, 100, 1))
+        plot3.set_ydata(
+            savgol_filter(pressure_data[frame]['data'][:, int(sim.resolution[1] / 2)] * P_TO_WATER * TO_MMHG, 100, 1))
         fig.suptitle(f'Simulation time: {frame * sim.dt:.1f} seconds')
         for i in range(3):
             ax[i][1].relim()
@@ -102,6 +104,6 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
         return [im1, im2, im3, plot1, plot2, plot3]
 
     ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), interval=2000, blit=True)
-    ani.save(f'./run_{folder_name}/animation_slow.gif', writer='pillow', fps=1, dpi=300)
-    ani.save(f'./run_{folder_name}/animation_fast.gif', writer='pillow', fps=10, dpi=300)
+    ani.save(f'./run_{folder_name}/animation_slow.gif', writer='pillow', fps=1, dpi=200)
+    ani.save(f'./run_{folder_name}/animation_fast.gif', writer='pillow', fps=10, dpi=200)
     return None

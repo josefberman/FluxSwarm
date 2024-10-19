@@ -4,17 +4,18 @@ from numpy.random import rand
 
 
 class Member:
-    def __init__(self, location=None, velocity=None, radius: float = 0, direction: float = 0, density=1):
+    def __init__(self, location=None, velocity=None, radius: float = 0, density=1):
         if location is None:
-            location = {'x': 0, 'y': 0}
+            location = {'x': 0, 'y': 0, 'theta': 0}
         self.location = location
         if velocity is None:
-            velocity = {'x': 0, 'y': 0}
+            velocity = {'x': 0, 'y': 0, 'omega': 0}
         self.velocity = velocity
         self.radius = radius
-        self.direction = direction
         self.density = density
         self.mass = self.density * np.pi * self.radius ** 2
+        self.previous_locations = []
+        self.previous_velocities = []
 
     def as_sphere(self):
         return Sphere(x=self.location['x'], y=self.location['y'], radius=self.radius)
@@ -27,10 +28,12 @@ class Swarm:
         s = []
         for i in range(num_x):
             for j in range(num_y):
-                s.append(
-                    Member(location={'x': left_location + i * member_interval_x,
-                                     'y': bottom_location + j * member_interval_y}, radius=member_radius,
-                           direction=rand() * 2 * np.pi, density=member_density))
+                # s.append(Member(
+                #     location={'x': left_location + i * member_interval_x, 'y': bottom_location + j * member_interval_y,
+                #               'theta': rand() * 2 * np.pi}, radius=member_radius, density=member_density))
+                s.append(Member(
+                    location={'x': left_location + i * member_interval_x, 'y': bottom_location + j * member_interval_y,
+                              'theta': 0}, radius=member_radius, density=member_density))
         self.members = s
         self.num_x = num_x
         self.num_y = num_y

@@ -4,7 +4,7 @@ from numpy.random import rand
 
 
 class Member:
-    def __init__(self, location=None, velocity=None, radius: float = 0, density=1):
+    def __init__(self, location=None, velocity=None, radius: float = 0, density=1, max_force: float = 0):
         if location is None:
             location = {'x': 0, 'y': 0, 'theta': 0}
         self.location = location
@@ -16,6 +16,8 @@ class Member:
         self.mass = self.density * np.pi * self.radius ** 2
         self.previous_locations = []
         self.previous_velocities = []
+        self.current_force = 0
+        self.max_force = max_force
 
     def as_sphere(self):
         return Sphere(x=self.location['x'], y=self.location['y'], radius=self.radius)
@@ -30,7 +32,7 @@ class Swarm:
             for j in range(num_y):
                 # s.append(Member(
                 #     location={'x': left_location + i * member_interval_x, 'y': bottom_location + j * member_interval_y,
-                #               'theta': rand() * 2 * np.pi}, radius=member_radius, density=member_density))
+                #               'theta': rand() * 2 * np.pi}, radius=member_radius, density=member_density, max_force=))
                 s.append(Member(
                     location={'x': left_location + i * member_interval_x, 'y': bottom_location + j * member_interval_y,
                               'theta': 0}, radius=member_radius, density=member_density))

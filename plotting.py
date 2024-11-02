@@ -18,7 +18,7 @@ def plot_scalar_field(field, ax, length_x, length_y, title):
     return im
 
 
-def plot_save_current_step(time_step: int, folder_name: str, v_field: Field, p_field: Field, inflow_field: Field,
+def plot_save_current_step(time_step: int, folder_name: str, v_field: Field, p_field: Field,
                            sim: Simulation, swarm: Swarm) -> None:
     fig, axes = plt.subplots(3, 1, figsize=(20, 10))
     fields = [v_field['x'], v_field['y'], p_field * TO_MMHG]
@@ -31,8 +31,9 @@ def plot_save_current_step(time_step: int, folder_name: str, v_field: Field, p_f
         for member in swarm.members:
             axes[i].add_patch(plt.Circle((member.location['x'], member.location['y']), member.radius, color='k'))
             axes[i].add_patch(
-                plt.Arrow(member.location['x'], member.location['y'], member.radius * np.sin(member.location['theta']),
-                          member.radius * np.cos(member.location['theta']), color='white', linewidth=0.5))
+                plt.Arrow(member.location['x'], member.location['y'],
+                          member.radius * np.cos(member.location['theta']),
+                          member.radius * np.sin(member.location['theta']), color='white', linewidth=0.5))
     plt.tight_layout()
     plt.savefig(f'./run_{folder_name}/figures/timestep_{time_step * sim.dt:.3f}.jpg', dpi=300)
     plt.close(fig)
@@ -42,19 +43,19 @@ def plot_save_current_step(time_step: int, folder_name: str, v_field: Field, p_f
 def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Swarm, imshow_data: np.ndarray,
                                plot_data: np.ndarray, max_abs_value: float, title: str, x_label: str, y_label: str):
     im_handler = axis[0].imshow(imshow_data, origin='lower', cmap='coolwarm_r', vmin=-max_abs_value, vmax=max_abs_value,
-                                extent=[0, sim.length_x, 0, sim.length_y], aspect=4)
+                                extent=[0, sim.length_x, 0, sim.length_y], aspect=4, zorder=1)
     axis[0].plot([0, sim.length_x], [int(sim.length_y / 2), int(sim.length_y / 2)], c='k', linestyle='dashed', zorder=2)
     member_patches = []
     direction_patches = []
     for member in swarm.members:
         member_patches.append(axis[0].add_patch(
             plt.Circle((member.previous_locations[0]['x'], member.previous_locations[0]['y']), member.radius,
-                       color='k')))
+                       color='k', zorder=3)))
         direction_patches.append(
             axis[0].add_patch(plt.Arrow(member.previous_locations[0]['x'], member.previous_locations[0]['y'],
+                                        member.radius * np.cos(member.previous_locations[0]['theta']),
                                         member.radius * np.sin(member.previous_locations[0]['theta']),
-                                        member.radius * np.cos(member.previous_locations[0]['theta']), color='white',
-                                        linewidth=0.5)))
+                                        color='white', linewidth=0.5, zorder=4)))
     fig.colorbar(im_handler, ax=axis[0], orientation='vertical', pad=0.04, fraction=0.02)
     axis[0].set_title(title)
     plot_handler, = axis[1].plot(np.linspace(0, sim.length_x, sim.resolution[0]), plot_data, c='k')
@@ -72,7 +73,7 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
     max_abs_velocity_x = np.max(np.abs([file['data'][:, :, 0] for file in velocity_data]))
     max_abs_velocity_y = np.max(np.abs([file['data'][:, :, 1] for file in velocity_data]))
     max_abs_pressure = np.max(np.abs([file['data'] for file in pressure_data]))
-    fig, ax = plt.subplots(nrows=3, ncols=2, figsize=(20, 10))
+    fig, ax = plt.subplots(nrows=3, ncols=2, figsize=(15, 10), gridspec_kw={'width_ratios':[3,1]})
     v_x_h = create_animation_frame_row(fig=fig, axis=ax[0], sim=sim, swarm=swarm,
                                        imshow_data=velocity_data[0]['data'][:, :, 0].T,
                                        plot_data=savgol_filter(velocity_data[0]['data'][:-1,
@@ -92,7 +93,7 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
                                                              int(sim.resolution[1] / 2)], 100, 5) * TO_MMHG,
                                      max_abs_value=max_abs_pressure * TO_MMHG, title='Pressure',
                                      x_label='Tube length [\u03BCm]', y_label='Pressure [mmHg]')
-    fig.suptitle(f'Simulation time: 0.0 seconds')
+    fig.suptitle(f'Simulation time: {sim.dt} seconds')
     plt.tight_layout()
 
     def update(frame):
@@ -111,24 +112,25 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
             v_y_h[2][i].center = member.previous_locations[frame]['x'], member.previous_locations[frame]['y']
             p_h[2][i].center = member.previous_locations[frame]['x'], member.previous_locations[frame]['y']
             v_x_h[3][i].set_data(x=member.previous_locations[frame]['x'], y=member.previous_locations[frame]['y'],
-                                 dx=member.radius * np.sin(member.previous_locations[frame]['theta']),
-                                 dy=member.radius * np.cos(member.previous_locations[frame]['theta']))
+                                 dx=member.radius * np.cos(member.previous_locations[frame]['theta']),
+                                 dy=member.radius * np.sin(member.previous_locations[frame]['theta']))
             v_y_h[3][i].set_data(x=member.previous_locations[frame]['x'], y=member.previous_locations[frame]['y'],
-                                 dx=member.radius * np.sin(member.previous_locations[frame]['theta']),
-                                 dy=member.radius * np.cos(member.previous_locations[frame]['theta']))
+                                 dx=member.radius * np.cos(member.previous_locations[frame]['theta']),
+                                 dy=member.radius * np.sin(member.previous_locations[frame]['theta']))
             p_h[3][i].set_data(x=member.previous_locations[frame]['x'], y=member.previous_locations[frame]['y'],
-                               dx=member.radius * np.sin(member.previous_locations[frame]['theta']),
-                               dy=member.radius * np.cos(member.previous_locations[frame]['theta']))
-        fig.suptitle(f'Simulation time: {frame * sim.dt:.1f} seconds')
+                               dx=member.radius * np.cos(member.previous_locations[frame]['theta']),
+                               dy=member.radius * np.sin(member.previous_locations[frame]['theta']))
+        fig.suptitle(f'Simulation time: {frame * sim.dt:.2f} seconds')
         return [v_x_h[0], v_y_h[0], p_h[0], v_x_h[1], v_y_h[1], p_h[1], *v_x_h[2], *v_y_h[2], *p_h[2], *v_x_h[3],
                 *v_y_h[3], *p_h[3]]
 
     mpl.rcParams['animation.ffmpeg_path'] = r"C:\Users\assaf\ffmpeg\ffmpeg-7.1-essentials_build\bin\ffmpeg.exe"
-    ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), blit=True)
-    ffmpeg_writer = animation.FFMpegWriter(fps=10, codec='h264', bitrate=5000)
-    ani.save(f'./run_{folder_name}/animation_fast.mp4', ffmpeg_writer, dpi=300)
-    ffmpeg_writer = animation.FFMpegWriter(fps=1, codec='h264', bitrate=5000)
-    ani.save(f'./run_{folder_name}/animation_slow.mp4', ffmpeg_writer, dpi=300)
+    ffmpeg_writer = animation.FFMpegWriter(fps=10, codec='h264', bitrate=-1)
+    ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), blit=True, repeat=False)
+    ani.save(f'./run_{folder_name}/animation_fast.mp4', ffmpeg_writer, dpi=200)
+    ffmpeg_writer = animation.FFMpegWriter(fps=1, codec='h264', bitrate=-1)
+    ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), blit=True, repeat=False)
+    ani.save(f'./run_{folder_name}/animation_slow.mp4', ffmpeg_writer, dpi=200)
     # ani.save(f'./run_{folder_name}/animation_slow.gif', writer='pillow', fps=1, dpi=300)
     # ani.save(f'./run_{folder_name}/animation_fast.gif', writer='pillow', fps=10, dpi=300)
     return None

@@ -4,12 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="011fd143-0d4d-4ffe-82c4-bf547896fdff" name="Changes" comment="Organized project">
+    <list default="true" id="011fd143-0d4d-4ffe-82c4-bf547896fdff" name="Changes" comment="Capillary two-way coupling with swarm with rotation">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data_structures.py" beforeDir="false" afterPath="$PROJECT_DIR$/data_structures.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/auxiliary.py" beforeDir="false" afterPath="$PROJECT_DIR$/auxiliary.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/plotting.py" beforeDir="false" afterPath="$PROJECT_DIR$/plotting.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -26,11 +25,14 @@
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
-        <entry key="$PROJECT_DIR$" value="6f2438a3f50e2e8dab7746038e1bf898e74956bb" />
+        <entry key="$PROJECT_DIR$" value="Aorta" />
       </map>
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
     <option name="RESET_MODE" value="HARD" />
+  </component>
+  <component name="MarkdownSettingsMigration">
+    <option name="stateVersion" value="1" />
   </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 6
@@ -41,15 +43,16 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;Python.main.executor&quot;: &quot;Run&quot;,
-    &quot;Python.trial.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;Capillary&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Python.main.executor": "Debug",
+    "Python.trial.executor": "Run",
+    "RunOnceActivity.OpenProjectViewOnStart": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "git-widget-placeholder": "Capillary",
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="D:\Thesis\phiflow_sim\trial_1" />
@@ -175,7 +178,79 @@
       <option name="project" value="LOCAL" />
       <updated>1726918706835</updated>
     </task>
-    <option name="localTasksCounter" value="11" />
+    <task id="LOCAL-00011" summary="Capillary properties">
+      <option name="closed" value="true" />
+      <created>1727541523078</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1727541523078</updated>
+    </task>
+    <task id="LOCAL-00012" summary="Capillary properties">
+      <option name="closed" value="true" />
+      <created>1727954234145</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1727954234145</updated>
+    </task>
+    <task id="LOCAL-00013" summary="Capillary properties">
+      <option name="closed" value="true" />
+      <created>1728108842360</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1728108842360</updated>
+    </task>
+    <task id="LOCAL-00014" summary="Capillary constant uniform inflow">
+      <option name="closed" value="true" />
+      <created>1728185495358</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1728185495358</updated>
+    </task>
+    <task id="LOCAL-00015" summary="Capillary um, s, ug">
+      <option name="closed" value="true" />
+      <created>1728735654006</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1728735654006</updated>
+    </task>
+    <task id="LOCAL-00016" summary="Capillary two-way coupling with swarm">
+      <option name="closed" value="true" />
+      <created>1728748855725</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1728748855725</updated>
+    </task>
+    <task id="LOCAL-00017" summary="Capillary two-way coupling with swarm">
+      <option name="closed" value="true" />
+      <created>1729094117253</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1729094117253</updated>
+    </task>
+    <task id="LOCAL-00018" summary="Capillary two-way coupling with swarm with rotation">
+      <option name="closed" value="true" />
+      <created>1729349778055</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1729349778055</updated>
+    </task>
+    <task id="LOCAL-00019" summary="Capillary two-way coupling with swarm with rotation">
+      <option name="closed" value="true" />
+      <created>1735893263827</created>
+      <option name="number" value="00019" />
+      <option name="presentableId" value="LOCAL-00019" />
+      <option name="project" value="LOCAL" />
+      <updated>1735893263827</updated>
+    </task>
+    <option name="localTasksCounter" value="20" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -207,6 +282,11 @@
     <MESSAGE value="Aorta parameters" />
     <MESSAGE value="Capillary parameters" />
     <MESSAGE value="Organized project" />
-    <option name="LAST_COMMIT_MESSAGE" value="Organized project" />
+    <MESSAGE value="Capillary properties" />
+    <MESSAGE value="Capillary constant uniform inflow" />
+    <MESSAGE value="Capillary um, s, ug" />
+    <MESSAGE value="Capillary two-way coupling with swarm" />
+    <MESSAGE value="Capillary two-way coupling with swarm with rotation" />
+    <option name="LAST_COMMIT_MESSAGE" value="Capillary two-way coupling with swarm with rotation" />
   </component>
 </project>

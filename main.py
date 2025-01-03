@@ -6,13 +6,13 @@ from data_structures import Simulation, Swarm, Inflow, Fluid
 from simulation import run_simulation
 
 # -------------- Parameter Definition -------------
-# Simulation dimensions are length=mm and time=second, mass=ug
-sim = Simulation(length_x=720, length_y=36, resolution=(3600, 180), dt=0.05, total_time=20)
-swarm = Swarm(num_x=1, num_y=1, left_location=480, bottom_location=18, member_interval_x=1, member_interval_y=1,
-              member_radius=1.8, member_density=5150)  # density in ug/mm^3
-inflow = Inflow(frequency=2 * np.pi, amplitude=98, radius=sim.length_y / 2, center_y=sim.length_y / 2)
+# Simulation dimensions are length=mm and time=second, mass=mg
+sim = Simulation(length_x=720, length_y=36, resolution=(900, 90), dt=0.1, total_time=20)
+swarm = Swarm(num_x=1, num_y=1, left_location=480, bottom_location=9, member_interval_x=1, member_interval_y=1,
+              member_radius=1.8, member_density=5.150)  # density in mg/mm^3
+inflow = Inflow(frequency=2 * np.pi, amplitude=1, radius=sim.length_y / 2, center_y=sim.length_y / 2)
 inflow.center_x = 0
-fluid = Fluid(viscosity=1E3)  # viscosity of blood in ug/(mm*s)
+fluid = Fluid(viscosity=0.89)  # viscosity of water in mg/(mm*s)
 
 # -------------- Container Generation --------------
 box = Box['x,y', 0:sim.length_x, 0:sim.length_y]

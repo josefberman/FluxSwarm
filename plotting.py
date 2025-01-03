@@ -1,4 +1,5 @@
 import matplotlib as mpl
+import matplotlib.patches
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.collections import PatchCollection
@@ -34,6 +35,10 @@ def plot_save_current_step(time_step: int, folder_name: str, v_field: Field, p_f
                 plt.Arrow(member.location['x'], member.location['y'],
                           member.radius * np.cos(member.location['theta']),
                           member.radius * np.sin(member.location['theta']), color='white', linewidth=0.5))
+        for _x in np.arange(0, sim.length_x, sim.dx):
+            axes[i].axvline(_x, c='k', linewidth=0.1, alpha=0.5)
+        for _y in np.arange(0, sim.length_y, sim.dy):
+            axes[i].axhline(_y, c='k', linewidth=0.1, alpha=0.5)
     plt.tight_layout()
     plt.savefig(f'./run_{folder_name}/figures/timestep_{time_step * sim.dt:.3f}.jpg', dpi=300)
     plt.close(fig)
@@ -52,10 +57,11 @@ def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Sw
             plt.Circle((member.previous_locations[0]['x'], member.previous_locations[0]['y']), member.radius,
                        color='k', zorder=3)))
         direction_patches.append(
-            axis[0].add_patch(plt.Arrow(member.previous_locations[0]['x'], member.previous_locations[0]['y'],
-                                        member.radius * np.cos(member.previous_locations[0]['theta']),
-                                        member.radius * np.sin(member.previous_locations[0]['theta']),
-                                        color='white', linewidth=0.5, zorder=4)))
+            axis[0].add_patch(
+                matplotlib.patches.FancyArrow(x=member.previous_locations[0]['x'], y=member.previous_locations[0]['y'],
+                                              dx=member.radius * np.cos(member.previous_locations[0]['theta']),
+                                              dy=member.radius * np.sin(member.previous_locations[0]['theta']),
+                                              head_width=0.5, width=0.5, color='white', linewidth=0.5, zorder=4)))
     fig.colorbar(im_handler, ax=axis[0], orientation='vertical', pad=0.04, fraction=0.02)
     axis[0].set_title(title)
     plot_handler, = axis[1].plot(np.linspace(0, sim.length_x, sim.resolution[0]), plot_data, c='k')
@@ -73,7 +79,7 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
     max_abs_velocity_x = np.max(np.abs([file['data'][:, :, 0] for file in velocity_data]))
     max_abs_velocity_y = np.max(np.abs([file['data'][:, :, 1] for file in velocity_data]))
     max_abs_pressure = np.max(np.abs([file['data'] for file in pressure_data]))
-    fig, ax = plt.subplots(nrows=3, ncols=2, figsize=(15, 10), gridspec_kw={'width_ratios':[3,1]})
+    fig, ax = plt.subplots(nrows=3, ncols=2, figsize=(15, 10), gridspec_kw={'width_ratios': [3, 1]})
     v_x_h = create_animation_frame_row(fig=fig, axis=ax[0], sim=sim, swarm=swarm,
                                        imshow_data=velocity_data[0]['data'][:, :, 0].T,
                                        plot_data=savgol_filter(velocity_data[0]['data'][:-1,

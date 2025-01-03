@@ -23,19 +23,20 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     v = StaggeredGrid(math.stack([v_tensor_u, v_tensor_v], dual(vector='x,y')), boundary=v.boundary, bounds=v.bounds,
                       x=sim.resolution[0], y=sim.resolution[1])
     reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
-    # v = diffuse.explicit(v, 0.001, sim.dt)
+    print(f'{reynolds=}')
+    v = diffuse.explicit(v, 0.001, sim.dt)
     v = advect.semi_lagrangian(v, v, sim.dt)
     v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
                                      solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000))
-    if t > 15:
+    if t >= 0:
         # Calculate movement and rotation of swarm members
         for member in swarm.members:
             # sphere_member = Sphere(x=member.location['x'], y=member.location['y'], radius=member.radius + 100)
             # pressure_gradient = field.spatial_gradient(p).at(sphere_member, keep_boundary=True)
             # pressure_gradient = field.spatial_gradient(p)
             # viscous_laplace = field.laplace(v)
-            pressure_profile = sample_field_around_obstacle(f=p, member=member, sim=sim)  # pg/(um*s^2)
-            velocity_profile = sample_field_around_obstacle(f=v, member=member, sim=sim)  # um/s
+            pressure_profile = sample_field_around_obstacle(f=p, member=member, sim=sim)  # ug/(mm*s^2)
+            velocity_profile = sample_field_around_obstacle(f=v, member=member, sim=sim)  # mm/s
             advance_linear_motion(member=member, sim=sim, pressure_profile=pressure_profile)
             advance_angular_motion(member=member, sim=sim, inflow=inflow, fluid_obj=fluid_obj,
                                    velocity_profile=velocity_profile)
@@ -53,7 +54,7 @@ def run_simulation(velocity_field: Field, pressure_field: Field | None,
                                                      sim=sim, swarm=swarm, fluid_obj=fluid_obj,
                                                      t=time_step * sim.dt)
         print('Calculation time:', datetime.now() - calc_start)
-        if (time_step * sim.dt) > 15:
+        if (time_step * sim.dt) >= 0:
             plot_save_current_step(time_step=time_step, folder_name=folder_name, v_field=velocity_field,
                                    p_field=pressure_field, sim=sim, swarm=swarm)
             phi.field.write(velocity_field, f'./run_{folder_name}/velocity/{time_step:04}')

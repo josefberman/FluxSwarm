@@ -46,8 +46,8 @@ class Swarm:
         self.member_radius = member_radius
 
     def as_obstacle_list(self) -> list:
-        return [Obstacle(geometry=Sphere(x=m.location['x'], y=m.location['y'], radius=m.radius),
-                         velocity=vec(x=m.velocity['x'], y=m.velocity['y'])) for m in self.members]
+        return [Obstacle(
+            geometry=Sphere(x=m.location['x'], y=m.location['y'], radius=m.radius)) for m in self.members]
 
     def as_sphere_list(self) -> list:
         return [Sphere(x=m.location['x'], y=m.location['y'], radius=m.radius) for m in self.members]

@@ -15,26 +15,20 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         rect_wave = inflow.amplitude
     else:
         rect_wave = 0
-    v_tensor_u = v.staggered_tensor()[0].numpy('x,y')
-    v_tensor_u[:33, :] = rect_wave
-    v_tensor_u = tensor(v_tensor_u[:, :-1], spatial('x,y'))
-    v_tensor_v = v.staggered_tensor()[1].numpy('x,y')
-    v_tensor_v = tensor(v_tensor_v[:-1, :-2], spatial('x,y'))
-    v = StaggeredGrid(math.stack([v_tensor_u, v_tensor_v], dual(vector='x,y')), boundary=v.boundary, bounds=v.bounds,
-                      x=sim.resolution[0], y=sim.resolution[1])
+    rect_wave = inflow.amplitude
+    # v_values = math.where(v.points.vector[0] < sim.length_x / 100, math.tensor([rect_wave, 0.0], channel('vector')),
+    #                       v.values)
+    mask = HardGeometryMask(Box(x=sim.length_x / 100, y=sim.length_y))
+    # v = CenteredGrid(values=v_values, boundary=v.boundary, bounds=v.bounds, x=sim.resolution[0], y=sim.resolution[1])
+    v = v * (1 - mask) + (rect_wave,0) * mask
     reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
-    print(f'{reynolds=}')
-    v = diffuse.explicit(v, 0.001, sim.dt)
+    v = diffuse.explicit(v, fluid_obj.viscosity, sim.dt)
     v = advect.semi_lagrangian(v, v, sim.dt)
     v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
                                      solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000))
     if t >= 0:
         # Calculate movement and rotation of swarm members
         for member in swarm.members:
-            # sphere_member = Sphere(x=member.location['x'], y=member.location['y'], radius=member.radius + 100)
-            # pressure_gradient = field.spatial_gradient(p).at(sphere_member, keep_boundary=True)
-            # pressure_gradient = field.spatial_gradient(p)
-            # viscous_laplace = field.laplace(v)
             pressure_profile = sample_field_around_obstacle(f=p, member=member, sim=sim)  # ug/(mm*s^2)
             velocity_profile = sample_field_around_obstacle(f=v, member=member, sim=sim)  # mm/s
             advance_linear_motion(member=member, sim=sim, pressure_profile=pressure_profile)
@@ -57,8 +51,8 @@ def run_simulation(velocity_field: Field, pressure_field: Field | None,
         if (time_step * sim.dt) >= 0:
             plot_save_current_step(time_step=time_step, folder_name=folder_name, v_field=velocity_field,
                                    p_field=pressure_field, sim=sim, swarm=swarm)
-            phi.field.write(velocity_field, f'./run_{folder_name}/velocity/{time_step:04}')
-            phi.field.write(pressure_field, f'./run_{folder_name}/pressure/{time_step:04}')
+            phi.field.write(velocity_field, f'../runs/run_{folder_name}/velocity/{time_step:04}')
+            phi.field.write(pressure_field, f'../runs/run_{folder_name}/pressure/{time_step:04}')
 
     return None
 

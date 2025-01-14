@@ -17,11 +17,11 @@ def create_folders_for_run(folder_name) -> None:
     :param folder_name:
     :return: None
     """
-    os.makedirs(f'./run_{folder_name}', exist_ok=True)
-    os.makedirs(f'./run_{folder_name}/velocity', exist_ok=True)
-    os.makedirs(f'./run_{folder_name}/pressure', exist_ok=True)
-    os.makedirs(f'./run_{folder_name}/inflow', exist_ok=True)
-    os.makedirs(f'./run_{folder_name}/figures', exist_ok=True)
+    os.makedirs(f'../runs/run_{folder_name}', exist_ok=True)
+    os.makedirs(f'../runs/run_{folder_name}/velocity', exist_ok=True)
+    os.makedirs(f'../runs/run_{folder_name}/pressure', exist_ok=True)
+    #os.makedirs(f'./run_{folder_name}/inflow', exist_ok=True)
+    os.makedirs(f'../runs/run_{folder_name}/figures', exist_ok=True)
     return None
 
 
@@ -35,7 +35,7 @@ def log_parameters(folder_name, sim: Simulation, swarm: Swarm, inflow: Inflow, f
     :param fluid: Fluid object to save fluid properties.
     :return: None
     """
-    with open(f'./run_{folder_name}/configuration.txt', 'w') as f:
+    with open(f'../runs/run_{folder_name}/configuration.txt', 'w') as f:
         f.write(f'{sim.length_x=}\n')
         f.write(f'{sim.length_y=}\n')
         f.write(f'{sim.resolution=}\n')

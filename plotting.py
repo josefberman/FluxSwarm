@@ -5,10 +5,10 @@ import matplotlib.animation as animation
 from matplotlib.collections import PatchCollection
 import numpy as np
 from phi.flow import *
-from data_structures import Simulation, Swarm
+from data_structures import Simulation, Swarm, Inflow
 from glob import glob
 from scipy.signal import savgol_filter
-from auxiliary import TO_MMHG
+from auxiliary import TO_MMHG, trapezoidal_waveform
 
 
 def plot_scalar_field(field, ax, length_x, length_y, title):
@@ -23,7 +23,7 @@ def plot_save_current_step(time_step: int, folder_name: str, v_field: Field, p_f
                            sim: Simulation, swarm: Swarm) -> None:
     fig, axes = plt.subplots(3, 1, figsize=(20, 10))
     fields = [v_field['x'], v_field['y'], p_field * TO_MMHG]
-    field_names = [u'Velocity - x component [\u03BCm/s]', u'Velocity = y component [\u03BCm/s]', 'Pressure [mmHg]']
+    field_names = [u'Velocity - x component [mm/s]', u'Velocity = y component [mm/s]', 'Pressure [mmHg]']
     ax_handlers = []
     for i in range(0, 3):
         ax_handlers.append(plot_scalar_field(field=fields[i], ax=axes[i], length_x=sim.length_x, length_y=sim.length_y,
@@ -35,12 +35,12 @@ def plot_save_current_step(time_step: int, folder_name: str, v_field: Field, p_f
                 plt.Arrow(member.location['x'], member.location['y'],
                           member.radius * np.cos(member.location['theta']),
                           member.radius * np.sin(member.location['theta']), color='white', linewidth=0.5))
-        for _x in np.arange(0, sim.length_x, sim.dx):
-            axes[i].axvline(_x, c='k', linewidth=0.1, alpha=0.5)
-        for _y in np.arange(0, sim.length_y, sim.dy):
-            axes[i].axhline(_y, c='k', linewidth=0.1, alpha=0.5)
+        # for _x in np.arange(0, sim.length_x, sim.dx):
+        #     axes[i].axvline(_x, c='k', linewidth=0.1, alpha=0.5)
+        # for _y in np.arange(0, sim.length_y, sim.dy):
+        #     axes[i].axhline(_y, c='k', linewidth=0.1, alpha=0.5)
     plt.tight_layout()
-    plt.savefig(f'./run_{folder_name}/figures/timestep_{time_step * sim.dt:.3f}.jpg', dpi=300)
+    plt.savefig(f'../runs/run_{folder_name}/figures/timestep_{time_step * sim.dt:.3f}.jpg', dpi=300)
     plt.close(fig)
     return None
 
@@ -61,7 +61,7 @@ def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Sw
                 matplotlib.patches.FancyArrow(x=member.previous_locations[0]['x'], y=member.previous_locations[0]['y'],
                                               dx=member.radius * np.cos(member.previous_locations[0]['theta']),
                                               dy=member.radius * np.sin(member.previous_locations[0]['theta']),
-                                              head_width=0.5, width=0.5, color='white', linewidth=0.5, zorder=4)))
+                                              color='white', linewidth=0.5, zorder=4)))
     fig.colorbar(im_handler, ax=axis[0], orientation='vertical', pad=0.04, fraction=0.02)
     axis[0].set_title(title)
     plot_handler, = axis[1].plot(np.linspace(0, sim.length_x, sim.resolution[0]), plot_data, c='k')
@@ -71,9 +71,9 @@ def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Sw
     return im_handler, plot_handler, member_patches, direction_patches
 
 
-def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> None:
-    velocity_file_list = sorted(glob(f'./run_{folder_name}/velocity/*.npz'))
-    pressure_file_list = sorted(glob(f'./run_{folder_name}/pressure/*.npz'))
+def animate_save_simulation(sim: Simulation, swarm: Swarm, inflow: Inflow, folder_name: str) -> None:
+    velocity_file_list = sorted(glob(f'../runs/run_{folder_name}/velocity/*.npz'))
+    pressure_file_list = sorted(glob(f'../runs/run_{folder_name}/pressure/*.npz'))
     velocity_data = [np.load(file) for file in velocity_file_list]
     pressure_data = [np.load(file) for file in pressure_file_list]
     max_abs_velocity_x = np.max(np.abs([file['data'][:, :, 0] for file in velocity_data]))
@@ -85,21 +85,22 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
                                        plot_data=savgol_filter(velocity_data[0]['data'][:-1,
                                                                int(sim.resolution[1] / 2), 0], 100, 5),
                                        max_abs_value=max_abs_velocity_x, title=u'Velocity - x component',
-                                       x_label='Tube length [\u03BCm]', y_label='Velocity [\u03BCm/s]')
+                                       x_label='Tube length [mm]', y_label='Velocity [mm/s]')
     v_y_h = create_animation_frame_row(fig=fig, axis=ax[1], sim=sim, swarm=swarm,
                                        imshow_data=velocity_data[0]['data'][:, :, 1].T,
                                        plot_data=savgol_filter(velocity_data[0]['data'][:-1,
                                                                int(sim.resolution[1] / 2), 1], 100,
                                                                5), max_abs_value=max_abs_velocity_y,
-                                       title=u'Velocity = y component', x_label='Tube length [\u03BCm]',
-                                       y_label='Velocity [\u03BCm/s]')
+                                       title=u'Velocity = y component', x_label='Tube length [mm]',
+                                       y_label='Velocity [mm/s]')
     p_h = create_animation_frame_row(fig=fig, axis=ax[2], sim=sim, swarm=swarm,
                                      imshow_data=pressure_data[0]['data'].T * TO_MMHG,
                                      plot_data=savgol_filter(pressure_data[0]['data'][:,
                                                              int(sim.resolution[1] / 2)], 100, 5) * TO_MMHG,
                                      max_abs_value=max_abs_pressure * TO_MMHG, title='Pressure',
-                                     x_label='Tube length [\u03BCm]', y_label='Pressure [mmHg]')
-    fig.suptitle(f'Simulation time: {sim.dt} seconds')
+                                     x_label='Tube length [mm]', y_label='Pressure [mmHg]')
+    inflow_mag = trapezoidal_waveform(t=sim.dt, a=inflow.amplitude, tau=2, h=1.5, v=inflow.amplitude/2)
+    fig.suptitle(f'Simulation time: {sim.dt} seconds.\nInflow: {inflow_mag:.2f} mm/s')
     plt.tight_layout()
 
     def update(frame):
@@ -126,17 +127,18 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, folder_name: str) -> 
             p_h[3][i].set_data(x=member.previous_locations[frame]['x'], y=member.previous_locations[frame]['y'],
                                dx=member.radius * np.cos(member.previous_locations[frame]['theta']),
                                dy=member.radius * np.sin(member.previous_locations[frame]['theta']))
-        fig.suptitle(f'Simulation time: {frame * sim.dt:.2f} seconds')
+        inflow_mag = trapezoidal_waveform(t=frame * sim.dt, a=inflow.amplitude, tau=2, h=1.5, v=inflow.amplitude/2)
+        fig.suptitle(f'Simulation time: {frame * sim.dt:.2f} seconds.\nInflow: {inflow_mag:.2f} mm/s')
         return [v_x_h[0], v_y_h[0], p_h[0], v_x_h[1], v_y_h[1], p_h[1], *v_x_h[2], *v_y_h[2], *p_h[2], *v_x_h[3],
                 *v_y_h[3], *p_h[3]]
 
     mpl.rcParams['animation.ffmpeg_path'] = r"C:\Users\assaf\ffmpeg\ffmpeg-7.1-essentials_build\bin\ffmpeg.exe"
     ffmpeg_writer = animation.FFMpegWriter(fps=10, codec='h264', bitrate=-1)
     ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), blit=True, repeat=False)
-    ani.save(f'./run_{folder_name}/animation_fast.mp4', ffmpeg_writer, dpi=200)
+    ani.save(f'../runs/run_{folder_name}/animation_fast.mp4', ffmpeg_writer, dpi=200)
     ffmpeg_writer = animation.FFMpegWriter(fps=1, codec='h264', bitrate=-1)
     ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), blit=True, repeat=False)
-    ani.save(f'./run_{folder_name}/animation_slow.mp4', ffmpeg_writer, dpi=200)
+    ani.save(f'../runs/run_{folder_name}/animation_slow.mp4', ffmpeg_writer, dpi=200)
     # ani.save(f'./run_{folder_name}/animation_slow.gif', writer='pillow', fps=1, dpi=300)
     # ani.save(f'./run_{folder_name}/animation_fast.gif', writer='pillow', fps=10, dpi=300)
     return None

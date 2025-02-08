@@ -1,4 +1,5 @@
 import numpy as np
+from fontTools.misc.bezierTools import epsilon
 from matplotlib import pyplot as plt
 from scipy.spatial.distance import euclidean
 
@@ -9,6 +10,8 @@ from plotting import plot_save_current_step
 import phi.field as field
 import phi.math
 from auxiliary import trapezoidal_waveform
+
+RECORDING_TIME = 0
 
 
 def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, fluid_obj: Fluid,
@@ -28,11 +31,14 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     v = advect.semi_lagrangian(v, v, sim.dt)
     v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
                                      solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000))
-    if t >= 0:
+    if t >= RECORDING_TIME:
         # Calculate movement and rotation of swarm members
         for member in swarm.members:
             pressure_profile = sample_field_around_obstacle(f=p, member=member, sim=sim)  # ug/(mm*s^2)
             velocity_profile = sample_field_around_obstacle(f=v, member=member, sim=sim)  # mm/s
+            # for member2 in swarm.members:
+            #     if member2 is not member:
+            #         update_for_impact(member, member2)
             advance_linear_motion(member=member, sim=sim, pressure_profile=pressure_profile)
             advance_angular_motion(member=member, sim=sim, inflow=inflow, fluid_obj=fluid_obj,
                                    velocity_profile=velocity_profile)
@@ -50,7 +56,7 @@ def run_simulation(velocity_field: Field, pressure_field: Field | None,
                                                      sim=sim, swarm=swarm, fluid_obj=fluid_obj,
                                                      t=time_step * sim.dt)
         print('Calculation time:', datetime.now() - calc_start)
-        if (time_step * sim.dt) >= 0:
+        if (time_step * sim.dt) >= RECORDING_TIME:
             plot_save_current_step(time_step=time_step, folder_name=folder_name, v_field=velocity_field,
                                    p_field=pressure_field, sim=sim, swarm=swarm)
             phi.field.write(velocity_field, f'../runs/run_{folder_name}/velocity/{time_step:04}')
@@ -72,12 +78,21 @@ def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation) -> n
     return field_samples
 
 
-def advance_impact(member1: Member, member2: Member):
-    v12_x = member2.velocity['x'] - member1.velocity['x']
-    v12_y = member2.velocity['y'] - member1.velocity['y']
+def update_for_impact(member1: Member, member2: Member):
     euc_dist = euclidean([member1.location['x'], member1.location['y']], [member2.location['x'], member2.location['y']])
-    n_hat_x = (member2.location['x'] - member1.location['x']) / euc_dist
-    n_hat_y = (member2.location['y'] - member1.location['y']) / euc_dist
+    if euc_dist < (member1.radius + member2.radius):
+        v12_x = member2.velocity['x'] - member1.velocity['x']
+        v12_y = member2.velocity['y'] - member1.velocity['y']
+        n_hat_x = (member2.location['x'] - member1.location['x']) / euc_dist
+        n_hat_y = (member2.location['y'] - member1.location['y']) / euc_dist
+        m_eff = member1.mass * member2.mass / (member1.mass + member2.mass)
+        epsilon = 0  # for perfectly inelastic collision
+        J_x = - m_eff * (1 + epsilon) * v12_x * n_hat_x
+        J_y = - m_eff * (1 + epsilon) * v12_y * n_hat_y
+        member1.velocity['x'] += J_x / member1.mass
+        member1.velocity['y'] += J_y / member1.mass
+        member2.velocity['x'] -= J_x / member2.mass
+        member2.velocity['y'] -= J_y / member2.mass
 
 
 def advance_linear_motion(member: Member, sim: Simulation, pressure_profile: np.array):

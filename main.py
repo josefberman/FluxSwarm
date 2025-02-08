@@ -7,10 +7,10 @@ from simulation import run_simulation
 
 # -------------- Parameter Definition -------------
 # Simulation dimensions are length=mm and time=second, mass=mg
-sim = Simulation(length_x=720, length_y=36, resolution=(1800, 180), dt=0.05, total_time=6)
-swarm = Swarm(num_x=5, num_y=5, left_location=480, bottom_location=7.2, member_interval_x=5.4, member_interval_y=5.4,
+sim = Simulation(length_x=720, length_y=36, resolution=(1800, 180), dt=0.05, total_time=20)
+swarm = Swarm(num_x=3, num_y=3, left_location=480, bottom_location=8.1, member_interval_x=6.3, member_interval_y=6.3,
               member_radius=1.8, member_density=5.150)  # density in mg/mm^3
-inflow = Inflow(frequency=2 * np.pi, amplitude=10, radius=sim.length_y / 2, center_y=sim.length_y / 2)
+inflow = Inflow(frequency=2 * np.pi, amplitude=30, radius=sim.length_y / 2, center_y=sim.length_y / 2)
 inflow.center_x = 0
 fluid = Fluid(viscosity=0.89)  # viscosity of water in mg/(mm*s)
 

@@ -4,19 +4,19 @@ from numpy.random import rand
 
 
 class Member:
-    def __init__(self, location=None, velocity=None, radius: float = 0, density=1, max_force: float = 0):
+    def __init__(self, location=None, velocity=None, radius: float = 0, density: float = 1, max_force: float = 0):
         if location is None:
-            location = {'x': 0, 'y': 0, 'theta': 0}
+            location = {'x': 0, 'y': 0}
         self.location = location
         if velocity is None:
-            velocity = {'x': 0, 'y': 0, 'omega': 0}
+            velocity = {'x': 0, 'y': 0}
         self.velocity = velocity
         self.radius = radius
         self.density = density
         self.mass = self.density * np.pi * self.radius ** 2
         self.previous_locations = []
         self.previous_velocities = []
-        self.current_force = 0
+        self.previous_forces = []
         self.max_force = max_force
 
     def as_sphere(self):
@@ -26,7 +26,7 @@ class Member:
 class Swarm:
     def __init__(self, num_x: int = 0, num_y: int = 0, left_location: float = 0, bottom_location: float = 0,
                  member_interval_x: float = 0, member_interval_y: float = 0, member_radius: float = 0,
-                 member_density=1):
+                 member_density: float = 1, member_max_force: float = 0):
         s = []
         for i in range(num_x):
             for j in range(num_y):
@@ -35,7 +35,7 @@ class Swarm:
                 #               'theta': rand() * 2 * np.pi}, radius=member_radius, density=member_density, max_force=))
                 s.append(Member(
                     location={'x': left_location + i * member_interval_x, 'y': bottom_location + j * member_interval_y,
-                              'theta': 0}, radius=member_radius, density=member_density))
+                              'theta': 0}, radius=member_radius, density=member_density, max_force=member_max_force))
         self.members = s
         self.num_x = num_x
         self.num_y = num_y
@@ -44,6 +44,7 @@ class Swarm:
         self.member_interval_x = member_interval_x
         self.member_interval_y = member_interval_y
         self.member_radius = member_radius
+        self.member_max_force = member_max_force
 
     def as_obstacle_list(self) -> list:
         return [Obstacle(geometry=Sphere(x=m.location['x'], y=m.location['y'], radius=m.radius),

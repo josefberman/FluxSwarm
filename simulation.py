@@ -22,26 +22,26 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     v_tensor_u = tensor(v_tensor_u[:, :-1], spatial('x,y'))
     v_tensor_v = v.staggered_tensor()[1].numpy('x,y')
     v_tensor_v = tensor(v_tensor_v[1:, 1:-1], spatial('x,y'))
-
     v = StaggeredGrid(math.stack([v_tensor_u, v_tensor_v], dual(vector='x,y')), boundary=v.boundary, bounds=v.bounds,
                       x=sim.resolution[0], y=sim.resolution[1])
     reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
-    print(f'{reynolds=}')
     v = diffuse.explicit(v, 1 / reynolds, sim.dt)
     v = advect.semi_lagrangian(v, v, sim.dt)
     v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
                                      solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000))
     if t >= RECORDING_TIME:
         # Calculate movement and rotation of swarm members
-        for member in swarm.members:
+        for i in range(len(swarm.members)):
+            member = swarm.members[i]
             pressure_profile = sample_field_around_obstacle(f=p, member=member, sim=sim)  # ug/(mm*s^2)
-            velocity_profile = sample_field_around_obstacle(f=v, member=member, sim=sim)  # mm/s
+            # velocity_profile = sample_field_around_obstacle(f=v, member=member, sim=sim)  # mm/s
             # for member2 in swarm.members:
             #     if member2 is not member:
             #         update_for_impact(member, member2)
             advance_linear_motion(member=member, sim=sim, pressure_profile=pressure_profile)
-            advance_angular_motion(member=member, sim=sim, inflow=inflow, fluid_obj=fluid_obj,
-                                   velocity_profile=velocity_profile)
+            for j in range(i + 1, len(swarm.members)):
+                member2 = swarm.members[j]
+                handle_collisions(member, member2)
             member.previous_locations.append(member.location.copy())
             member.previous_velocities.append(member.velocity.copy())
     return v, p, swarm
@@ -79,20 +79,56 @@ def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation) -> n
 
 
 def update_for_impact(member1: Member, member2: Member):
-    euc_dist = euclidean([member1.location['x'], member1.location['y']], [member2.location['x'], member2.location['y']])
-    if euc_dist < (member1.radius + member2.radius):
-        v12_x = member2.velocity['x'] - member1.velocity['x']
-        v12_y = member2.velocity['y'] - member1.velocity['y']
-        n_hat_x = (member2.location['x'] - member1.location['x']) / euc_dist
-        n_hat_y = (member2.location['y'] - member1.location['y']) / euc_dist
-        m_eff = member1.mass * member2.mass / (member1.mass + member2.mass)
-        epsilon = 0  # for perfectly inelastic collision
-        J_x = - m_eff * (1 + epsilon) * v12_x * n_hat_x
-        J_y = - m_eff * (1 + epsilon) * v12_y * n_hat_y
-        member1.velocity['x'] += J_x / member1.mass
-        member1.velocity['y'] += J_y / member1.mass
-        member2.velocity['x'] -= J_x / member2.mass
-        member2.velocity['y'] -= J_y / member2.mass
+    dist = euclidean([member1.location['x'], member1.location['y']], [member2.location['x'], member2.location['y']])
+    if dist < (member1.radius + member2.radius):
+        v_rel_x = member2.velocity['x'] - member1.velocity['x']
+        v_rel_y = member2.velocity['y'] - member1.velocity['y']
+        nx = (member2.location['x'] - member1.location['x']) / dist
+        ny = (member2.location['y'] - member1.location['y']) / dist
+        v_rel_n = v_rel_x * nx + v_rel_y * ny
+        if v_rel_n <= 0:
+            impulse = (2 * v_rel_n) / (1 / member1.mass + 1 / member2.mass)
+            member1.velocity['x'] += (impulse / member1.mass) * nx
+            member1.velocity['y'] += (impulse / member1.mass) * ny
+            member2.velocity['x'] -= (impulse / member2.mass) * nx
+            member2.velocity['y'] -= (impulse / member2.mass) * ny
+            overlap = (member1.radius + member2.radius) - dist
+            member1.location['x'] -= (overlap / 2) * nx
+            member1.location['y'] -= (overlap / 2) * ny
+            member2.location['x'] += (overlap / 2) * nx
+            member2.location['y'] += (overlap / 2) * ny
+
+
+def handle_collisions(member1: Member, member2: Member):
+    """
+    Checks for collisions among swarm members and updates their velocities based on elastic collision physics.
+
+    :param member1:
+    :param member2:
+    """
+    distance = euclidean([member1.location['x'], member1.location['y']],
+                         [member2.location['x'], member2.location['y']])
+    if distance < (member1.radius + member2.radius):  # Collision detected
+        # Compute unit normal and tangent vectors
+        normal = [(member2.location['x'] - member1.location['x']) / distance,
+                  (member2.location['y'] - member1.location['y']) / distance]
+        tangent = [-normal[1], normal[0]]
+
+        # Project velocities onto normal and tangent vectors
+        v1n = normal[0] * member1.velocity['x'] + normal[1] * member1.velocity['y']
+        v1t = tangent[0] * member1.velocity['x'] + tangent[1] * member1.velocity['y']
+        v2n = normal[0] * member2.velocity['x'] + normal[1] * member2.velocity['y']
+        v2t = tangent[0] * member2.velocity['x'] + tangent[1] * member2.velocity['y']
+
+        # Compute new normal velocities after elastic collision
+        v1n_new = (v1n * (member1.mass - member2.mass) + 2 * member2.mass * v2n) / (member1.mass + member2.mass)
+        v2n_new = (v2n * (member2.mass - member1.mass) + 2 * member1.mass * v1n) / (member1.mass + member2.mass)
+
+        # Convert back to x, y components
+        member1.velocity['x'] = v1n_new * normal[0] + v1t * tangent[0]
+        member1.velocity['y'] = v1n_new * normal[1] + v1t * tangent[1]
+        member2.velocity['x'] = v2n_new * normal[0] + v2t * tangent[0]
+        member2.velocity['y'] = v2n_new * normal[1] + v2t * tangent[1]
 
 
 def advance_linear_motion(member: Member, sim: Simulation, pressure_profile: np.array):
@@ -115,25 +151,3 @@ def advance_linear_motion(member: Member, sim: Simulation, pressure_profile: np.
             sim.length_y - member.radius - 4 * sim.dy):
         member.location['y'] += added_location_y
         member.velocity['y'] += added_velocity_y
-
-
-def advance_angular_motion(member: Member, sim: Simulation, inflow: Inflow, fluid_obj: Fluid,
-                           velocity_profile: np.array):
-    torque = 0
-    reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
-    Cd = 0.964 + 168.24 / (1 + (reynolds / 0.0307) ** 0.7626)  # for Reynolds number below 18,550
-    torque_angles = np.linspace(6 * np.pi / 4, -np.pi / 4, 8)
-    for i, v_i in enumerate(velocity_profile):
-        speed_i = np.sqrt(v_i['x'].numpy() ** 2 + v_i['y'].numpy() ** 2)
-        dir_i = np.arctan(v_i['y'].numpy() / v_i['x'].numpy())
-        speed_contribution_size = speed_i * np.cos(dir_i - torque_angles[i])
-        speed_contribution_direction = np.sign(np.cos(dir_i - torque_angles[i]))
-        torque += -speed_contribution_direction * 0.5 * member.radius ** 2 * np.pi / 4 * Cd * speed_contribution_size ** 2
-        # print('speed:', speed_i, ', dir:', np.rad2deg(dir_i), ', torque:', torque)
-    moment_of_inertia = 0.5 * member.mass * member.radius ** 2  # MoI of a thin disc
-    ang_acceleration = torque / moment_of_inertia
-    added_location_theta = member.velocity['omega'] * sim.dt + 0.5 * ang_acceleration * sim.dt ** 2
-    added_velocity_omega = ang_acceleration * sim.dt
-    member.location['theta'] += added_location_theta
-    # print('theta:', np.rad2deg(member.location['theta']), 'deg')
-    member.velocity['omega'] += added_velocity_omega

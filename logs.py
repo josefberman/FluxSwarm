@@ -47,6 +47,7 @@ def log_parameters(folder_name, sim: Simulation, swarm: Swarm, inflow: Inflow, f
         f.write(f'{swarm.num_x=}\n')
         f.write(f'{swarm.num_y=}\n')
         f.write(f'{swarm.member_radius=}\n')
+        f.write(f'{swarm.member_max_force=}\n')
         f.write(f'{inflow.frequency=}\n')
         f.write(f'{inflow.amplitude=}\n')
         f.write(f'{inflow.radius=}\n')

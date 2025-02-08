@@ -19,7 +19,7 @@ def plot_scalar_field(field, ax, length_x, length_y, title):
     return im
 
 
-def plot_save_current_step(time_step: int, folder_name: str, v_field: Field, p_field: Field,
+def plot_save_current_step(current_time: float, folder_name: str, v_field: Field, p_field: Field,
                            sim: Simulation, swarm: Swarm) -> None:
     fig, axes = plt.subplots(3, 1, figsize=(20, 10))
     fields = [v_field['x'], v_field['y'], p_field * TO_MMHG]
@@ -31,18 +31,34 @@ def plot_save_current_step(time_step: int, folder_name: str, v_field: Field, p_f
         fig.colorbar(ax_handlers[-1], ax=axes[i], orientation='vertical', pad=0.04, fraction=0.02)
         for member in swarm.members:
             axes[i].add_patch(plt.Circle((member.location['x'], member.location['y']), member.radius, color='k'))
-            axes[i].add_patch(
-                plt.Arrow(member.location['x'], member.location['y'],
-                          member.radius * np.cos(member.location['theta']),
-                          member.radius * np.sin(member.location['theta']), color='white', linewidth=0.5))
         # for _x in np.arange(0, sim.length_x, sim.dx):
         #     axes[i].axvline(_x, c='k', linewidth=0.1, alpha=0.5)
         # for _y in np.arange(0, sim.length_y, sim.dy):
         #     axes[i].axhline(_y, c='k', linewidth=0.1, alpha=0.5)
     plt.tight_layout()
-    plt.savefig(f'../runs/run_{folder_name}/figures/timestep_{time_step * sim.dt:.3f}.jpg', dpi=300)
+    plt.savefig(f'../runs/run_{folder_name}/figures/timestep_{current_time:.3f}.jpg', dpi=300)
     plt.close(fig)
     return None
+
+
+def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
+    fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
+    for member in swarm.members:
+        axes[0].plot(np.arange(sim.dt, len(member.previous_locations) * sim.dt, sim.dt),
+                     [item['x'] for item in member.previous_locations], c='#aaaaaa')
+    axes[0].set_title('x locations')
+    axes[0].set_xlabel('Time [s]')
+    axes[0].set_ylabel('Location [mm]')
+    axes[0].set_ylim(0, sim.length_x)
+    for member in swarm.members:
+        axes[1].plot(np.arange(sim.dt, len(member.previous_locations) * sim.dt, sim.dt),
+                     [item['y'] for item in member.previous_locations], c='#aaaaaa')
+    axes[1].set_title('y locations')
+    axes[1].set_xlabel('Time [s]')
+    axes[1].set_ylabel('Location [mm]')
+    axes[1].set_ylim(0, sim.length_y)
+    plt.tight_layout()
+    plt.savefig(f'../runs/run_{folder_name}/locations.jpg', dpi=300)
 
 
 def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Swarm, imshow_data: np.ndarray,
@@ -51,24 +67,17 @@ def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Sw
                                 extent=[0, sim.length_x, 0, sim.length_y], aspect=4, zorder=1)
     axis[0].plot([0, sim.length_x], [int(sim.length_y / 2), int(sim.length_y / 2)], c='k', linestyle='dashed', zorder=2)
     member_patches = []
-    direction_patches = []
     for member in swarm.members:
         member_patches.append(axis[0].add_patch(
             plt.Circle((member.previous_locations[0]['x'], member.previous_locations[0]['y']), member.radius,
                        color='k', zorder=3)))
-        direction_patches.append(
-            axis[0].add_patch(
-                matplotlib.patches.FancyArrow(x=member.previous_locations[0]['x'], y=member.previous_locations[0]['y'],
-                                              dx=member.radius * np.cos(member.previous_locations[0]['theta']),
-                                              dy=member.radius * np.sin(member.previous_locations[0]['theta']),
-                                              color='white', linewidth=0.5, zorder=4)))
     fig.colorbar(im_handler, ax=axis[0], orientation='vertical', pad=0.04, fraction=0.02)
     axis[0].set_title(title)
     plot_handler, = axis[1].plot(np.linspace(0, sim.length_x, sim.resolution[0]), plot_data, c='k')
     axis[1].set_xlabel(x_label)
     axis[1].set_ylabel(y_label)
     axis[1].set_ylim(-max_abs_value, max_abs_value)
-    return im_handler, plot_handler, member_patches, direction_patches
+    return im_handler, plot_handler, member_patches
 
 
 def animate_save_simulation(sim: Simulation, swarm: Swarm, inflow: Inflow, folder_name: str) -> None:
@@ -99,7 +108,7 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, inflow: Inflow, folde
                                                              int(sim.resolution[1] / 2)], 100, 5) * TO_MMHG,
                                      max_abs_value=max_abs_pressure * TO_MMHG, title='Pressure',
                                      x_label='Tube length [mm]', y_label='Pressure [mmHg]')
-    inflow_mag = trapezoidal_waveform(t=sim.dt, a=inflow.amplitude, tau=2, h=1.5, v=inflow.amplitude/2)
+    inflow_mag = trapezoidal_waveform(t=sim.dt, a=inflow.amplitude, tau=2, h=1.5, v=inflow.amplitude / 2)
     fig.suptitle(f'Simulation time: {sim.dt} seconds.\nInflow: {inflow_mag:.2f} mm/s')
     plt.tight_layout()
 
@@ -118,19 +127,9 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, inflow: Inflow, folde
             v_x_h[2][i].center = member.previous_locations[frame]['x'], member.previous_locations[frame]['y']
             v_y_h[2][i].center = member.previous_locations[frame]['x'], member.previous_locations[frame]['y']
             p_h[2][i].center = member.previous_locations[frame]['x'], member.previous_locations[frame]['y']
-            v_x_h[3][i].set_data(x=member.previous_locations[frame]['x'], y=member.previous_locations[frame]['y'],
-                                 dx=member.radius * np.cos(member.previous_locations[frame]['theta']),
-                                 dy=member.radius * np.sin(member.previous_locations[frame]['theta']))
-            v_y_h[3][i].set_data(x=member.previous_locations[frame]['x'], y=member.previous_locations[frame]['y'],
-                                 dx=member.radius * np.cos(member.previous_locations[frame]['theta']),
-                                 dy=member.radius * np.sin(member.previous_locations[frame]['theta']))
-            p_h[3][i].set_data(x=member.previous_locations[frame]['x'], y=member.previous_locations[frame]['y'],
-                               dx=member.radius * np.cos(member.previous_locations[frame]['theta']),
-                               dy=member.radius * np.sin(member.previous_locations[frame]['theta']))
-        inflow_mag = trapezoidal_waveform(t=frame * sim.dt, a=inflow.amplitude, tau=2, h=1.5, v=inflow.amplitude/2)
+        inflow_mag = trapezoidal_waveform(t=frame * sim.dt, a=inflow.amplitude, tau=2, h=1.5, v=inflow.amplitude / 2)
         fig.suptitle(f'Simulation time: {frame * sim.dt:.2f} seconds.\nInflow: {inflow_mag:.2f} mm/s')
-        return [v_x_h[0], v_y_h[0], p_h[0], v_x_h[1], v_y_h[1], p_h[1], *v_x_h[2], *v_y_h[2], *p_h[2], *v_x_h[3],
-                *v_y_h[3], *p_h[3]]
+        return [v_x_h[0], v_y_h[0], p_h[0], v_x_h[1], v_y_h[1], p_h[1], *v_x_h[2], *v_y_h[2], *p_h[2]]
 
     mpl.rcParams['animation.ffmpeg_path'] = r"C:\Users\assaf\ffmpeg\ffmpeg-7.1-essentials_build\bin\ffmpeg.exe"
     ffmpeg_writer = animation.FFMpegWriter(fps=10, codec='h264', bitrate=-1)

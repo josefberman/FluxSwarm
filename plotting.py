@@ -44,14 +44,14 @@ def plot_save_current_step(current_time: float, folder_name: str, v_field: Field
 def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     for member in swarm.members:
-        axes[0].plot(np.arange(sim.dt, len(member.previous_locations) * sim.dt, sim.dt),
+        axes[0].plot(np.linspace(start=sim.dt, stop=len(member.previous_locations) * sim.dt, num=len(member.previous_locations)),
                      [item['x'] for item in member.previous_locations], c='#aaaaaa')
     axes[0].set_title('x locations')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Location [mm]')
     axes[0].set_ylim(0, sim.length_x)
     for member in swarm.members:
-        axes[1].plot(np.arange(sim.dt, len(member.previous_locations) * sim.dt, sim.dt),
+        axes[1].plot(np.linspace(start=sim.dt, stop=len(member.previous_locations) * sim.dt, num=len(member.previous_locations)),
                      [item['y'] for item in member.previous_locations], c='#aaaaaa')
     axes[1].set_title('y locations')
     axes[1].set_xlabel('Time [s]')

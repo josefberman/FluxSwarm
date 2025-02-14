@@ -84,7 +84,7 @@ class SwarmEnv(gym.Env):
         return np.array(obs, dtype=np.float32)
 
     def _compute_done(self):
-        done = True
+        done = False
         for member in self.swarm.members:
             if member.location['x'] <= 200:
                 done = True
@@ -94,7 +94,10 @@ class SwarmEnv(gym.Env):
         """Reward agents for traveling upstream."""
         reward = 0
         for i, member in enumerate(self.swarm.members):
-            reward += member.location['x'] - member.previous_locations[-1]['x']
+            if member.location['x'] > member.previous_locations[-1]['x']:
+                reward += 1
+            else:
+                reward -= 10
         return reward
 
     def render(self, mode='human'):

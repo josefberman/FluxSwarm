@@ -57,7 +57,7 @@ def run_simulation(velocity_field: Field, pressure_field: Field | None,
                                                      t=time_step * sim.dt)
         print('Calculation time:', datetime.now() - calc_start)
         if (time_step * sim.dt) >= RECORDING_TIME:
-            plot_save_current_step(time_step=time_step, folder_name=folder_name, v_field=velocity_field,
+            plot_save_current_step(current_time=time_step * sim.dt, folder_name=folder_name, v_field=velocity_field,
                                    p_field=pressure_field, sim=sim, swarm=swarm)
             phi.field.write(velocity_field, f'../runs/run_{folder_name}/velocity/{time_step:04}')
             phi.field.write(pressure_field, f'../runs/run_{folder_name}/pressure/{time_step:04}')

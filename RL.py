@@ -39,10 +39,15 @@ class SwarmEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         self.current_time = 0
-        for member in self.swarm.members:
-            member.velocity = {'x': 0, 'y': 0}
-        reynolds = self.inflow.amplitude * self.sim.length_y / self.fluid.viscosity
-        print(f'{reynolds=}')
+        members = self.swarm.members
+        self.swarm = Swarm(num_x=3, num_y=3, left_location=480, bottom_location=8.1, member_interval_x=6.3,
+                           member_interval_y=6.3, member_radius=1.8, member_density=5.150, member_max_force=100)
+        for i,member in enumerate(self.swarm.members):
+            member.previous_locations = members[i].previous_locations.copy()
+            member.previous_velocities = members[i].previous_velocities.copy()
+            member.previous_forces = members[i].previous_forces.copy()
+        # reynolds = self.inflow.amplitude * self.sim.length_y / self.fluid.viscosity
+        # print(f'{reynolds=}')
         return self._get_observation(), {}
 
     def step(self, action):
@@ -59,10 +64,11 @@ class SwarmEnv(gym.Env):
             v=self.v, p=self.p, inflow=self.inflow, sim=self.sim, swarm=self.swarm, fluid_obj=self.fluid,
             t=self.current_time
         )
-        plot_save_current_step(current_time=self.current_time, folder_name=self.folder, v_field=self.v,
-                               p_field=self.p, sim=self.sim, swarm=self.swarm)
-        phi.field.write(self.v, f'../runs/run_{self.folder}/velocity/velocity_{self.current_time:.3f}')
-        phi.field.write(self.p, f'../runs/run_{self.folder}/pressure/pressure_{self.current_time:.3f}')
+        if self.v is not None:
+            plot_save_current_step(current_time=self.current_time, folder_name=self.folder, v_field=self.v,
+                                   p_field=self.p, sim=self.sim, swarm=self.swarm)
+            phi.field.write(self.v, f'../runs/run_{self.folder}/velocity/velocity_{self.current_time:.3f}')
+            phi.field.write(self.p, f'../runs/run_{self.folder}/pressure/pressure_{self.current_time:.3f}')
 
         self.current_time += self.sim.dt
 
@@ -85,19 +91,25 @@ class SwarmEnv(gym.Env):
 
     def _compute_done(self):
         done = False
-        for member in self.swarm.members:
-            if member.location['x'] <= 200:
-                done = True
+        if self.v is None:
+            done = True
+        else:
+            for member in self.swarm.members:
+                if member.location['x'] <= 200:
+                    done = True
         return done
 
     def _compute_reward(self):
         """Reward agents for traveling upstream."""
         reward = 0
-        for i, member in enumerate(self.swarm.members):
-            if member.location['x'] > member.previous_locations[-1]['x']:
-                reward += 1
-            else:
-                reward -= 10
+        if self.v is None:
+            reward = -100
+        else:
+            for i, member in enumerate(self.swarm.members):
+                if member.location['x'] > member.previous_locations[-1]['x']:
+                    reward += 1
+                else:
+                    reward -= 10
         return reward
 
     def render(self, mode='human'):

@@ -1,4 +1,5 @@
 import numpy as np
+import phiml.math
 from fontTools.misc.bezierTools import epsilon
 from matplotlib import pyplot as plt
 from scipy.spatial.distance import euclidean
@@ -27,8 +28,11 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
     v = diffuse.explicit(v, 1 / reynolds, sim.dt)
     v = advect.semi_lagrangian(v, v, sim.dt)
-    v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
+    try:
+        v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
                                      solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000))
+    except Diverged:
+        return None, None, swarm
     if t >= RECORDING_TIME:
         # Calculate movement and rotation of swarm members
         for i in range(len(swarm.members)):

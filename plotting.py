@@ -1,9 +1,6 @@
 import matplotlib as mpl
-import matplotlib.patches
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from matplotlib.collections import PatchCollection
-import numpy as np
 from phi.flow import *
 from data_structures import Simulation, Swarm, Inflow
 from glob import glob
@@ -44,21 +41,32 @@ def plot_save_current_step(current_time: float, folder_name: str, v_field: Field
 def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     for member in swarm.members:
-        axes[0].plot(np.linspace(start=sim.dt, stop=len(member.previous_locations) * sim.dt, num=len(member.previous_locations)),
-                     [item['x'] for item in member.previous_locations], c='#aaaaaa')
+        axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time, num=int(sim.total_time / sim.dt)),
+                     [item['x'] for item in member.previous_locations], c='#bbbbbb')
     axes[0].set_title('x locations')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Location [mm]')
     axes[0].set_ylim(0, sim.length_x)
     for member in swarm.members:
-        axes[1].plot(np.linspace(start=sim.dt, stop=len(member.previous_locations) * sim.dt, num=len(member.previous_locations)),
-                     [item['y'] for item in member.previous_locations], c='#aaaaaa')
+        axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time, num=int(sim.total_time / sim.dt)),
+                     [item['y'] for item in member.previous_locations], c='#bbbbbb')
     axes[1].set_title('y locations')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Location [mm]')
     axes[1].set_ylim(0, sim.length_y)
     plt.tight_layout()
     plt.savefig(f'../runs/run_{folder_name}/locations.jpg', dpi=300)
+
+
+def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
+    plt.figure(figsize=(10, 10))
+    plt.plot(np.linspace(start=sim.dt, stop=sim.total_time, num=int(sim.total_time / sim.dt)),
+             np.cumsum(rewards), c='#bbbbbb')
+    plt.title('Cumulative reward')
+    plt.xlabel('Time [s]')
+    plt.ylabel('Cumulative reward')
+    plt.tight_layout()
+    plt.savefig(f'../runs/run_{folder_name}/rewards.jpg', dpi=300)
 
 
 def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Swarm, imshow_data: np.ndarray,

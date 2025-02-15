@@ -1,7 +1,3 @@
-import numpy as np
-import phiml.math
-from fontTools.misc.bezierTools import epsilon
-from matplotlib import pyplot as plt
 from scipy.spatial.distance import euclidean
 
 from data_structures import Simulation, Swarm, Inflow, Fluid, Member
@@ -30,7 +26,7 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     v = advect.semi_lagrangian(v, v, sim.dt)
     try:
         v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
-                                     solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000))
+                                         solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000))
     except Diverged:
         return None, None, swarm
     if t >= RECORDING_TIME:

@@ -1,18 +1,16 @@
 import os
 
-from openpyxl.styles.builtins import total
 from phi.flow import ZERO_GRADIENT, StaggeredGrid, Box
 import numpy as np
-from plotting import animate_save_simulation, plot_save_locations
+from plotting import animate_save_simulation, plot_save_locations, plot_save_rewards
 from logs import create_run_name, create_folders_for_run, log_parameters
 from data_structures import Simulation, Swarm, Inflow, Fluid
 from RL import SwarmEnv
-from simulation import run_simulation
 from stable_baselines3 import PPO
 
 # -------------- Parameter Definition -------------
 # Simulation dimensions are length=mm and time=second, mass=mg
-sim = Simulation(length_x=720, length_y=36, resolution=(900, 90), dt=0.05, total_time=100)
+sim = Simulation(length_x=720, length_y=36, resolution=(1800, 90), dt=0.05, total_time=1)
 swarm = Swarm(num_x=3, num_y=3, left_location=480, bottom_location=8.1, member_interval_x=6.3, member_interval_y=6.3,
               member_radius=1.8, member_density=5.150, member_max_force=100)  # density in mg/mm^3, force in mg*mm/s^2
 # max force 0.017 mg*mm/s^2
@@ -52,9 +50,10 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
 
 model = PPO('MlpPolicy', env, verbose=2)
-model.learn(total_timesteps=int(sim.total_time / sim.dt))
-model.save('swarm_rl_model')
+model.learn(total_timesteps=env.sim.time_steps)
+model.save(f'../runs/run_{env.folder}/swarm_rl_model')
 
 # ----------------- Animation --------------------
 plot_save_locations(folder_name=env.folder, sim=env.sim, swarm=env.swarm)
+plot_save_rewards(folder_name=folder_name, rewards=env.rewards, sim=env.sim)
 animate_save_simulation(sim=env.sim, swarm=env.swarm, folder_name=env.folder, inflow=env.inflow)

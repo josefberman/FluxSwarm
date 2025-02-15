@@ -1,6 +1,5 @@
 from phi.flow import *
 from math import floor
-from numpy.random import rand
 
 
 class Member:

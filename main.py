@@ -2,11 +2,10 @@ import os
 
 from phi.flow import ZERO_GRADIENT, StaggeredGrid, Box
 import numpy as np
-from plotting import animate_save_simulation, plot_save_locations, plot_save_rewards
+from plotting import animate_save_simulation, plot_save_locations, plot_save_rewards, plot_save_velocities
 from logs import create_run_name, create_folders_for_run, log_parameters
 from data_structures import Simulation, Swarm, Inflow, Fluid
-from RL import SwarmEnv
-from stable_baselines3 import PPO
+from RL import SwarmEnv, run_PPO
 
 # -------------- Parameter Definition -------------
 # Simulation dimensions are length=mm and time=second, mass=mg
@@ -49,11 +48,7 @@ log_parameters(folder_name=folder_name, sim=sim, swarm=swarm, inflow=inflow, flu
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
 
-model = PPO('MlpPolicy', env, verbose=2)
-model.learn(total_timesteps=env.sim.time_steps)
-model.save(f'../runs/run_{env.folder}/swarm_rl_model')
+run_PPO(env)
 
 # ----------------- Animation --------------------
-plot_save_locations(folder_name=env.folder, sim=env.sim, swarm=env.swarm)
-plot_save_rewards(folder_name=folder_name, rewards=env.rewards, sim=env.sim)
 animate_save_simulation(sim=env.sim, swarm=env.swarm, folder_name=env.folder, inflow=env.inflow)

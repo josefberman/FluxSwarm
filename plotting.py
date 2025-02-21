@@ -1,6 +1,7 @@
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import numpy as np
 from phi.flow import *
 from data_structures import Simulation, Swarm, Inflow
 from glob import glob
@@ -32,6 +33,7 @@ def plot_save_current_step(current_time: float, folder_name: str, v_field: Field
         #     axes[i].axvline(_x, c='k', linewidth=0.1, alpha=0.5)
         # for _y in np.arange(0, sim.length_y, sim.dy):
         #     axes[i].axhline(_y, c='k', linewidth=0.1, alpha=0.5)
+    plt.suptitle(f'Simulation time: {current_time:.2f} seconds', fontweight='bold')
     plt.tight_layout()
     plt.savefig(f'../runs/run_{folder_name}/figures/timestep_{current_time:.3f}.jpg', dpi=300)
     plt.close(fig)
@@ -40,17 +42,25 @@ def plot_save_current_step(current_time: float, folder_name: str, v_field: Field
 
 def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
+    list_of_member_locations = []
     for member in swarm.members:
-        axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time, num=int(sim.total_time / sim.dt)),
+        axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
                      [item['x'] for item in member.previous_locations], c='#bbbbbb')
-    axes[0].set_title('x locations')
+        list_of_member_locations.append(member.previous_locations)
+    average_dict = [{'x': sum(d['x'] for d in g) / len(g), 'y': sum(d['y'] for d in g) / len(g)} for g in
+                    zip(*list_of_member_locations)]
+    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
+                 [item['x'] for item in average_dict], c='k')
+    axes[0].set_title('x locations', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Location [mm]')
     axes[0].set_ylim(0, sim.length_x)
     for member in swarm.members:
-        axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time, num=int(sim.total_time / sim.dt)),
+        axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
                      [item['y'] for item in member.previous_locations], c='#bbbbbb')
-    axes[1].set_title('y locations')
+    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
+                 [item['y'] for item in average_dict], c='k')
+    axes[1].set_title('y locations', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Location [mm]')
     axes[1].set_ylim(0, sim.length_y)
@@ -58,13 +68,45 @@ def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
     plt.savefig(f'../runs/run_{folder_name}/locations.jpg', dpi=300)
 
 
+def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
+    fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
+    list_of_member_velocities = []
+    for member in swarm.members:
+        axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
+                     [item['x'] for item in member.previous_velocities], c='#bbbbbb')
+        list_of_member_velocities.append(member.previous_velocities)
+    average_dict = [{'x': sum(d['x'] for d in g) / len(g), 'y': sum(d['y'] for d in g) / len(g)} for g in
+                    zip(*list_of_member_velocities)]
+    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
+                 [item['x'] for item in average_dict], c='k')
+    axes[0].set_title('x velocities', fontweight='bold')
+    axes[0].set_xlabel('Time [s]')
+    axes[0].set_ylabel('Velocity [mm/s]')
+    axes[0].set_ylim(0, sim.length_x)
+    for member in swarm.members:
+        axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
+                     [item['y'] for item in member.previous_velocities], c='#bbbbbb')
+    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
+                 [item['y'] for item in average_dict], c='k')
+    axes[1].set_title('y velocities', fontweight='bold')
+    axes[1].set_xlabel('Time [s]')
+    axes[1].set_ylabel('Velocity [mm/s]')
+    axes[1].set_ylim(0, sim.length_y)
+    plt.tight_layout()
+    plt.savefig(f'../runs/run_{folder_name}/velocities.jpg', dpi=300)
+
+
 def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
-    plt.figure(figsize=(10, 10))
-    plt.plot(np.linspace(start=sim.dt, stop=sim.total_time, num=int(sim.total_time / sim.dt)),
-             np.cumsum(rewards), c='#bbbbbb')
-    plt.title('Cumulative reward')
-    plt.xlabel('Time [s]')
-    plt.ylabel('Cumulative reward')
+    fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
+    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time, num=int(sim.total_time / sim.dt)),
+                 np.cumsum(rewards), c='k')
+    axes[0].set_title('Cumulative reward', fontweight='bold')
+    axes[0].set_xlabel('Time [s]')
+    axes[0].set_ylabel('Cumulative reward')
+    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)), rewards, c='k')
+    axes[1].set_title('Step reward', fontweight='bold')
+    axes[1].set_xlabel('Time [s]')
+    axes[1].set_ylabel('Step reward')
     plt.tight_layout()
     plt.savefig(f'../runs/run_{folder_name}/rewards.jpg', dpi=300)
 
@@ -80,7 +122,7 @@ def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Sw
             plt.Circle((member.previous_locations[0]['x'], member.previous_locations[0]['y']), member.radius,
                        color='k', zorder=3)))
     fig.colorbar(im_handler, ax=axis[0], orientation='vertical', pad=0.04, fraction=0.02)
-    axis[0].set_title(title)
+    axis[0].set_title(title, fontweight='bold')
     plot_handler, = axis[1].plot(np.linspace(0, sim.length_x, sim.resolution[0]), plot_data, c='k')
     axis[1].set_xlabel(x_label)
     axis[1].set_ylabel(y_label)
@@ -135,8 +177,9 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, inflow: Inflow, folde
             v_x_h[2][i].center = member.previous_locations[frame]['x'], member.previous_locations[frame]['y']
             v_y_h[2][i].center = member.previous_locations[frame]['x'], member.previous_locations[frame]['y']
             p_h[2][i].center = member.previous_locations[frame]['x'], member.previous_locations[frame]['y']
-        inflow_mag = trapezoidal_waveform(t=frame * sim.dt, a=inflow.amplitude, tau=2, h=1.5, v=inflow.amplitude / 2)
-        fig.suptitle(f'Simulation time: {frame * sim.dt:.2f} seconds.\nInflow: {inflow_mag:.2f} mm/s')
+        inflow_mag = trapezoidal_waveform(t=frame * sim.dt * 5, a=inflow.amplitude, tau=2, h=1.5,
+                                          v=inflow.amplitude / 2)
+        fig.suptitle(f'Simulation time: {frame * sim.dt * 5:.2f} seconds.\nInflow: {inflow_mag:.2f} mm/s')
         return [v_x_h[0], v_y_h[0], p_h[0], v_x_h[1], v_y_h[1], p_h[1], *v_x_h[2], *v_y_h[2], *p_h[2]]
 
     mpl.rcParams['animation.ffmpeg_path'] = r"C:\Users\assaf\ffmpeg\ffmpeg-7.1-essentials_build\bin\ffmpeg.exe"

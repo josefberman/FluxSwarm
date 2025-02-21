@@ -3,8 +3,9 @@ from phi.flow import *
 import phi.field as field
 from gymnasium import spaces
 from data_structures import Simulation, Swarm, Fluid, Inflow
-from plotting import plot_save_current_step
+from plotting import plot_save_current_step, plot_save_locations, plot_save_velocities, plot_save_rewards
 from simulation import step, sample_field_around_obstacle
+from stable_baselines3 import PPO
 
 
 class SwarmEnv(gym.Env):
@@ -20,6 +21,7 @@ class SwarmEnv(gym.Env):
         self.fluid = fluid
         self.inflow = inflow
         self.current_time = 0.0
+        self.current_timestep = 0
         self.folder = folder
         self.rewards = []
         box = Box['x,y', 0:sim.length_x, 0:sim.length_y]
@@ -68,14 +70,16 @@ class SwarmEnv(gym.Env):
             v=self.v, p=self.p, inflow=self.inflow, sim=self.sim, swarm=self.swarm, fluid_obj=self.fluid,
             t=self.current_time
         )
+
+        self.current_time += self.sim.dt
+        self.current_timestep += 1
+
         if self.v is not None:
-            if np.round(self.current_time % (self.sim.dt * 5), 2) == 0:
+            if self.current_timestep % 5 == 0:
                 plot_save_current_step(current_time=self.current_time, folder_name=self.folder, v_field=self.v,
                                        p_field=self.p, sim=self.sim, swarm=self.swarm)
                 phi.field.write(self.v, f'../runs/run_{self.folder}/velocity/velocity_{self.current_time:.3f}')
                 phi.field.write(self.p, f'../runs/run_{self.folder}/pressure/pressure_{self.current_time:.3f}')
-
-        self.current_time += self.sim.dt
 
         # Compute rewards
         reward = self._compute_reward()
@@ -122,7 +126,19 @@ class SwarmEnv(gym.Env):
                     reward += 1
                 else:
                     reward -= 1
+                if member.location['x'] <= 200:
+                    reward += 100
         return reward
 
     def render(self, mode='human'):
         pass
+
+
+def run_PPO(env: SwarmEnv):
+    model = PPO('MlpPolicy', env, verbose=2, n_steps=64)
+    model.learn(total_timesteps=env.sim.time_steps)
+    model.save(f'../runs/run_{env.folder}/swarm_rl_model')
+
+    plot_save_locations(folder_name=env.folder, sim=env.sim, swarm=env.swarm)
+    plot_save_velocities(folder_name=env.folder, sim=env.sim, swarm=env.swarm)
+    plot_save_rewards(folder_name=env.folder, rewards=env.rewards, sim=env.sim)

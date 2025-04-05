@@ -25,8 +25,11 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     v = diffuse.explicit(v, 1 / reynolds, sim.dt)
     v = advect.semi_lagrangian(v, v, sim.dt)
     try:
+        print('Start:',datetime.now())
         v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
-                                         solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000))
+                                         solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000,
+                                                     rel_tol=1e-7, abs_tol=1e-7))
+        print('End:',datetime.now())
     except Diverged:
         return None, None, swarm
     if t >= RECORDING_TIME:
@@ -139,10 +142,10 @@ def advance_linear_motion(member: Member, sim: Simulation, pressure_profile: np.
         lin_force_y += -pressure_profile[i] * np.sin(angle) * np.pi / 4 * member.radius
     lin_acceleration_x = lin_force_x / member.mass
     lin_acceleration_y = lin_force_y / member.mass
-    added_location_x = member.velocity['x'] * sim.dt + 0.5 * lin_acceleration_x * sim.dt ** 2
-    added_velocity_x = lin_acceleration_x * sim.dt
-    added_location_y = member.velocity['y'] * sim.dt + 0.5 * lin_acceleration_y * sim.dt ** 2
-    added_velocity_y = lin_acceleration_y * sim.dt
+    added_location_x = float(member.velocity['x'] * sim.dt + 0.5 * lin_acceleration_x * sim.dt ** 2)
+    added_velocity_x = float(lin_acceleration_x * sim.dt)
+    added_location_y = float(member.velocity['y'] * sim.dt + 0.5 * lin_acceleration_y * sim.dt ** 2)
+    added_velocity_y = float(lin_acceleration_y * sim.dt)
     if (4 + member.radius) < (member.location['x'] + added_location_x) < (
             sim.length_x - member.radius - 4 * sim.dx):
         member.location['x'] += added_location_x

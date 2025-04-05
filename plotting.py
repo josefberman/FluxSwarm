@@ -2,6 +2,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
+import pandas as pd
 from phi.flow import *
 from data_structures import Simulation, Swarm, Inflow
 from glob import glob
@@ -41,6 +42,12 @@ def plot_save_current_step(current_time: float, folder_name: str, v_field: Field
 
 
 def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
+    data_dict = {'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt,
+                                         num=len(swarm.members[0].previous_locations))}
+    for i, member in enumerate(swarm.members):
+        data_dict[f'velocity_{i}_x'] = [item['x'] for item in member.previous_locations]
+        data_dict[f'velocity_{i}_y'] = [item['y'] for item in member.previous_locations]
+    pd.DataFrame(data_dict).to_csv(f'../runs/run_{folder_name}/velocities.csv')
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     list_of_member_locations = []
     for member in swarm.members:
@@ -69,6 +76,12 @@ def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
 
 
 def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
+    data_dict = {'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt,
+                                         num=len(swarm.members[0].previous_velocities))}
+    for i, member in enumerate(swarm.members):
+        data_dict[f'velocity_{i}_x'] = [item['x'] for item in member.previous_velocities]
+        data_dict[f'velocity_{i}_y'] = [item['y'] for item in member.previous_velocities]
+    pd.DataFrame(data_dict).to_csv(f'../runs/run_{folder_name}/velocities.csv')
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     list_of_member_velocities = []
     for member in swarm.members:
@@ -82,7 +95,6 @@ def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
     axes[0].set_title('x velocities', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Velocity [mm/s]')
-    axes[0].set_ylim(0, sim.length_x)
     for member in swarm.members:
         axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
                      [item['y'] for item in member.previous_velocities], c='#bbbbbb')
@@ -91,15 +103,15 @@ def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
     axes[1].set_title('y velocities', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Velocity [mm/s]')
-    axes[1].set_ylim(0, sim.length_y)
     plt.tight_layout()
     plt.savefig(f'../runs/run_{folder_name}/velocities.jpg', dpi=300)
 
 
 def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
+    pd.DataFrame({'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)),
+                  'reward': rewards}).to_csv(f'../runs/run_{folder_name}/rewards.csv')
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
-    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time, num=int(sim.total_time / sim.dt)),
-                 np.cumsum(rewards), c='k')
+    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)), np.cumsum(rewards), c='k')
     axes[0].set_title('Cumulative reward', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Cumulative reward')
@@ -163,7 +175,6 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, inflow: Inflow, folde
     plt.tight_layout()
 
     def update(frame):
-        print(f'{frame=}')
         v_x_h[0].set_data(velocity_data[frame]['data'][:, :, 0].T)
         v_y_h[0].set_data(velocity_data[frame]['data'][:, :, 1].T)
         p_h[0].set_data(pressure_data[frame]['data'].T * TO_MMHG)

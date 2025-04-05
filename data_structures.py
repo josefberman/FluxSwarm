@@ -13,8 +13,8 @@ class Member:
         self.radius = radius
         self.density = density
         self.mass = self.density * np.pi * self.radius ** 2
-        self.previous_locations = []
-        self.previous_velocities = []
+        self.previous_locations = [self.location]
+        self.previous_velocities = [self.velocity]
         self.previous_forces = []
         self.max_force = max_force
 

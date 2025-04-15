@@ -1,5 +1,7 @@
 import os
 from datetime import datetime
+from os import makedirs
+
 from data_structures import Simulation, Swarm, Inflow, Fluid
 
 
@@ -22,6 +24,8 @@ def create_folders_for_run(folder_name) -> None:
     os.makedirs(f'../runs/run_{folder_name}/pressure', exist_ok=True)
     os.makedirs(f'../runs/run_{folder_name}/inflow', exist_ok=True)
     os.makedirs(f'../runs/run_{folder_name}/figures', exist_ok=True)
+    os.makedirs(f'../runs/run_{folder_name}/PPO', exist_ok=True)
+    os.makedirs(f'../runs/run_{folder_name}/SAC', exist_ok=True)
     return None
 
 

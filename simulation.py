@@ -1,3 +1,4 @@
+import numpy as np
 from scipy.spatial.distance import euclidean
 
 from data_structures import Simulation, Swarm, Inflow, Fluid, Member
@@ -25,11 +26,11 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     v = diffuse.explicit(v, 1 / reynolds, sim.dt)
     v = advect.semi_lagrangian(v, v, sim.dt)
     try:
-        print('Start:',datetime.now())
+        print('Start:', datetime.now())
         v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
                                          solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000,
                                                      rel_tol=1e-7, abs_tol=1e-7))
-        print('End:',datetime.now())
+        print('End:', datetime.now())
     except Diverged:
         return None, None, swarm
     if t >= RECORDING_TIME:
@@ -73,6 +74,19 @@ def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation) -> n
     x_add = np.array([1, 1, 0, -1, -1, -1, 0, 1]) * 2  # ensuring measurement outside of disc
     y_add = np.roll(x_add, 2)
     for i, angle in enumerate(np.arange(start=0, stop=2 * np.pi, step=np.pi / 4)):
+        x = int((member.location['x'] + member.radius * np.cos(angle)) * sim.resolution[
+            0] / sim.length_x) + int(x_add[i])
+        y = int((member.location['y'] + member.radius * np.sin(angle)) * sim.resolution[
+            1] / sim.length_y) + int(y_add[i])
+        field_samples[i] = f.values.x[x].y[y]
+    return field_samples
+
+
+def sample_field_around_obstacle_4_points(f: Field, member: Member, sim: Simulation) -> np.array:
+    field_samples = np.zeros(4, dtype=object)
+    x_add = np.array([1, 0, -1, 0]) * 2
+    y_add = np.array([0, -1, 0, 1]) * 2
+    for i, angle in enumerate(np.arange(start=0, stop=2 * np.pi, step=np.pi / 2)):
         x = int((member.location['x'] + member.radius * np.cos(angle)) * sim.resolution[
             0] / sim.length_x) + int(x_add[i])
         y = int((member.location['y'] + member.radius * np.sin(angle)) * sim.resolution[

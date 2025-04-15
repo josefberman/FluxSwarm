@@ -16,7 +16,7 @@ assert backend.default_backend().set_default_device('CPU')
 
 # -------------- Parameter Definition -------------
 # Simulation dimensions are length=mm and time=second, mass=mg
-sim = Simulation(length_x=720, length_y=36, resolution=(1800, 90), dt=0.05, total_time=1000)
+sim = Simulation(length_x=720, length_y=36, resolution=(1800, 90), dt=0.05, total_time=2000)
 swarm = Swarm(num_x=3, num_y=3, left_location=480, bottom_location=8.1, member_interval_x=6.3, member_interval_y=6.3,
               member_radius=1.8, member_density=5.150, member_max_force=100)  # density in mg/mm^3, force in mg*mm/s^2
 # max force 0.017 mg*mm/s^2
@@ -56,8 +56,8 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
 run_PPO(env)
 
-env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
-run_SAC(env)
+# env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
+# run_SAC(env)
 
 # with open(f'../runs/run_{folder_name}/rewards.txt', 'w+') as f:
 #     for i,r in enumerate(env.rewards):

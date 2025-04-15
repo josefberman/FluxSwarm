@@ -4,7 +4,7 @@ import phi.field as field
 from gymnasium import spaces
 from data_structures import Simulation, Swarm, Fluid, Inflow
 from plotting import plot_save_current_step, plot_save_locations, plot_save_velocities, plot_save_rewards
-from simulation import step, sample_field_around_obstacle
+from simulation import step, sample_field_around_obstacle, sample_field_around_obstacle_4_points
 from stable_baselines3 import PPO, SAC
 
 
@@ -30,12 +30,12 @@ class SwarmEnv(gym.Env):
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=sim.resolution[0], y=sim.resolution[1])
         self.p = None
 
-        # Define observation space (position x2, velocity x2)
+        # Define observation space: num_of_members * (position x2, velocity x2, pressure x4)
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(len(swarm.members), 12), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(len(swarm.members), 8), dtype=np.float32
         )
 
-        # Define action space (velocity control x2 and force control for each agent)
+        # Define action space (force control x2 for each agent)
         self.action_space = spaces.Box(
             low=-1.0, high=1.0, shape=(len(swarm.members), 2), dtype=np.float32
         )
@@ -99,9 +99,9 @@ class SwarmEnv(gym.Env):
         obs = []
         for member in self.swarm.members:
             if self.p is not None:
-                pressure_profile = sample_field_around_obstacle(f=self.p, member=member, sim=self.sim)
+                pressure_profile = sample_field_around_obstacle_4_points(f=self.p, member=member, sim=self.sim)
             else:
-                pressure_profile = np.zeros(8, dtype=object)
+                pressure_profile = np.zeros(4, dtype=object)
             obs.append([
                 member.location['x'], member.location['y'],
                 member.velocity['x'], member.velocity['y'],
@@ -123,7 +123,7 @@ class SwarmEnv(gym.Env):
         """Reward agents for traveling upstream."""
         reward = 0
         if self.v is None:
-            reward = -100
+            reward = -20
         else:
             for i, member in enumerate(self.swarm.members):
                 if member.location['x'] < member.previous_locations[-2]['x']:
@@ -131,9 +131,9 @@ class SwarmEnv(gym.Env):
                 else:
                     reward -= 1
                 if member.location['x'] <= 200:
-                    reward = 100
+                    reward = 20
                 if member.location['x'] >= 550:
-                    reward = -100
+                    reward = -20
         return reward
 
     def render(self, mode='human'):

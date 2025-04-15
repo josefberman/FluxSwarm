@@ -4,12 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="011fd143-0d4d-4ffe-82c4-bf547896fdff" name="Changes" comment="Episode reset on divergence">
+    <list default="true" id="011fd143-0d4d-4ffe-82c4-bf547896fdff" name="Changes" comment="PPO and SAC implementation">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/RL.py" beforeDir="false" afterPath="$PROJECT_DIR$/RL.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data_structures.py" beforeDir="false" afterPath="$PROJECT_DIR$/data_structures.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logs.py" beforeDir="false" afterPath="$PROJECT_DIR$/logs.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/plotting.py" beforeDir="false" afterPath="$PROJECT_DIR$/plotting.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -322,7 +321,15 @@
       <option name="project" value="LOCAL" />
       <updated>1740155249878</updated>
     </task>
-    <option name="localTasksCounter" value="27" />
+    <task id="LOCAL-00027" summary="PPO and SAC implementation">
+      <option name="closed" value="true" />
+      <created>1743863977559</created>
+      <option name="number" value="00027" />
+      <option name="presentableId" value="LOCAL-00027" />
+      <option name="project" value="LOCAL" />
+      <updated>1743863977559</updated>
+    </task>
+    <option name="localTasksCounter" value="28" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -364,14 +371,15 @@
     <MESSAGE value="No impact implementation" />
     <MESSAGE value="Impact implementation and basic RL" />
     <MESSAGE value="Episode reset on divergence" />
-    <option name="LAST_COMMIT_MESSAGE" value="Episode reset on divergence" />
+    <MESSAGE value="PPO and SAC implementation" />
+    <option name="LAST_COMMIT_MESSAGE" value="PPO and SAC implementation" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
       <breakpoints>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/simulation.py</url>
-          <line>31</line>
+          <line>32</line>
           <option name="timeStamp" value="1" />
         </line-breakpoint>
       </breakpoints>

@@ -22,7 +22,7 @@ def plot_save_current_step(current_time: float, folder_name: str, v_field: Field
                            sim: Simulation, swarm: Swarm) -> None:
     fig, axes = plt.subplots(3, 1, figsize=(20, 10))
     fields = [v_field['x'], v_field['y'], p_field * TO_MMHG]
-    field_names = [u'Velocity - x component [mm/s]', u'Velocity = y component [mm/s]', 'Pressure [mmHg]']
+    field_names = [u'Velocity - x component [mm/s]', u'Velocity - y component [mm/s]', 'Pressure [mmHg]']
     ax_handlers = []
     for i in range(0, 3):
         ax_handlers.append(plot_scalar_field(field=fields[i], ax=axes[i], length_x=sim.length_x, length_y=sim.length_y,

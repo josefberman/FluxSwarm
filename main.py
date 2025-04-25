@@ -61,7 +61,8 @@ def main():
     def make_env():
         return SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
     # env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
-    env = SubprocVecEnv([make_env for _ in range(4)])
+    num_envs = 6
+    env = SubprocVecEnv([make_env for _ in range(num_envs)])
     run_PPO(env, sim.time_steps)
 
     # env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)

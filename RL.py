@@ -81,14 +81,14 @@ class SwarmEnv(gym.Env):
         self.current_time += self.sim.dt
         self.episode_time += self.sim.dt
         self.current_timestep += 1
-        print('Step:', self.current_timestep)
+        # print('Step:', self.current_timestep)
 
         # if self.v is not None:
         #     if self.current_timestep % 5 == 0:
         #         plot_save_current_step(current_time=self.current_time, folder_name=self.folder, v_field=self.v,
         #                                p_field=self.p, sim=self.sim, swarm=self.swarm)
-        #         phi.field.write(self.v, f'../runs/run_{self.folder}/velocity/velocity_{self.current_time:.3f}')
-        #         phi.field.write(self.p, f'../runs/run_{self.folder}/pressure/pressure_{self.current_time:.3f}')
+                # phi.field.write(self.v, f'../runs/run_{self.folder}/velocity/velocity_{self.current_time:.3f}')
+                # phi.field.write(self.p, f'../runs/run_{self.folder}/pressure/pressure_{self.current_time:.3f}')
 
         # Compute rewards
         reward = self._compute_reward()
@@ -146,7 +146,8 @@ class SwarmEnv(gym.Env):
 
 
 def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
-    model = PPO('MlpPolicy', env, verbose=2, n_steps=32, device='cpu', gamma=0.95)
+    model = PPO('MlpPolicy', env, verbose=2, n_steps=1, device='cpu', gamma=0.95,
+                tensorboard_log=f'../runs/run_{env.get_attr('folder')[0]}/swarm_rl_ppo_tb')
     model.learn(total_timesteps=timesteps, progress_bar=True)
     for env_i in range(env.num_envs):
         model.save(f'../runs/run_{env.get_attr('folder')[env_i]}/swarm_rl_ppo')

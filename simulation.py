@@ -26,11 +26,9 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     v = diffuse.explicit(v, 1 / reynolds, sim.dt)
     v = advect.semi_lagrangian(v, v, sim.dt)
     try:
-        print('Start:', datetime.now())
         v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
                                          solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000,
                                                      rel_tol=1e-7, abs_tol=1e-7))
-        print('End:', datetime.now())
     except Diverged:
         return None, None, swarm
     if t >= RECORDING_TIME:
@@ -63,7 +61,7 @@ def run_simulation(velocity_field: Field, pressure_field: Field | None,
         if (time_step * sim.dt) >= RECORDING_TIME:
             plot_save_current_step(current_time=time_step * sim.dt, folder_name=folder_name, v_field=velocity_field,
                                    p_field=pressure_field, sim=sim, swarm=swarm)
-            phi.field.write(velocity_field, f'../runs/run_{folder_name}/velocity/{time_step:04}')
+            phi.field.write(velocity_field, f'../runs/run_{folder_name}/velocnpmity/{time_step:04}')
             phi.field.write(pressure_field, f'../runs/run_{folder_name}/pressure/{time_step:04}')
 
     return None

@@ -45,9 +45,9 @@ def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
     data_dict = {'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt,
                                          num=len(swarm.members[0].previous_locations))}
     for i, member in enumerate(swarm.members):
-        data_dict[f'velocity_{i}_x'] = [item['x'] for item in member.previous_locations]
-        data_dict[f'velocity_{i}_y'] = [item['y'] for item in member.previous_locations]
-    pd.DataFrame(data_dict).to_csv(f'../runs/run_{folder_name}/velocities.csv')
+        data_dict[f'location_{i}_x'] = [item['x'] for item in member.previous_locations]
+        data_dict[f'location_{i}_y'] = [item['y'] for item in member.previous_locations]
+    pd.DataFrame(data_dict).to_csv(f'../runs/run_{folder_name}/locations.csv')
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     list_of_member_locations = []
     for member in swarm.members:

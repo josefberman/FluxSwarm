@@ -1,11 +1,16 @@
+import os
+
 import gymnasium as gym
 from phi.flow import *
 import phi.field as field
 from gymnasium import spaces
+from stable_baselines3.common.vec_env import VecEnv
+
 from data_structures import Simulation, Swarm, Fluid, Inflow
 from plotting import plot_save_current_step, plot_save_locations, plot_save_velocities, plot_save_rewards
 from simulation import step, sample_field_around_obstacle, sample_field_around_obstacle_4_points
 from stable_baselines3 import PPO, SAC
+from stable_baselines3.common.callbacks import ProgressBarCallback
 
 
 class SwarmEnv(gym.Env):
@@ -60,7 +65,6 @@ class SwarmEnv(gym.Env):
 
     def step(self, action):
         """Apply actions to swarm members and update the simulation."""
-        print(f'Time: {self.current_time:.3f}')
         if self.current_timestep % 10 == 0:
             for i, member in enumerate(self.swarm.members):
                 acc_x = action[i, 0] * member.max_force / member.mass
@@ -77,6 +81,7 @@ class SwarmEnv(gym.Env):
         self.current_time += self.sim.dt
         self.episode_time += self.sim.dt
         self.current_timestep += 1
+        print('Step:', self.current_timestep)
 
         # if self.v is not None:
         #     if self.current_timestep % 5 == 0:
@@ -140,19 +145,29 @@ class SwarmEnv(gym.Env):
         pass
 
 
-def run_PPO(env: SwarmEnv):
-    model = PPO('MlpPolicy', env, verbose=2, n_steps=64, device='cpu', gamma=0.95)
-    model.learn(total_timesteps=env.sim.time_steps)
-    model.save(f'../runs/run_{env.folder}/swarm_rl_ppo')
+def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
+    model = PPO('MlpPolicy', env, verbose=2, n_steps=32, device='cpu', gamma=0.95)
+    model.learn(total_timesteps=timesteps, progress_bar=True)
+    for env_i in range(env.num_envs):
+        model.save(f'../runs/run_{env.get_attr('folder')[env_i]}/swarm_rl_ppo')
+        os.makedirs(f'../runs/run_{env.get_attr('folder')[env_i]}/PPO/{env_i}', exist_ok=True)
+        plot_save_locations(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env_i}', sim=env.get_attr('sim')[env_i],
+                            swarm=env.get_attr('swarm')[env_i])
+        plot_save_velocities(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env_i}', sim=env.get_attr('sim')[env_i],
+                             swarm=env.get_attr('swarm')[env_i])
+        plot_save_rewards(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env_i}',
+                          rewards=env.get_attr('rewards')[env_i], sim=env.get_attr('sim')[env_i])
 
-    plot_save_locations(folder_name=f'{env.folder}/PPO', sim=env.sim, swarm=env.swarm)
-    plot_save_velocities(folder_name=f'{env.folder}/PPO', sim=env.sim, swarm=env.swarm)
-    plot_save_rewards(folder_name=f'{env.folder}/PPO', rewards=env.rewards, sim=env.sim)
+    # model.save(f'../runs/run_{env.folder}/swarm_rl_ppo')
+
+    # plot_save_locations(folder_name=f'{env.folder}/PPO', sim=env.sim, swarm=env.swarm)
+    # plot_save_velocities(folder_name=f'{env.folder}/PPO', sim=env.sim, swarm=env.swarm)
+    # plot_save_rewards(folder_name=f'{env.folder}/PPO', rewards=env.rewards, sim=env.sim)
 
 
 def run_SAC(env: SwarmEnv):
     model = SAC('MlpPolicy', env, verbose=2, device='cpu', gamma=0.95, tau=0.1)
-    model.learn(total_timesteps=env.sim.time_steps)
+    model.learn(total_timesteps=env.sim.time_steps, progress_bar=True)
     model.save(f'../runs/run_{env.folder}/swarm_rl_sac')
 
     plot_save_locations(folder_name=f'{env.folder}/SAC', sim=env.sim, swarm=env.swarm)

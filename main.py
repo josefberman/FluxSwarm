@@ -11,12 +11,14 @@ from plotting import animate_save_simulation, plot_save_locations, plot_save_rew
 from logs import create_run_name, create_folders_for_run, log_parameters
 from data_structures import Simulation, Swarm, Inflow, Fluid
 from RL import SwarmEnv, run_PPO, run_SAC
+# import scipy.sparse.linalg as spla
 
 # print(backend.default_backend().list_devices('GPU'))
-# print(backend.default_backend().list_devices('CPU'))
+print(backend.default_backend().list_devices('CPU'))
 # assert backend.default_backend().set_default_device('GPU')
 assert backend.default_backend().set_default_device('CPU')
 
+# spla.use_solver(useUmfpack=True)
 
 def main():
     # -------------- Parameter Definition -------------
@@ -60,9 +62,9 @@ def main():
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
     def make_env():
         return SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
-    # env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
-    num_envs = 6
-    env = SubprocVecEnv([make_env for _ in range(num_envs)])
+    env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
+    # num_envs = 1
+    # env = SubprocVecEnv([make_env for _ in range(num_envs)])
     run_PPO(env, sim.time_steps)
 
     # env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)

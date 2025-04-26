@@ -77,18 +77,20 @@ class SwarmEnv(gym.Env):
             v=self.v, p=self.p, inflow=self.inflow, sim=self.sim, swarm=self.swarm, fluid_obj=self.fluid,
             t=self.episode_time
         )
+        print('Step:', self.current_timestep)
+        print('v check (true if valid):', self.v is not None)
+        print('p check (true if valid):', self.p is not None)
 
         self.current_time += self.sim.dt
         self.episode_time += self.sim.dt
         self.current_timestep += 1
-        # print('Step:', self.current_timestep)
 
-        # if self.v is not None:
-        #     if self.current_timestep % 5 == 0:
-        #         plot_save_current_step(current_time=self.current_time, folder_name=self.folder, v_field=self.v,
-        #                                p_field=self.p, sim=self.sim, swarm=self.swarm)
-                # phi.field.write(self.v, f'../runs/run_{self.folder}/velocity/velocity_{self.current_time:.3f}')
-                # phi.field.write(self.p, f'../runs/run_{self.folder}/pressure/pressure_{self.current_time:.3f}')
+        if self.v is not None:
+            if self.current_timestep % 5 == 0:
+                plot_save_current_step(current_time=self.current_time, folder_name=self.folder, v_field=self.v,
+                                       p_field=self.p, sim=self.sim, swarm=self.swarm)
+        # phi.field.write(self.v, f'../runs/run_{self.folder}/velocity/velocity_{self.current_time:.3f}')
+        # phi.field.write(self.p, f'../runs/run_{self.folder}/pressure/pressure_{self.current_time:.3f}')
 
         # Compute rewards
         reward = self._compute_reward()
@@ -146,18 +148,25 @@ class SwarmEnv(gym.Env):
 
 
 def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
-    model = PPO('MlpPolicy', env, verbose=2, n_steps=1, device='cpu', gamma=0.95,
-                tensorboard_log=f'../runs/run_{env.get_attr('folder')[0]}/swarm_rl_ppo_tb')
+    # model = PPO('MlpPolicy', env, verbose=2, n_steps=1, device='cpu', gamma=0.95,
+    #             tensorboard_log=f'../runs/run_{env.get_attr('folder')[0]}/swarm_rl_ppo_tb')
+    model = PPO('MlpPolicy', env, verbose=2, n_steps=10, device='cpu', gamma=0.95)
     model.learn(total_timesteps=timesteps, progress_bar=True)
-    for env_i in range(env.num_envs):
-        model.save(f'../runs/run_{env.get_attr('folder')[env_i]}/swarm_rl_ppo')
-        os.makedirs(f'../runs/run_{env.get_attr('folder')[env_i]}/PPO/{env_i}', exist_ok=True)
-        plot_save_locations(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env_i}', sim=env.get_attr('sim')[env_i],
-                            swarm=env.get_attr('swarm')[env_i])
-        plot_save_velocities(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env_i}', sim=env.get_attr('sim')[env_i],
-                             swarm=env.get_attr('swarm')[env_i])
-        plot_save_rewards(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env_i}',
-                          rewards=env.get_attr('rewards')[env_i], sim=env.get_attr('sim')[env_i])
+    if isinstance(env, VecEnv):
+        for env_i in range(env.num_envs):
+            model.save(f'../runs/run_{env.get_attr('folder')[env_i]}/swarm_rl_ppo')
+            os.makedirs(f'../runs/run_{env.get_attr('folder')[env_i]}/PPO/{env_i}', exist_ok=True)
+            plot_save_locations(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env_i}',
+                                sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
+            plot_save_velocities(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env_i}',
+                                 sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
+            plot_save_rewards(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env_i}',
+                              rewards=env.get_attr('rewards')[env_i], sim=env.get_attr('sim')[env_i])
+    elif isinstance(env, SwarmEnv):
+        model.save(f'../runs/run_{env.folder}/swarm_rl_ppo')
+        plot_save_locations(folder_name=f'{env.folder}/PPO', sim=env.sim, swarm=env.swarm)
+        plot_save_velocities(folder_name=f'{env.folder}/PPO', sim=env.sim, swarm=env.swarm)
+        plot_save_rewards(folder_name=f'{env.folder}/PPO', rewards=env.rewards, sim=env.sim)
 
     # model.save(f'../runs/run_{env.folder}/swarm_rl_ppo')
 

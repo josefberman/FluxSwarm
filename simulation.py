@@ -27,8 +27,8 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     v = advect.semi_lagrangian(v, v, sim.dt)
     try:
         v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
-                                         solve=Solve(method='scipy-direct', x0=p, max_iterations=1_000_000,
-                                                     rel_tol=1e-7, abs_tol=1e-7))
+                                         solve=Solve(method='scipy-GC', x0=p, max_iterations=1_000_000, rel_tol=1e-4,
+                                                     abs_tol=1e-4))
     except Diverged:
         return None, None, swarm
     if t >= RECORDING_TIME:

@@ -1,8 +1,8 @@
 import datetime
 import os
 
-from phi.flow import *
-# from phi.torch.flow import *
+# from phi.flow import *
+from phi.torch.flow import *
 import numpy as np
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
@@ -13,17 +13,17 @@ from data_structures import Simulation, Swarm, Inflow, Fluid
 from RL import SwarmEnv, run_PPO, run_SAC
 # import scipy.sparse.linalg as spla
 
-# print(backend.default_backend().list_devices('GPU'))
-print(backend.default_backend().list_devices('CPU'))
-# assert backend.default_backend().set_default_device('GPU')
-assert backend.default_backend().set_default_device('CPU')
+print(backend.default_backend().list_devices('GPU'))
+# print(backend.default_backend().list_devices('CPU'))
+assert backend.default_backend().set_default_device('GPU')
+# assert backend.default_backend().set_default_device('CPU')
 
 # spla.use_solver(useUmfpack=True)
 
 def main():
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=720, length_y=36, resolution=(1800, 90), dt=0.05, total_time=1)
+    sim = Simulation(length_x=720, length_y=36, resolution=(1800, 90), dt=0.05, total_time=1000)
     swarm = Swarm(num_x=3, num_y=3, left_location=480, bottom_location=8.1, member_interval_x=6.3, member_interval_y=6.3,
                   member_radius=1.8, member_density=5.150, member_max_force=100)  # density in mg/mm^3, force in mg*mm/s^2
     # max force 0.017 mg*mm/s^2
@@ -62,9 +62,9 @@ def main():
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
     def make_env():
         return SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
-    env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
-    # num_envs = 1
-    # env = SubprocVecEnv([make_env for _ in range(num_envs)])
+    # env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
+    num_envs = 6
+    env = SubprocVecEnv([make_env for _ in range(num_envs)])
     run_PPO(env, sim.time_steps)
 
     # env = SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
@@ -75,6 +75,9 @@ def main():
     #         f.write(f'{str(i)},{str(r)}\n')
 
     # ----------------- Animation --------------------
+    # for env_i in range(env.num_envs):
+    #     animate_save_simulation(sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i], 
+    #                             folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env_i}', inflow=env.get_attr('inflow')[env_i])
     # animate_save_simulation(sim=env.sim, swarm=env.swarm, folder_name=env.folder, inflow=env.inflow)
 
 if __name__ == '__main__':

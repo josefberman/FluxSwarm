@@ -1,3 +1,5 @@
+import os
+
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -39,6 +41,43 @@ def plot_save_current_step(current_time: float, folder_name: str, v_field: Field
     plt.savefig(f'../runs/run_{folder_name}/figures/timestep_{current_time:.3f}.jpg', dpi=300)
     plt.close(fig)
     return None
+
+
+# def plot_save_fields(folder_name: str, pid: int, sim: Simulation):
+#     velocity_file_list = sorted(glob(f'../runs/run_{folder_name}/velocity_{pid}/*.npz'))
+#     pressure_file_list = sorted(glob(f'../runs/run_{folder_name}/pressure_{pid}/*.npz'))
+#     velocity_data = [np.load(file) for file in velocity_file_list]
+#     pressure_data = [np.load(file) for file in pressure_file_list]
+#     max_abs_velocity_x = np.max(np.abs([file['data'][:, :, 0] for file in velocity_data]))
+#     max_abs_velocity_y = np.max(np.abs([file['data'][:, :, 1] for file in velocity_data]))
+#     max_abs_pressure = np.max(np.abs([file['data'] for file in pressure_data]))
+#     for i, (v_i, p_i) in enumerate(zip(velocity_data, pressure_data)):
+#         fig, ax = plt.subplots(3, 1, figsize=(20, 10))
+#         ax[0].imshow(v_i['data'][:, :, 0].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_x,
+#                      vmax=max_abs_velocity_x, extent=[0, sim.length_x, 0, sim.length_y])
+#         ax[1].imshow(v_i['data'][:, :, 1].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_y,
+#                      vmax=max_abs_velocity_y, extent=[0, sim.length_x, 0, sim.length_y])
+#         ax[2].imshow(p_i['data'].T * TO_MMHG, origin='lower', cmap='coolwarm_r', vmin=-max_abs_pressure,
+#                      vmax=max_abs_pressure, extent=[0, sim.length_x, 0, sim.length_y])
+#         plt.tight_layout()
+#         plt.savefig(f'../runs/run_{folder_name}/figures/timestep_{i * sim.dt * 10:.3f}.jpg', dpi=300)
+#         plt.close(fig)
+
+def plot_save_fields(v: Field, p: Field, folder_name: str, pid: int, current_time: float, sim: Simulation):
+    os.makedirs(f'../runs/run_{folder_name}/PPO/figures/{pid}', exist_ok=True)
+    max_abs_velocity_x = np.max(np.abs(v['x'].numpy()))
+    max_abs_velocity_y = np.max(np.abs(v['y'].numpy()))
+    max_abs_pressure = np.max(np.abs(p.numpy()))
+    fig, ax = plt.subplots(3, 1, figsize=(20, 10))
+    ax[0].imshow(v['x'].numpy().T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_x,
+                 vmax=max_abs_velocity_x, extent=[0, sim.length_x, 0, sim.length_y])
+    ax[1].imshow(v['y'].numpy().T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_y,
+                 vmax=max_abs_velocity_y, extent=[0, sim.length_x, 0, sim.length_y])
+    ax[2].imshow(p.numpy().T * TO_MMHG, origin='lower', cmap='coolwarm_r', vmin=-max_abs_pressure,
+                 vmax=max_abs_pressure, extent=[0, sim.length_x, 0, sim.length_y])
+    plt.tight_layout()
+    plt.savefig(f'../runs/run_{folder_name}/PPO/figures/{pid}/timestep_{current_time:.3f}.jpg', dpi=300)
+    plt.close(fig)
 
 
 def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):

@@ -13,7 +13,7 @@ RECORDING_TIME = 0
 
 
 def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, fluid_obj: Fluid,
-         t: float):
+         t: float, force_actions: np.ndarray):
     trap_wave = trapezoidal_waveform(t=t, a=inflow.amplitude, tau=2, h=1.5, v=inflow.amplitude / 2)
     v_tensor_u = v.staggered_tensor()[0].numpy('x,y')
     v_tensor_u[:33, :] = trap_wave
@@ -35,15 +35,10 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         # Calculate movement and rotation of swarm members
         for i in range(len(swarm.members)):
             member = swarm.members[i]
-            pressure_profile = sample_field_around_obstacle(f=p, member=member, sim=sim)  # ug/(mm*s^2)
-            # velocity_profile = sample_field_around_obstacle(f=v, member=member, sim=sim)  # mm/s
-            # for member2 in swarm.members:
-            #     if member2 is not member:
-            #         update_for_impact(member, member2)
-            advance_linear_motion(member=member, sim=sim, pressure_profile=pressure_profile)
-            for j in range(i + 1, len(swarm.members)):
-                member2 = swarm.members[j]
-                handle_collisions(member, member2)
+            pressure_profile = sample_field_around_obstacle(f=p, member=member, sim=sim, n=8)  # ug/(mm*s^2)
+            advance_by_pressure_gradient(member=member, sim=sim, pressure_profile=pressure_profile)
+            advance_by_forces(member=member, sim=sim, fluid=fluid_obj, internal_forces=force_actions,
+                              swarm_members=swarm.members)
             member.previous_locations.append(member.location.copy())
             member.previous_velocities.append(member.velocity.copy())
     return v, p, swarm
@@ -61,92 +56,105 @@ def run_simulation(velocity_field: Field, pressure_field: Field | None,
         if (time_step * sim.dt) >= RECORDING_TIME:
             plot_save_current_step(current_time=time_step * sim.dt, folder_name=folder_name, v_field=velocity_field,
                                    p_field=pressure_field, sim=sim, swarm=swarm)
-            phi.field.write(velocity_field, f'../runs/run_{folder_name}/velocnpmity/{time_step:04}')
+            phi.field.write(velocity_field, f'../runs/run_{folder_name}/velocity/{time_step:04}')
             phi.field.write(pressure_field, f'../runs/run_{folder_name}/pressure/{time_step:04}')
 
     return None
 
 
-def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation) -> np.array:
-    field_samples = np.zeros(8, dtype=object)
-    x_add = np.array([1, 1, 0, -1, -1, -1, 0, 1]) * 2  # ensuring measurement outside of disc
-    y_add = np.roll(x_add, 2)
-    for i, angle in enumerate(np.arange(start=0, stop=2 * np.pi, step=np.pi / 4)):
-        x = int((member.location['x'] + member.radius * np.cos(angle)) * sim.resolution[
-            0] / sim.length_x) + int(x_add[i])
-        y = int((member.location['y'] + member.radius * np.sin(angle)) * sim.resolution[
-            1] / sim.length_y) + int(y_add[i])
-        field_samples[i] = f.values.x[x].y[y]
+# def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation) -> np.array:
+#     field_samples = np.zeros(8, dtype=object)
+#     x_add = np.array([1, 1, 0, -1, -1, -1, 0, 1]) * 2  # ensuring measurement outside of disc
+#     y_add = np.roll(x_add, 2)
+#     for i, angle in enumerate(np.arange(start=0, stop=2 * np.pi, step=np.pi / 4)):
+#         x = int((member.location['x'] + member.radius * np.cos(angle)) * sim.resolution[
+#             0] / sim.length_x) + int(x_add[i])
+#         y = int((member.location['y'] + member.radius * np.sin(angle)) * sim.resolution[
+#             1] / sim.length_y) + int(y_add[i])
+#         field_samples[i] = f.values.x[x].y[y]
+#     return field_samples
+
+
+# def sample_field_around_obstacle_4_points(f: Field, member: Member, sim: Simulation) -> np.array:
+#     field_samples = np.zeros(4, dtype=object)
+#     x_add = np.array([1, 0, -1, 0]) * 2
+#     y_add = np.array([0, -1, 0, 1]) * 2
+#     for i, angle in enumerate(np.arange(start=0, stop=2 * np.pi, step=np.pi / 2)):
+#         x = int((member.location['x'] + member.radius * np.cos(angle)) * sim.resolution[
+#             0] / sim.length_x) + int(x_add[i])
+#         y = int((member.location['y'] + member.radius * np.sin(angle)) * sim.resolution[
+#             1] / sim.length_y) + int(y_add[i])
+#         field_samples[i] = f.values.x[x].y[y]
+#     return field_samples
+
+def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation, n: int, offset=2) -> np.array:
+    field_samples = np.zeros(n, dtype=object)
+    angles = np.arange(0, 2 * np.pi, 2 * np.pi / n)
+    x_add = np.sign(np.cos(angles)).astype(int) * offset
+    y_add = np.sign(np.sin(angles)).astype(int) * offset
+    for i, angle in enumerate(angles):
+        x_world = member.location['x'] + member.radius * np.cos(angle)
+        y_world = member.location['y'] + member.radius * np.sin(angle)
+        ix_off = int(x_world * sim.resolution[0] / sim.length_x) + int(x_add[i])
+        iy_off = int(y_world * sim.resolution[1] / sim.length_y) + int(y_add[i])
+        field_samples[i] = f.values.x[ix_off].y[iy_off]
     return field_samples
 
 
-def sample_field_around_obstacle_4_points(f: Field, member: Member, sim: Simulation) -> np.array:
-    field_samples = np.zeros(4, dtype=object)
-    x_add = np.array([1, 0, -1, 0]) * 2
-    y_add = np.array([0, -1, 0, 1]) * 2
-    for i, angle in enumerate(np.arange(start=0, stop=2 * np.pi, step=np.pi / 2)):
-        x = int((member.location['x'] + member.radius * np.cos(angle)) * sim.resolution[
-            0] / sim.length_x) + int(x_add[i])
-        y = int((member.location['y'] + member.radius * np.sin(angle)) * sim.resolution[
-            1] / sim.length_y) + int(y_add[i])
-        field_samples[i] = f.values.x[x].y[y]
-    return field_samples
+# def update_for_impact(member1: Member, member2: Member):
+#     dist = euclidean([member1.location['x'], member1.location['y']], [member2.location['x'], member2.location['y']])
+#     if dist < (member1.radius + member2.radius):
+#         v_rel_x = member2.velocity['x'] - member1.velocity['x']
+#         v_rel_y = member2.velocity['y'] - member1.velocity['y']
+#         nx = (member2.location['x'] - member1.location['x']) / dist
+#         ny = (member2.location['y'] - member1.location['y']) / dist
+#         v_rel_n = v_rel_x * nx + v_rel_y * ny
+#         if v_rel_n <= 0:
+#             impulse = (2 * v_rel_n) / (1 / member1.mass + 1 / member2.mass)
+#             member1.velocity['x'] += (impulse / member1.mass) * nx
+#             member1.velocity['y'] += (impulse / member1.mass) * ny
+#             member2.velocity['x'] -= (impulse / member2.mass) * nx
+#             member2.velocity['y'] -= (impulse / member2.mass) * ny
+#             overlap = (member1.radius + member2.radius) - dist
+#             member1.location['x'] -= (overlap / 2) * nx
+#             member1.location['y'] -= (overlap / 2) * ny
+#             member2.location['x'] += (overlap / 2) * nx
+#             member2.location['y'] += (overlap / 2) * ny
 
 
-def update_for_impact(member1: Member, member2: Member):
-    dist = euclidean([member1.location['x'], member1.location['y']], [member2.location['x'], member2.location['y']])
-    if dist < (member1.radius + member2.radius):
-        v_rel_x = member2.velocity['x'] - member1.velocity['x']
-        v_rel_y = member2.velocity['y'] - member1.velocity['y']
-        nx = (member2.location['x'] - member1.location['x']) / dist
-        ny = (member2.location['y'] - member1.location['y']) / dist
-        v_rel_n = v_rel_x * nx + v_rel_y * ny
-        if v_rel_n <= 0:
-            impulse = (2 * v_rel_n) / (1 / member1.mass + 1 / member2.mass)
-            member1.velocity['x'] += (impulse / member1.mass) * nx
-            member1.velocity['y'] += (impulse / member1.mass) * ny
-            member2.velocity['x'] -= (impulse / member2.mass) * nx
-            member2.velocity['y'] -= (impulse / member2.mass) * ny
-            overlap = (member1.radius + member2.radius) - dist
-            member1.location['x'] -= (overlap / 2) * nx
-            member1.location['y'] -= (overlap / 2) * ny
-            member2.location['x'] += (overlap / 2) * nx
-            member2.location['y'] += (overlap / 2) * ny
+# def handle_collisions(member1: Member, member2: Member):
+#     """
+#     Checks for collisions among swarm members and updates their velocities based on elastic collision physics.
+
+#     :param member1:
+#     :param member2:
+#     """
+#     distance = euclidean([member1.location['x'], member1.location['y']],
+#                          [member2.location['x'], member2.location['y']])
+#     if distance < (member1.radius + member2.radius):  # Collision detected
+#         # Compute unit normal and tangent vectors
+#         normal = [(member2.location['x'] - member1.location['x']) / distance,
+#                   (member2.location['y'] - member1.location['y']) / distance]
+#         tangent = [-normal[1], normal[0]]
+
+#         # Project velocities onto normal and tangent vectors
+#         v1n = normal[0] * member1.velocity['x'] + normal[1] * member1.velocity['y']
+#         v1t = tangent[0] * member1.velocity['x'] + tangent[1] * member1.velocity['y']
+#         v2n = normal[0] * member2.velocity['x'] + normal[1] * member2.velocity['y']
+#         v2t = tangent[0] * member2.velocity['x'] + tangent[1] * member2.velocity['y']
+
+#         # Compute new normal velocities after elastic collision
+#         v1n_new = (v1n * (member1.mass - member2.mass) + 2 * member2.mass * v2n) / (member1.mass + member2.mass)
+#         v2n_new = (v2n * (member2.mass - member1.mass) + 2 * member1.mass * v1n) / (member1.mass + member2.mass)
+
+#         # Convert back to x, y components
+#         member1.velocity['x'] = v1n_new * normal[0] + v1t * tangent[0]
+#         member1.velocity['y'] = v1n_new * normal[1] + v1t * tangent[1]
+#         member2.velocity['x'] = v2n_new * normal[0] + v2t * tangent[0]
+#         member2.velocity['y'] = v2n_new * normal[1] + v2t * tangent[1]
 
 
-def handle_collisions(member1: Member, member2: Member):
-    """
-    Checks for collisions among swarm members and updates their velocities based on elastic collision physics.
-
-    :param member1:
-    :param member2:
-    """
-    distance = euclidean([member1.location['x'], member1.location['y']],
-                         [member2.location['x'], member2.location['y']])
-    if distance < (member1.radius + member2.radius):  # Collision detected
-        # Compute unit normal and tangent vectors
-        normal = [(member2.location['x'] - member1.location['x']) / distance,
-                  (member2.location['y'] - member1.location['y']) / distance]
-        tangent = [-normal[1], normal[0]]
-
-        # Project velocities onto normal and tangent vectors
-        v1n = normal[0] * member1.velocity['x'] + normal[1] * member1.velocity['y']
-        v1t = tangent[0] * member1.velocity['x'] + tangent[1] * member1.velocity['y']
-        v2n = normal[0] * member2.velocity['x'] + normal[1] * member2.velocity['y']
-        v2t = tangent[0] * member2.velocity['x'] + tangent[1] * member2.velocity['y']
-
-        # Compute new normal velocities after elastic collision
-        v1n_new = (v1n * (member1.mass - member2.mass) + 2 * member2.mass * v2n) / (member1.mass + member2.mass)
-        v2n_new = (v2n * (member2.mass - member1.mass) + 2 * member1.mass * v1n) / (member1.mass + member2.mass)
-
-        # Convert back to x, y components
-        member1.velocity['x'] = v1n_new * normal[0] + v1t * tangent[0]
-        member1.velocity['y'] = v1n_new * normal[1] + v1t * tangent[1]
-        member2.velocity['x'] = v2n_new * normal[0] + v2t * tangent[0]
-        member2.velocity['y'] = v2n_new * normal[1] + v2t * tangent[1]
-
-
-def advance_linear_motion(member: Member, sim: Simulation, pressure_profile: np.array):
+def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profile: np.array):
     lin_force_y = 0
     lin_force_x = 0
     for i, angle in enumerate(np.arange(start=0, stop=2 * np.pi, step=np.pi / 4)):
@@ -166,3 +174,26 @@ def advance_linear_motion(member: Member, sim: Simulation, pressure_profile: np.
             sim.length_y - member.radius - 4 * sim.dy):
         member.location['y'] += added_location_y
         member.velocity['y'] += added_velocity_y
+
+
+def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid, internal_forces: np.array,
+                      swarm_members: list[Member]):
+    total_force = np.zeros(2)
+    for i, other_member in enumerate(swarm_members):
+        # Add internal force
+        if member == other_member:
+            total_force += internal_forces[i]*member.max_force
+        # Add contact forces
+        if member != other_member:
+            r_ij = np.array([other_member.location['x'] - member.location['x'],
+                             other_member.location['y'] - member.location['y']])
+            dist = np.linalg.norm(r_ij)
+            n = r_ij / dist
+            if 0 < dist < 2 * other_member.radius:
+                total_force += np.dot(internal_forces[i]*other_member.max_force, n)
+    # Add Stokes drag
+    total_force -= 6 * np.pi * fluid.viscosity * member.radius * np.array([member.velocity['x'], member.velocity['y']])
+    member.velocity['x'] += total_force[0] / member.mass * sim.dt
+    member.velocity['y'] += total_force[1] / member.mass * sim.dt
+    member.location['x'] += member.velocity['x'] * sim.dt
+    member.location['y'] += member.velocity['y'] * sim.dt

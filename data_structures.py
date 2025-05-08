@@ -1,6 +1,6 @@
 from phi.flow import *
 from math import floor
-
+import phi.field as field
 
 class Member:
     def __init__(self, location=None, velocity=None, radius: float = 0, density: float = 1, max_force: float = 0):
@@ -79,3 +79,5 @@ class Simulation:
         self.dt = dt
         self.total_time = total_time
         self.time_steps = floor(self.total_time / self.dt)
+
+

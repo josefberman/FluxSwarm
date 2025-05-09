@@ -12,6 +12,9 @@ from logs import create_run_name, create_folders_for_run, log_parameters
 from data_structures import Simulation, Swarm, Inflow, Fluid
 from RL import SwarmEnv, run_PPO, run_SAC
 # import scipy.sparse.linalg as spla
+import warnings
+
+warnings.filterwarnings("ignore")
 
 print(backend.default_backend().list_devices('GPU'))
 # print(backend.default_backend().list_devices('CPU'))

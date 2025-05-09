@@ -128,16 +128,10 @@ class SwarmEnv(gym.Env):
             reward = -100
         else:
             for i, member in enumerate(self.swarm.members):
-                if member.location['x'] < member.previous_locations[-2]['x']:
-                    reward += 1
+                if member.location['x'] < member.previous_locations[0]['x']:
+                    reward += member.location['x'] - member.previous_locations[0]['x']
                 else:
-                    reward -= 1
-                if member.location['x'] <= 200:
-                    reward = 100
-                    break
-                if member.location['x'] >= 550:
-                    reward = -100
-                    break
+                    reward += 10 * (member.location['x'] - member.previous_locations[0]['x'])
         return reward
 
     def render(self, mode='human'):
@@ -170,7 +164,7 @@ class RewardLoggerCallback(BaseCallback):
         #         if p_attr[i] is not None:
         #             phi.field.write(p_attr[i],
         #                             f'../runs/run_{folder_attr[i]}/PPO/pressure_{pid_attr[i]}/pressure_{current_time_attr[i]:.3f}')
-                # plot_save_fields(v_attr[i], p_attr[i], folder_attr[i], pid_attr[i], current_time_attr[i], sim_attr[i])
+        # plot_save_fields(v_attr[i], p_attr[i], folder_attr[i], pid_attr[i], current_time_attr[i], sim_attr[i])
         return True
 
 

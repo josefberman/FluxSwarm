@@ -16,8 +16,6 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-print(backend.default_backend().list_devices('GPU'))
-# print(backend.default_backend().list_devices('CPU'))
 assert backend.default_backend().set_default_device('GPU')
 # assert backend.default_backend().set_default_device('CPU')
 
@@ -26,11 +24,11 @@ assert backend.default_backend().set_default_device('GPU')
 def main():
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=720, length_y=36, resolution=(1800, 90), dt=0.05, total_time=5000)
+    sim = Simulation(length_x=720, length_y=36, resolution=(1800, 90), dt=0.05, total_time=1000)
     swarm = Swarm(num_x=3, num_y=3, left_location=480, bottom_location=8.1, member_interval_x=6.3, member_interval_y=6.3,
                   member_radius=1.8, member_density=5.150, member_max_force=0.017)  # density in mg/mm^3, force in mg*mm/s^2
     # max force 0.017 mg*mm/s^2
-    inflow = Inflow(frequency=2 * np.pi, amplitude=20, radius=sim.length_y / 2, center_y=sim.length_y / 2)
+    inflow = Inflow(frequency=2 * np.pi, amplitude=98, radius=sim.length_y / 2, center_y=sim.length_y / 2)
     inflow.center_x = 0
     fluid = Fluid(viscosity=0.89)  # viscosity of water in mg/(mm*s)
 

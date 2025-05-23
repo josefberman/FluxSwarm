@@ -85,9 +85,13 @@ def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation, n: i
         y_world = member.location['y'] + member.radius * np.sin(angle)
         ix_off = int(x_world * sim.resolution[0] / sim.length_x) + int(np.sign(np.cos(angle)) * offset)
         iy_off = int(y_world * sim.resolution[1] / sim.length_y) + int(np.sign(np.sin(angle)) * offset)
+        if ix_off >= sim.resolution[0]:
+            ix_off = sim.resolution[0] - 1
+        elif ix_off < 0:
+            ix_off = 0
         if iy_off >= sim.resolution[1]:
             iy_off = sim.resolution[1] - 1
-        if iy_off < 0:
+        elif iy_off < 0:
             iy_off = 0
         # print(f'[{ix_off},{iy_off}]')
         field_samples[i] = f.values.x[ix_off].y[iy_off]
@@ -118,21 +122,21 @@ def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profi
         lin_force_x += -pressure_profile[i] * np.cos(angle) * np.pi / 4 * member.radius
         lin_force_y += -pressure_profile[i] * np.sin(angle) * np.pi / 4 * member.radius
     # Add force due to gradient in x
-    x_pred_minus = member.location['x'] - member.radius + lin_force_x / member.mass * sim.dt * sim.dt
-    x_pred_plus = member.location['x'] + member.radius + lin_force_x / member.mass * sim.dt * sim.dt
+    x_pred_minus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt - member.radius
+    x_pred_plus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt + member.radius
     x_lower = 6 * sim.dx
     x_upper = sim.length_x - 6 * sim.dx
     if (x_pred_minus > x_lower).all or (x_pred_plus < x_upper).all:
-        member.velocity['x'] += lin_force_x / member.mass * sim.dt
-        member.location['x'] += member.velocity['x'] * sim.dt
+        member.velocity['x'] += float(lin_force_x / member.mass * sim.dt)
+        member.location['x'] += float(member.velocity['x'] * sim.dt)
     # Add force due to gradient in y
-    y_pred_minus = member.location['y'] - member.radius + lin_force_x / member.mass * sim.dt * sim.dt
-    y_pred_plus = member.location['y'] + member.radius + lin_force_y / member.mass * sim.dt * sim.dt
+    y_pred_minus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt - member.radius
+    y_pred_plus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * lin_force_y / member.mass * sim.dt * sim.dt + member.radius
     y_lower = 6 * sim.dy
     y_upper = sim.length_y - 6 * sim.dy
     if (y_pred_minus > y_lower).all or (y_pred_plus < y_upper).all:
-        member.velocity['y'] += lin_force_y / member.mass * sim.dt
-        member.location['y'] += member.velocity['y'] * sim.dt
+        member.velocity['y'] += float(lin_force_y / member.mass * sim.dt)
+        member.location['y'] += float(member.velocity['y'] * sim.dt)
 
 
 def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
@@ -161,21 +165,21 @@ def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
                 [other_member.location['x'] - member.location['x'], other_member.location['y'] - member.location['y']])
             dist = np.linalg.norm(r_ij)
             n = r_ij / dist
-            if 0 < dist < 2 * other_member.radius:
+            if 0 < dist < (2 * other_member.radius + 6 * np.sqrt(sim.dx ** 2 + sim.dy ** 2)):
                 total_force += np.dot(internal_forces[i] * other_member.max_force, n)
     # Add Stokes drag
     total_force -= 6 * np.pi * fluid.viscosity * member.radius * np.array([member.velocity['x'], member.velocity['y']])
-    x_pred_minus = member.location['x'] - member.radius + total_force[0] / member.mass * sim.dt * sim.dt
-    x_pred_plus = member.location['x'] + member.radius + total_force[0] / member.mass * sim.dt * sim.dt
+    x_pred_minus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[0] / member.mass * sim.dt * sim.dt - member.radius
+    x_pred_plus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[0] / member.mass * sim.dt * sim.dt + member.radius
     x_lower = 6 * sim.dx
     x_upper = sim.length_x - 6 * sim.dx
     if (x_pred_minus > x_lower).all or (x_pred_plus < x_upper).all:
-        member.velocity['x'] += total_force[0] / member.mass * sim.dt
-        member.location['x'] += member.velocity['x'] * sim.dt
-    y_pred_minus = member.location['y'] - member.radius + total_force[1] / member.mass * sim.dt * sim.dt
-    y_pred_plus = member.location['y'] + member.radius + total_force[1] / member.mass * sim.dt * sim.dt
+        member.velocity['x'] += float(total_force[0] / member.mass * sim.dt)
+        member.location['x'] += float(member.velocity['x'] * sim.dt)
+    y_pred_minus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * total_force[1] / member.mass * sim.dt * sim.dt - member.radius
+    y_pred_plus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * total_force[1] / member.mass * sim.dt * sim.dt + member.radius
     y_lower = 6 * sim.dy
     y_upper = sim.length_y - 6 * sim.dx
     if (y_pred_minus > y_lower).all or (y_pred_plus < y_upper).all:
-        member.velocity['y'] += total_force[1] / member.mass * sim.dt
-        member.location['y'] += member.velocity['y'] * sim.dt
+        member.velocity['y'] += float(total_force[1] / member.mass * sim.dt)
+        member.location['y'] += float(member.velocity['y'] * sim.dt)

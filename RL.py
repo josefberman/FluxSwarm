@@ -221,7 +221,7 @@ class SwarmEnv(gym.Env):
             done = True
         else:
             for member in self.swarm.members:
-                if (member.location['x'].numpy() <= 200) or (member.location['x'].numpy() >= 550):
+                if (member.location['x'] <= 200) or (member.location['x'] >= 550):
                     done = True
         return done
 
@@ -242,9 +242,9 @@ class SwarmEnv(gym.Env):
             reward = -100
         else:
             for i, member in enumerate(self.swarm.members):
-                if member.location['x'].numpy() >= 200:
+                if member.location['x'] <= 200:
                     reward = 100
-                if (member.location['x'].numpy() < member.previous_locations[-2]['x']).all:
+                if (member.location['x'] < member.previous_locations[-2]['x']):
                     reward += 1
                 else:
                     reward += -5

@@ -109,7 +109,7 @@ class SwarmEnv(gym.Env):
         # self.current_time = 0
         prev_members = self.swarm.members
         self.swarm = Swarm(num_x=3, num_y=3, left_location=480, bottom_location=8.1, member_interval_x=6.3,
-                           member_interval_y=6.3, member_radius=1.8, member_density=5.150, member_max_force=0.017)
+                           member_interval_y=6.3, member_radius=1.8, member_density=5.150, member_max_force=1)
         box = Box['x,y', 0:self.sim.length_x, 0:self.sim.length_y]
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=self.sim.resolution[0], y=self.sim.resolution[1])
@@ -243,11 +243,13 @@ class SwarmEnv(gym.Env):
         else:
             for i, member in enumerate(self.swarm.members):
                 if member.location['x'] <= 200:
-                    reward = 100
-                if (member.location['x'] < member.previous_locations[-2]['x']):
+                    return 100
+                elif member.location['x'] >= 550:
+                    return -100
+                elif (member.location['x'] < member.previous_locations[-2]['x']):
                     reward += 1
                 else:
-                    reward += -5
+                    reward += -1
         return reward
 
     def render(self, mode='human'):
@@ -322,7 +324,7 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
     """
     num_steps = 10
     if isinstance(env, VecEnv):
-        model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=(num_steps * env.num_envs) // 4,
+        model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=(num_steps * env.num_envs),
                     device='cpu', gamma=0.95,
                     tensorboard_log=f'../runs/run_{env.get_attr('folder')[0]}/swarm_rl_ppo_tb')
         model.learn(total_timesteps=timesteps * env.num_envs, log_interval=1, progress_bar=True,
@@ -339,7 +341,7 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
                               rewards=env.get_attr('rewards')[env_i], sim=env.get_attr('sim')[env_i])
             # plot_save_fields(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/', pid=env.get_attr('pid')[env_i])
     elif isinstance(env, SwarmEnv):
-        model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=num_steps // 4, device='cpu', gamma=0.95,
+        model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=num_steps, device='cpu', gamma=0.95,
                     tensorboard_log=f'../runs/run_{env.folder}/swarm_rl_ppo_tb')
         model.learn(total_timesteps=timesteps, log_interval=1, progress_bar=True, callback=RewardLoggerCallback(),
                     reset_num_timesteps=False)

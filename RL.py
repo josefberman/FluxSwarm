@@ -108,8 +108,8 @@ class SwarmEnv(gym.Env):
         """
         # self.current_time = 0
         prev_members = self.swarm.members
-        self.swarm = Swarm(num_x=3, num_y=3, left_location=480, bottom_location=8.1, member_interval_x=6.3,
-                           member_interval_y=6.3, member_radius=1.8, member_density=5.150, member_max_force=100)
+        self.swarm = Swarm(num_x=3, num_y=3, left_location=49, bottom_location=1, member_interval_x=1, member_interval_y=1,
+                           member_radius=0.05, member_density=5.150, member_max_force=4000)  # density in mg/mm^3, force in mg*mm/s^2
         box = Box['x,y', 0:self.sim.length_x, 0:self.sim.length_y]
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=self.sim.resolution[0], y=self.sim.resolution[1])

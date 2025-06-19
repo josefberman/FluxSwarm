@@ -163,16 +163,16 @@ def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
         # Add internal force
         if member == other_member:
             total_force += internal_forces[i] * member.max_force
-    #     # Add contact forces
-    #     if member != other_member:
-    #         r_ij = np.array(
-    #             [other_member.location['x'] - member.location['x'], other_member.location['y'] - member.location['y']])
-    #         dist = np.linalg.norm(r_ij)
-    #         n = r_ij / dist
-    #         if 0 < dist < (2 * other_member.radius + 6 * np.sqrt(sim.dx ** 2 + sim.dy ** 2)):
-    #             total_force += np.dot(internal_forces[i] * other_member.max_force, n)
-    # # Add Stokes drag
-    # total_force -= 6 * np.pi * fluid.viscosity * member.radius * np.array([member.velocity['x'], member.velocity['y']])
+        # Add contact forces
+        if member != other_member:
+            r_ij = np.array(
+                [other_member.location['x'] - member.location['x'], other_member.location['y'] - member.location['y']])
+            dist = np.linalg.norm(r_ij)
+            n = r_ij / dist
+            if 0 < dist < (2 * other_member.radius + 6 * np.sqrt(sim.dx ** 2 + sim.dy ** 2)):
+                total_force += np.dot(internal_forces[i] * other_member.max_force, n)
+    # Add Stokes drag
+    total_force -= 6 * np.pi * fluid.viscosity * member.radius * np.array([member.velocity['x'], member.velocity['y']])
     x_pred_minus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[0] / member.mass * sim.dt * sim.dt - member.radius
     x_pred_plus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[0] / member.mass * sim.dt * sim.dt + member.radius
     x_lower = 6 * sim.dx

@@ -109,7 +109,7 @@ class SwarmEnv(gym.Env):
         # self.current_time = 0
         prev_members = self.swarm.members
         self.swarm = Swarm(num_x=3, num_y=3, left_location=49, bottom_location=1, member_interval_x=1, member_interval_y=1,
-                           member_radius=0.05, member_density=5.150, member_max_force=4000)  # density in mg/mm^3, force in mg*mm/s^2
+                           member_radius=0.05, member_density=5.150, member_max_force=10)  # density in mg/mm^3, force in mg*mm/s^2
         box = Box['x,y', 0:self.sim.length_x, 0:self.sim.length_y]
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=self.sim.resolution[0], y=self.sim.resolution[1])
@@ -221,7 +221,7 @@ class SwarmEnv(gym.Env):
             done = True
         else:
             for member in self.swarm.members:
-                if (member.location['x'] <= 200) or (member.location['x'] >= 550):
+                if (member.location['x'] <= 25) or (member.location['x'] >= 75):
                     done = True
         return done
 
@@ -242,9 +242,9 @@ class SwarmEnv(gym.Env):
             reward = -20
         else:
             for i, member in enumerate(self.swarm.members):
-                if member.location['x'] <= 200:
+                if member.location['x'] <= 25:
                     return 50
-                elif member.location['x'] >= 550:
+                elif member.location['x'] >= 75:
                     return -20
                 elif (member.location['x'] < member.previous_locations[-2]['x']):
                     reward += 1

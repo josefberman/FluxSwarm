@@ -1,6 +1,7 @@
 from phi.flow import *
 from math import floor
 import phi.field as field
+import numpy as np
 
 class Member:
     """
@@ -39,7 +40,7 @@ class Member:
         self.velocity = velocity
         self.radius = radius
         self.density = density
-        self.mass = self.density * np.pi * self.radius ** 2
+        self.mass = self.density * 4 / 3 * np.pi / radius ** 3
         self.previous_locations = [self.location]
         self.previous_velocities = [self.velocity]
         self.previous_forces = []

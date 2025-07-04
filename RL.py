@@ -9,6 +9,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
 from plotting import plot_save_locations, plot_save_velocities, plot_save_rewards, plot_save_fields
 from stable_baselines3 import PPO, SAC
+import torch
 
 
 class SwarmEnv(gym.Env):
@@ -108,8 +109,11 @@ class SwarmEnv(gym.Env):
         """
         # self.current_time = 0
         prev_members = self.swarm.members
-        self.swarm = Swarm(num_x=3, num_y=3, left_location=49, bottom_location=1, member_interval_x=1, member_interval_y=1,
-                           member_radius=0.1, member_density=5.150, member_max_force=30)  # density in mg/mm^3, force in mg*mm/s^2
+        prev_swarm = self.swarm
+        self.swarm = Swarm(num_x=prev_swarm.num_x, num_y=prev_swarm.num_y, left_location=prev_swarm.left_location, 
+                           bottom_location=prev_swarm.bottom_location, member_interval_x=prev_swarm.member_interval_x,
+                           member_interval_y=prev_swarm.member_interval_y, member_radius=prev_swarm.member_radius,
+                           member_density=prev_members[0].density, member_max_force=prev_swarm.member_max_force)  # density in mg/mm^3, force in mg*mm/s^2
         box = Box['x,y', 0:self.sim.length_x, 0:self.sim.length_y]
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=self.sim.resolution[0], y=self.sim.resolution[1])
@@ -243,9 +247,9 @@ class SwarmEnv(gym.Env):
         else:
             for i, member in enumerate(self.swarm.members):
                 if member.location['x'] <= 25:
-                    return 50
+                    reward += 50
                 elif member.location['x'] >= 75:
-                    return -20
+                    reward += -20
                 elif (member.location['x'] < member.previous_locations[-2]['x']):
                     reward += 1
                 else:
@@ -322,10 +326,11 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
 
     :return: None
     """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_steps = 10
     if isinstance(env, VecEnv):
         model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=(num_steps * env.num_envs),
-                    device='cpu', gamma=0.95,
+                    device=device, gamma=0.95,
                     tensorboard_log=f'../runs/run_{env.get_attr('folder')[0]}/swarm_rl_ppo_tb')
         model.learn(total_timesteps=timesteps * env.num_envs, log_interval=1, progress_bar=True,
                     callback=RewardLoggerCallback(), reset_num_timesteps=False)
@@ -341,7 +346,7 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
                               rewards=env.get_attr('rewards')[env_i], sim=env.get_attr('sim')[env_i])
             # plot_save_fields(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/', pid=env.get_attr('pid')[env_i])
     elif isinstance(env, SwarmEnv):
-        model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=num_steps, device='cpu', gamma=0.95,
+        model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=num_steps, device=device, gamma=0.95,
                     tensorboard_log=f'../runs/run_{env.folder}/swarm_rl_ppo_tb')
         model.learn(total_timesteps=timesteps, log_interval=1, progress_bar=True, callback=RewardLoggerCallback(),
                     reset_num_timesteps=False)

@@ -14,6 +14,7 @@ RECORDING_TIME = 0
 
 PADDING = 2
 
+
 def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, fluid_obj: Fluid, t: float,
          force_actions: np.ndarray):
     """
@@ -135,11 +136,12 @@ def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profi
         'x'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt + member.radius
     x_lower = PADDING * sim.dx
     x_upper = sim.length_x - PADDING * sim.dx
+    prev_velocity_x = member.velocity['x']
     if (x_pred_minus > x_lower).all and (x_pred_plus < x_upper).all:
         member.velocity['x'] += float(lin_force_x / member.mass * sim.dt)
     else:
         member.velocity['x'] = 0
-    member.location['x'] += float(member.velocity['x'] * sim.dt)
+    member.location['x'] += float((member.velocity['x'] + prev_velocity_x) / 2 * sim.dt)
     # Add force due to gradient in y
     y_pred_minus = member.location['y'] + member.velocity[
         'y'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt - member.radius
@@ -147,11 +149,12 @@ def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profi
         'y'] * sim.dt + 0.5 * lin_force_y / member.mass * sim.dt * sim.dt + member.radius
     y_lower = PADDING * sim.dy
     y_upper = sim.length_y - PADDING * sim.dy
+    prev_velocity_y = member.velocity['y']
     if (y_pred_minus > y_lower).all and (y_pred_plus < y_upper).all:
         member.velocity['y'] += float(lin_force_y / member.mass * sim.dt)
     else:
         member.velocity['y'] = 0
-    member.location['y'] += float(member.velocity['y'] * sim.dt)
+    member.location['y'] += float((member.velocity['y'] + prev_velocity_y) / 2 * sim.dt)
 
 
 def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
@@ -190,19 +193,21 @@ def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
         0] / member.mass * sim.dt * sim.dt + member.radius
     x_lower = PADDING * sim.dx
     x_upper = sim.length_x - PADDING * sim.dx
+    prev_velocity_x = member.velocity['x']
     if (x_pred_minus > x_lower).all and (x_pred_plus < x_upper).all:
         member.velocity['x'] += float(total_force[0] / member.mass * sim.dt)
     else:
         member.velocity['x'] = 0
-    member.location['x'] += float(member.velocity['x'] * sim.dt)
+    member.location['x'] += float((member.velocity['x'] + prev_velocity_x) / 2 * sim.dt)
     y_pred_minus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * total_force[
         1] / member.mass * sim.dt * sim.dt - member.radius
     y_pred_plus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * total_force[
         1] / member.mass * sim.dt * sim.dt + member.radius
     y_lower = PADDING * sim.dy
     y_upper = sim.length_y - PADDING * sim.dx
+    prev_velocity_y = member.velocity['y']
     if (y_pred_minus > y_lower).all and (y_pred_plus < y_upper).all:
         member.velocity['y'] += float(total_force[1] / member.mass * sim.dt)
     else:
         member.velocity['y'] = 0
-    member.location['y'] += float(member.velocity['y'] * sim.dt)
+    member.location['y'] += float((member.velocity['y'] + prev_velocity_y) / 2 * sim.dt)

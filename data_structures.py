@@ -3,6 +3,7 @@ from math import floor
 import phi.field as field
 import numpy as np
 
+
 class Member:
     """
     Represents a physical member with properties such as location, velocity, radius, and density.
@@ -31,6 +32,7 @@ class Member:
     :ivar max_force: The maximum force that can be applied on the member.
     :type max_force: float
     """
+
     def __init__(self, location=None, velocity=None, radius: float = 0, density: float = 1, max_force: float = 0):
         if location is None:
             location = {'x': 0, 'y': 0}
@@ -77,6 +79,7 @@ class Swarm:
     :ivar member_max_force: Maximum force applicable to a member in the swarm.
     :type member_max_force: float
     """
+
     def __init__(self, num_x: int = 0, num_y: int = 0, left_location: float = 0, bottom_location: float = 0,
                  member_interval_x: float = 0, member_interval_y: float = 0, member_radius: float = 0,
                  member_density: float = 1, member_max_force: float = 0):
@@ -126,13 +129,12 @@ class Inflow:
     :ivar center_y: Y-coordinate of the inflow's center.
     :type center_y: float
     """
-    def __init__(self, frequency: float = 0, amplitude: float = 0, radius: float = 0, center_x: float = 0,
-                 center_y: float = 0):
+
+    def __init__(self, frequency: float = 0, amplitude: float = 0, h_shift: float = 0, v_shift: float = 0):
         self.frequency = frequency
         self.amplitude = amplitude
-        self.radius = radius
-        self.center_x = center_x
-        self.center_y = center_y
+        self.h_shift = h_shift
+        self.v_shift = v_shift
 
 
 class Fluid:
@@ -148,6 +150,7 @@ class Fluid:
         resistance.
     :type viscosity: float
     """
+
     def __init__(self, viscosity: float):
         self.viscosity = viscosity
 
@@ -184,6 +187,7 @@ class Simulation:
         derived from total_time and dt.
     :type time_steps: int
     """
+
     def __init__(self, length_x: float = 0, length_y: float = 0, resolution: tuple[int, int] = (0, 0), dt: float = 0,
                  total_time: float = 0):
         self.length_x = length_x
@@ -194,5 +198,3 @@ class Simulation:
         self.dt = dt
         self.total_time = total_time
         self.time_steps = floor(self.total_time / self.dt)
-
-

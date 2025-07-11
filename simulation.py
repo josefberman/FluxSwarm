@@ -8,11 +8,14 @@ from datetime import datetime
 import phi.field as field
 import phi.math
 from auxiliary import trapezoidal_waveform
+from scipy.spatial import distance
 
 RECORDING_TIME = 0
 
+PADDING = 2
 
-def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, fluid_obj: Fluid, t: float, force_actions: np.ndarray):
+def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, fluid_obj: Fluid, t: float,
+         force_actions: np.ndarray):
     """
     Performs a single simulation step, updating velocity, pressure fields, and swarm dynamics.
 
@@ -32,18 +35,21 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     :param force_actions: External force actions applied to the swarm.
     :return: Updated velocity and pressure fields, and the swarm state.
     """
-    trap_wave = trapezoidal_waveform(t=t, a=50, tau=0.5, h=np.pi/2, v=25)
+    trap_wave = trapezoidal_waveform(t=t, a=inflow.amplitude, tau=inflow.frequency, h=inflow.h_shift, v=inflow.v_shift)
     v_tensor_u = v.staggered_tensor()[0].numpy('x,y')
     v_tensor_u[:33, :] = trap_wave
     v_tensor_u = tensor(v_tensor_u[:, :-1], spatial('x,y'))
     v_tensor_v = v.staggered_tensor()[1].numpy('x,y')
     v_tensor_v = tensor(v_tensor_v[1:, 1:-1], spatial('x,y'))
-    v = StaggeredGrid(math.stack([v_tensor_u, v_tensor_v], dual(vector='x,y')), boundary=v.boundary, bounds=v.bounds, x=sim.resolution[0], y=sim.resolution[1])
+    v = StaggeredGrid(math.stack([v_tensor_u, v_tensor_v], dual(vector='x,y')), boundary=v.boundary, bounds=v.bounds,
+                      x=sim.resolution[0], y=sim.resolution[1])
     reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
     v = diffuse.explicit(v, 1 / reynolds, sim.dt)
     v = advect.semi_lagrangian(v, v, sim.dt)
     try:
-        v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(), solve=Solve(method='scipy-direct', x0=p, max_iterations=0, rel_tol=1e-3, abs_tol=1e-6))
+        v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
+                                         solve=Solve(method='scipy-direct', x0=p, max_iterations=0, rel_tol=1e-3,
+                                                     abs_tol=1e-6))
     except Diverged:
         return None, None, swarm
     if t >= RECORDING_TIME:
@@ -52,7 +58,8 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
             member = swarm.members[i]
             pressure_profile = sample_field_around_obstacle(f=p, member=member, sim=sim, n=8)  # ug/(mm*s^2)
             advance_by_pressure_gradient(member=member, sim=sim, pressure_profile=pressure_profile)
-            advance_by_forces(member=member, sim=sim, fluid=fluid_obj, internal_forces=force_actions, swarm_members=swarm.members)
+            advance_by_forces(member=member, sim=sim, fluid=fluid_obj, internal_forces=force_actions,
+                              swarm_members=swarm.members)
             member.previous_locations.append(member.location.copy())
             member.previous_velocities.append(member.velocity.copy())
     return v, p, swarm
@@ -122,20 +129,24 @@ def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profi
         lin_force_x += -pressure_profile[i] * np.cos(angle) * np.pi / 4 * member.radius
         lin_force_y += -pressure_profile[i] * np.sin(angle) * np.pi / 4 * member.radius
     # Add force due to gradient in x
-    x_pred_minus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt - member.radius
-    x_pred_plus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt + member.radius
-    x_lower = 6 * sim.dx
-    x_upper = sim.length_x - 6 * sim.dx
+    x_pred_minus = member.location['x'] + member.velocity[
+        'x'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt - member.radius
+    x_pred_plus = member.location['x'] + member.velocity[
+        'x'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt + member.radius
+    x_lower = PADDING * sim.dx
+    x_upper = sim.length_x - PADDING * sim.dx
     if (x_pred_minus > x_lower).all and (x_pred_plus < x_upper).all:
         member.velocity['x'] += float(lin_force_x / member.mass * sim.dt)
     else:
         member.velocity['x'] = 0
     member.location['x'] += float(member.velocity['x'] * sim.dt)
     # Add force due to gradient in y
-    y_pred_minus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt - member.radius
-    y_pred_plus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * lin_force_y / member.mass * sim.dt * sim.dt + member.radius
-    y_lower = 6 * sim.dy
-    y_upper = sim.length_y - 6 * sim.dy
+    y_pred_minus = member.location['y'] + member.velocity[
+        'y'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt - member.radius
+    y_pred_plus = member.location['y'] + member.velocity[
+        'y'] * sim.dt + 0.5 * lin_force_y / member.mass * sim.dt * sim.dt + member.radius
+    y_lower = PADDING * sim.dy
+    y_upper = sim.length_y - PADDING * sim.dy
     if (y_pred_minus > y_lower).all and (y_pred_plus < y_upper).all:
         member.velocity['y'] += float(lin_force_y / member.mass * sim.dt)
     else:
@@ -169,26 +180,29 @@ def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
                 [other_member.location['x'] - member.location['x'], other_member.location['y'] - member.location['y']])
             dist = np.linalg.norm(r_ij)
             n = r_ij / dist
-            if 0 < dist < (2 * other_member.radius + 6 * np.sqrt(sim.dx ** 2 + sim.dy ** 2)):
+            if 0 < dist < (2 * other_member.radius + 2 * np.max(sim.dx, sim.dy)):
                 total_force += np.dot(internal_forces[i] * other_member.max_force, n)
     # Add Stokes drag
-    total_force -= 6 * np.pi * fluid.viscosity * member.radius * np.array([member.velocity['x'], member.velocity['y']])
-    x_pred_minus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[0] / member.mass * sim.dt * sim.dt - member.radius
-    x_pred_plus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[0] / member.mass * sim.dt * sim.dt + member.radius
-    x_lower = 6 * sim.dx
-    x_upper = sim.length_x - 6 * sim.dx
+    # total_force -= 6 * np.pi * fluid.viscosity * member.radius * np.array([member.velocity['x'], member.velocity['y']])
+    x_pred_minus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[
+        0] / member.mass * sim.dt * sim.dt - member.radius
+    x_pred_plus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[
+        0] / member.mass * sim.dt * sim.dt + member.radius
+    x_lower = PADDING * sim.dx
+    x_upper = sim.length_x - PADDING * sim.dx
     if (x_pred_minus > x_lower).all and (x_pred_plus < x_upper).all:
         member.velocity['x'] += float(total_force[0] / member.mass * sim.dt)
     else:
         member.velocity['x'] = 0
     member.location['x'] += float(member.velocity['x'] * sim.dt)
-    y_pred_minus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * total_force[1] / member.mass * sim.dt * sim.dt - member.radius
-    y_pred_plus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * total_force[1] / member.mass * sim.dt * sim.dt + member.radius
-    y_lower = 6 * sim.dy
-    y_upper = sim.length_y - 6 * sim.dx
+    y_pred_minus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * total_force[
+        1] / member.mass * sim.dt * sim.dt - member.radius
+    y_pred_plus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * total_force[
+        1] / member.mass * sim.dt * sim.dt + member.radius
+    y_lower = PADDING * sim.dy
+    y_upper = sim.length_y - PADDING * sim.dx
     if (y_pred_minus > y_lower).all and (y_pred_plus < y_upper).all:
         member.velocity['y'] += float(total_force[1] / member.mass * sim.dt)
     else:
         member.velocity['y'] = 0
     member.location['y'] += float(member.velocity['y'] * sim.dt)
-

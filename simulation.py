@@ -183,7 +183,7 @@ def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
                 [other_member.location['x'] - member.location['x'], other_member.location['y'] - member.location['y']])
             dist = np.linalg.norm(r_ij)
             n = r_ij / dist
-            if 0 < dist < (2 * other_member.radius + 2 * np.max(sim.dx, sim.dy)):
+            if 0 < dist < (2 * other_member.radius + 2 * np.max([sim.dx, sim.dy])):
                 total_force += np.dot(internal_forces[i] * other_member.max_force, n)
     # Add Stokes drag
     # total_force -= 6 * np.pi * fluid.viscosity * member.radius * np.array([member.velocity['x'], member.velocity['y']])

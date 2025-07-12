@@ -92,9 +92,12 @@ def plot_save_fields(v: Field, p: Field, folder_name: str, pid: int, current_tim
     max_abs_velocity_y = np.max(np.abs(v['y'].numpy()))
     max_abs_pressure = np.max(np.abs(p.numpy()))
     fig, ax = plt.subplots(3, 1, figsize=(20, 10))
-    ax[0].imshow(v['x'].numpy().T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_x, vmax=max_abs_velocity_x, extent=[0, sim.length_x, 0, sim.length_y])
-    ax[1].imshow(v['y'].numpy().T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_y, vmax=max_abs_velocity_y, extent=[0, sim.length_x, 0, sim.length_y])
-    ax[2].imshow(p.numpy().T * TO_MMHG, origin='lower', cmap='coolwarm_r', vmin=-max_abs_pressure, vmax=max_abs_pressure, extent=[0, sim.length_x, 0, sim.length_y])
+    ax[0].imshow(v['x'].numpy().T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_x, vmax=max_abs_velocity_x,
+                 extent=[0, sim.length_x, 0, sim.length_y])
+    ax[1].imshow(v['y'].numpy().T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_y, vmax=max_abs_velocity_y,
+                 extent=[0, sim.length_x, 0, sim.length_y])
+    ax[2].imshow(p.numpy().T * TO_MMHG, origin='lower', cmap='coolwarm_r', vmin=-max_abs_pressure,
+                 vmax=max_abs_pressure, extent=[0, sim.length_x, 0, sim.length_y])
     plt.tight_layout()
     plt.savefig(f'../runs/run_{folder_name}/PPO/figures/{pid}/timestep_{current_time:.3f}.jpg', dpi=300)
     plt.close(fig)
@@ -115,7 +118,8 @@ def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
         including their historical positions.
     :return: None
     """
-    data_dict = {'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(swarm.members[0].previous_locations))}
+    data_dict = {'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt,
+                                         num=len(swarm.members[0].previous_locations))}
     for i, member in enumerate(swarm.members):
         data_dict[f'location_{i}_x'] = [item['x'] for item in member.previous_locations]
         data_dict[f'location_{i}_y'] = [item['y'] for item in member.previous_locations]
@@ -123,17 +127,22 @@ def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     list_of_member_locations = []
     for member in swarm.members:
-        axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)), [item['x'] for item in member.previous_locations], c='#bbbbbb')
+        axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
+                     [item['x'] for item in member.previous_locations], c='#bbbbbb')
         list_of_member_locations.append(member.previous_locations)
-    average_dict = [{'x': sum(d['x'] for d in g) / len(g), 'y': sum(d['y'] for d in g) / len(g)} for g in zip(*list_of_member_locations)]
-    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)), [item['x'] for item in average_dict], c='k', linewidth=0.5)
+    average_dict = [{'x': sum(d['x'] for d in g) / len(g), 'y': sum(d['y'] for d in g) / len(g)} for g in
+                    zip(*list_of_member_locations)]
+    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
+                 [item['x'] for item in average_dict], c='k', linewidth=0.5)
     axes[0].set_title('x locations', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Location [mm]')
     axes[0].set_ylim(0, sim.length_x)
     for member in swarm.members:
-        axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)), [item['y'] for item in member.previous_locations], c='#bbbbbb')
-    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)), [item['y'] for item in average_dict], c='k', linewidth=0.5)
+        axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
+                     [item['y'] for item in member.previous_locations], c='#bbbbbb')
+    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
+                 [item['y'] for item in average_dict], c='k', linewidth=0.5)
     axes[1].set_title('y locations', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Location [mm]')
@@ -162,7 +171,8 @@ def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
     :type swarm: Swarm
     :return: None
     """
-    data_dict = {'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(swarm.members[0].previous_velocities))}
+    data_dict = {'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt,
+                                         num=len(swarm.members[0].previous_velocities))}
     for i, member in enumerate(swarm.members):
         data_dict[f'velocity_{i}_x'] = [item['x'] for item in member.previous_velocities]
         data_dict[f'velocity_{i}_y'] = [item['y'] for item in member.previous_velocities]
@@ -170,16 +180,21 @@ def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     list_of_member_velocities = []
     for member in swarm.members:
-        axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)), [item['x'] for item in member.previous_velocities], c='#bbbbbb')
+        axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
+                     [item['x'] for item in member.previous_velocities], c='#bbbbbb')
         list_of_member_velocities.append(member.previous_velocities)
-    average_dict = [{'x': sum(d['x'] for d in g) / len(g), 'y': sum(d['y'] for d in g) / len(g)} for g in zip(*list_of_member_velocities)]
-    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)), [item['x'] for item in average_dict], c='k', linewidth=0.5)
+    average_dict = [{'x': sum(d['x'] for d in g) / len(g), 'y': sum(d['y'] for d in g) / len(g)} for g in
+                    zip(*list_of_member_velocities)]
+    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
+                 [item['x'] for item in average_dict], c='k', linewidth=0.5)
     axes[0].set_title('x velocities', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Velocity [mm/s]')
     for member in swarm.members:
-        axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)), [item['y'] for item in member.previous_velocities], c='#bbbbbb')
-    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)), [item['y'] for item in average_dict], c='k', linewidth=0.5)
+        axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
+                     [item['y'] for item in member.previous_velocities], c='#bbbbbb')
+    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
+                 [item['y'] for item in average_dict], c='k', linewidth=0.5)
     axes[1].set_title('y velocities', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Velocity [mm/s]')
@@ -203,13 +218,16 @@ def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
         properties such as timestep duration and total simulation time.
     :return: None
     """
-    pd.DataFrame({'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)), 'reward': rewards}).to_csv(f'../runs/run_{folder_name}/rewards.csv')
+    pd.DataFrame({'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)),
+                  'reward': rewards}).to_csv(f'../runs/run_{folder_name}/rewards.csv')
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
-    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)), np.cumsum(rewards), c='k', linewidth=0.5)
+    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)), np.cumsum(rewards), c='k',
+                 linewidth=0.5)
     axes[0].set_title('Cumulative reward', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Cumulative reward')
-    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)), rewards, c='k', linewidth=0.5)
+    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)), rewards, c='k',
+                 linewidth=0.5)
     axes[1].set_title('Step reward', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Step reward')
@@ -217,7 +235,8 @@ def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
     plt.savefig(f'../runs/run_{folder_name}/rewards.jpg', dpi=300)
 
 
-def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Swarm, imshow_data: np.ndarray, plot_data: np.ndarray, max_abs_value: float, title: str, x_label: str, y_label: str):
+def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Swarm, imshow_data: np.ndarray,
+                               plot_data: np.ndarray, max_abs_value: float, title: str, x_label: str, y_label: str):
     """
     Creates a single frame for an animation row consisting of an imshow plot and a line plot. The method configures the
     appearance and content of the provided axes by setting the image data, overlaying swarm member circular patches,
@@ -246,11 +265,14 @@ def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Sw
         patches representing swarm members.
     :rtype: tuple
     """
-    im_handler = axis[0].imshow(imshow_data, origin='lower', cmap='coolwarm_r', vmin=-max_abs_value, vmax=max_abs_value, extent=[0, sim.length_x, 0, sim.length_y], aspect=4, zorder=1)
+    im_handler = axis[0].imshow(imshow_data, origin='lower', cmap='coolwarm_r', vmin=-max_abs_value, vmax=max_abs_value,
+                                extent=[0, sim.length_x, 0, sim.length_y], aspect=4, zorder=1)
     axis[0].plot([0, sim.length_x], [int(sim.length_y / 2), int(sim.length_y / 2)], c='k', linestyle='dashed', zorder=2)
     member_patches = []
     for member in swarm.members:
-        member_patches.append(axis[0].add_patch(plt.Circle((member.previous_locations[0]['x'], member.previous_locations[0]['y']), member.radius, color='k', zorder=3)))
+        member_patches.append(axis[0].add_patch(
+            plt.Circle((member.previous_locations[0]['x'], member.previous_locations[0]['y']), member.radius, color='k',
+                       zorder=3)))
     fig.colorbar(im_handler, ax=axis[0], orientation='vertical', pad=0.04, fraction=0.02)
     axis[0].set_title(title, fontweight='bold')
     plot_handler, = axis[1].plot(np.linspace(0, sim.length_x, sim.resolution[0]), plot_data, c='k')

@@ -225,9 +225,14 @@ class SwarmEnv(gym.Env):
         if self.v is None:
             done = True
         else:
+            count_members_finished = 0
             for member in self.swarm.members:
-                if (member.location['x'] <= 25) or (member.location['x'] >= 75):
+                if member.location['x'] <= 25:
+                    count_member_finished += 1
+                if member.location['x'] >= 75:
                     done = True
+            if count_members_finished == 9:
+                done = True
         return done
 
     def _compute_reward(self):

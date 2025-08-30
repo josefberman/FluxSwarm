@@ -36,7 +36,8 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     :param force_actions: External force actions applied to the swarm.
     :return: Updated velocity and pressure fields, and the swarm state.
     """
-    trap_wave = trapezoidal_waveform(t=t, a=inflow.amplitude, tau=inflow.frequency, h=inflow.h_shift, v=inflow.v_shift)
+    # trap_wave = trapezoidal_waveform(t=t, a=inflow.amplitude, tau=inflow.frequency, h=inflow.h_shift, v=inflow.v_shift)
+    trap_wave = inflow.amplitude / 2
     v_tensor_u = v.staggered_tensor()[0].numpy('x,y')
     v_tensor_u[:33, :] = trap_wave
     v_tensor_u = tensor(v_tensor_u[:, :-1], spatial('x,y'))
@@ -63,6 +64,7 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
                               swarm_members=swarm.members)
             member.previous_locations.append(member.location.copy())
             member.previous_velocities.append(member.velocity.copy())
+            member.previous_actions.append({'x': force_actions[i][0], 'y': force_actions[i][1]})
     return v, p, swarm
 
 

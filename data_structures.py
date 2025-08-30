@@ -39,13 +39,14 @@ class Member:
         self.location = location
         if velocity is None:
             velocity = {'x': 0, 'y': 0}
+        self.action = {'x': 0, 'y': 0}
         self.velocity = velocity
         self.radius = radius
         self.density = density
         self.mass = self.density * 4 / 3 * np.pi / radius ** 3
         self.previous_locations = [self.location]
         self.previous_velocities = [self.velocity]
-        self.previous_forces = []
+        self.previous_actions = [self.action]
         self.max_force = max_force
 
     def as_sphere(self):

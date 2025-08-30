@@ -1,15 +1,17 @@
 import os
 from gymnasium import spaces
 import gymnasium as gym
+from phi.field import write
 from phi.flow import *
 import phi.field as field
 from data_structures import Simulation, Swarm, Fluid, Inflow
 from simulation import step, sample_field_around_obstacle
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
-from plotting import plot_save_locations, plot_save_velocities, plot_save_rewards, plot_save_fields
+from plotting import plot_save_locations, plot_save_velocities, plot_save_rewards, plot_save_actions, plot_save_fields
 from stable_baselines3 import PPO, SAC
 import torch
+from datetime import datetime
 
 
 class SwarmEnv(gym.Env):
@@ -85,8 +87,8 @@ class SwarmEnv(gym.Env):
         self.action_space = spaces.Box(
             low=-1.0, high=1.0, shape=(len(swarm.members), 2), dtype=np.float32
         )
-        os.makedirs(f'../runs/run_{self.folder}/PPO/velocity_{self.pid}', exist_ok=True)
-        os.makedirs(f'../runs/run_{self.folder}/PPO/pressure_{self.pid}', exist_ok=True)
+        os.makedirs(f'../runs/{self.folder}/PPO/velocity_{self.pid}', exist_ok=True)
+        os.makedirs(f'../runs/{self.folder}/PPO/pressure_{self.pid}', exist_ok=True)
 
     def reset(self, seed=None, options=None):
         """
@@ -122,7 +124,7 @@ class SwarmEnv(gym.Env):
         for i, member in enumerate(self.swarm.members):
             member.previous_locations = prev_members[i].previous_locations.copy()
             member.previous_velocities = prev_members[i].previous_velocities.copy()
-            member.previous_forces = prev_members[i].previous_forces.copy()
+            member.previous_actions = prev_members[i].previous_actions.copy()
         # reynolds = self.inflow.amplitude * self.sim.length_y / self.fluid.viscosity
         # print(f'{reynolds=}')
         self.episode_time = 0.0
@@ -176,6 +178,10 @@ class SwarmEnv(gym.Env):
         # print('  v:',type(self.v))
         # print('  p:',type(self.p))
 
+        # if self.current_timestep % 10 == 0:
+        #     write(self.v, f'../runs/{self.folder}/velocity/velocity_{self.current_timestep}')
+        #     write(self.p, f'../runs/{self.folder}/pressure/pressure_{self.current_timestep}')
+
         return self._get_observation(), reward, done, False, {}
 
     def _get_observation(self):
@@ -227,11 +233,11 @@ class SwarmEnv(gym.Env):
         else:
             count_members_finished = 0
             for member in self.swarm.members:
-                if member.location['x'] <= 25:
-                    count_member_finished += 1
-                if member.location['x'] >= 75:
+                if member.location['x'] <= 20:
+                    count_members_finished += 1
+                if member.location['x'] >= 80:
                     done = True
-            if count_members_finished == 9:
+            if count_members_finished == len(self.swarm.members):
                 done = True
         return done
 
@@ -249,17 +255,52 @@ class SwarmEnv(gym.Env):
         """
         reward = 0
         if self.v is None:
-            reward = -20
+            reward = 0
         else:
-            for i, member in enumerate(self.swarm.members):
-                if member.location['x'] <= 25:
-                    reward += 50
-                elif member.location['x'] >= 75:
-                    reward += -20
-                elif (member.location['x'] < member.previous_locations[-2]['x']):
-                    reward += 1
+            distance_factor = 0.1  # Giving distance reward magnitude of 1
+            direction_factor = 1.0  # Giving direction penalty magnitude of 0.1
+            discount_factor = 0.99  # Discount factor of PPO
+
+            for member in self.swarm.members:
+                # Distance reward: how far left (decrease in x) from initial x
+                prev_location_x = member.previous_locations[-2]['x']  # Assuming 0 is the first location
+                cur_location_x = member.location['x']
+                distance_delta = max(0, prev_location_x - discount_factor * cur_location_x)  # Only reward for moving left
+
+                # Penalty for rapid direction change in action
+                # Assume member.actions stores previous actions as dicts with 'x' and 'y'
+                # and that the most recent action is at -1, previous at -2
+                if hasattr(member, 'previous_actions') and len(member.previous_actions) >= 2:
+                    prev_action = member.previous_actions[-2]
+                    curr_action = member.previous_actions[-1]
+                    # Compute cosine of angle between previous and current action
+                    prev_vec = np.array([prev_action['x'], prev_action['y']])
+                    curr_vec = np.array([curr_action['x'], curr_action['y']])
+                    norm_prev = np.linalg.norm(prev_vec)
+                    norm_curr = np.linalg.norm(curr_vec)
+                    if norm_prev > 0 and norm_curr > 0:
+                        angle_change = np.clip(np.dot(prev_vec, curr_vec) / (norm_prev * norm_curr), -1.0, 1.0)
+                    else:
+                        angle_change = 1.0  # If one vector is zero, treat as no change (cos(0)=1)
                 else:
-                    reward += -1
+                    angle_change = 1.0
+
+                member_reward = distance_delta * distance_factor - angle_change * direction_factor
+                reward += member_reward
+            for member in self.swarm.members:
+                if member.location['y'] >= 1.8 and member.location['y'] <= 2.2:
+                    reward += 1
+            #     if member.location['x'] <= 25:
+            #         reward += 20
+            #     elif member.location['x'] <= 35:
+            #         reward += 10
+            #     # elif member.location['x'] >= 75:
+            #         # reward += -20
+            #     elif (member.location['x'] < member.previous_locations[-2]['x']):
+            #         reward += 1
+            #     else:
+            #         reward += -1
+                
         return reward
 
     def render(self, mode='human'):
@@ -308,10 +349,10 @@ class RewardLoggerCallback(BaseCallback):
         #     for i in range(len(v_attr)):
         #         if v_attr[i] is not None:
         #             phi.field.write(v_attr[i],
-        #                             f'../runs/run_{folder_attr[i]}/PPO/velocity_{pid_attr[i]}/velocity_{current_time_attr[i]:.3f}')
+        #                             f'../runs/{folder_attr[i]}/PPO/velocity_{pid_attr[i]}/velocity_{current_time_attr[i]:.3f}')
         #         if p_attr[i] is not None:
         #             phi.field.write(p_attr[i],
-        #                             f'../runs/run_{folder_attr[i]}/PPO/pressure_{pid_attr[i]}/pressure_{current_time_attr[i]:.3f}')
+        #                             f'../runs/{folder_attr[i]}/PPO/pressure_{pid_attr[i]}/pressure_{current_time_attr[i]:.3f}')
         # plot_save_fields(v_attr[i], p_attr[i], folder_attr[i], pid_attr[i], current_time_attr[i], sim_attr[i])
         return True
 
@@ -332,35 +373,47 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
 
     :return: None
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
     num_steps = 10
     if isinstance(env, VecEnv):
-        model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=(num_steps * env.num_envs),
-                    device=device, gamma=0.95,
-                    tensorboard_log=f'../runs/run_{env.get_attr('folder')[0]}/swarm_rl_ppo_tb')
+        if os.path.exists(f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo'):
+            model = PPO.load(f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo')
+        else:
+            model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=(num_steps * env.num_envs),
+                        device=device, gamma=0.95,
+                        tensorboard_log=f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo_tb')
         model.learn(total_timesteps=timesteps * env.num_envs, log_interval=1, progress_bar=True,
                     callback=RewardLoggerCallback(), reset_num_timesteps=False)
-        model.save(f'../runs/run_{env.get_attr('folder')[0]}/swarm_rl_ppo')
+        model.save(f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo')
         for env_i in range(env.num_envs):
             # model.learn(total_timesteps=timesteps, log_interval=timesteps//(num_steps*env.num_envs))
-            os.makedirs(f'../runs/run_{env.get_attr('folder')[env_i]}/PPO/{env.get_attr('pid')[env_i]}', exist_ok=True)
-            plot_save_locations(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env.get_attr('pid')[env_i]}',
+            date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
+            os.makedirs(f'../runs/{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}', exist_ok=True)
+            plot_save_locations(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}',
                                 sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
-            plot_save_velocities(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env.get_attr('pid')[env_i]}',
+            plot_save_velocities(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}',
                                  sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
-            plot_save_rewards(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{env.get_attr('pid')[env_i]}',
+            plot_save_rewards(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}',
                               rewards=env.get_attr('rewards')[env_i], sim=env.get_attr('sim')[env_i])
+            plot_save_actions(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}',
+                              sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
             # plot_save_fields(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/', pid=env.get_attr('pid')[env_i])
     elif isinstance(env, SwarmEnv):
-        model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=num_steps, device=device, gamma=0.95,
-                    tensorboard_log=f'../runs/run_{env.folder}/swarm_rl_ppo_tb')
+        if os.path.exists(f'../runs/{env.folder}/swarm_rl_ppo'):
+            model = PPO.load(f'../runs/{env.folder}/swarm_rl_ppo')
+        else:
+            model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=num_steps, device=device, gamma=0.95,
+                        tensorboard_log=f'../runs/{env.folder}/swarm_rl_ppo_tb')
         model.learn(total_timesteps=timesteps, log_interval=1, progress_bar=True, callback=RewardLoggerCallback(),
                     reset_num_timesteps=False)
-        model.save(f'../runs/run_{env.folder}/swarm_rl_ppo')
-        plot_save_locations(folder_name=f'{env.folder}/PPO', sim=env.sim, swarm=env.swarm)
-        plot_save_velocities(folder_name=f'{env.folder}/PPO', sim=env.sim, swarm=env.swarm)
-        plot_save_rewards(folder_name=f'{env.folder}/PPO', rewards=env.rewards, sim=env.sim)
-
+        model.save(f'../runs/{env.folder}/swarm_rl_ppo')
+        date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
+        os.makedirs(f'../runs/{env.folder}/PPO/{date_stamp}', exist_ok=True)
+        plot_save_locations(folder_name=f'{env.folder}/PPO/{date_stamp}', sim=env.sim, swarm=env.swarm)
+        plot_save_velocities(folder_name=f'{env.folder}/PPO/{date_stamp}', sim=env.sim, swarm=env.swarm)
+        plot_save_rewards(folder_name=f'{env.folder}/PPO/{date_stamp}', rewards=env.rewards, sim=env.sim)
+        plot_save_actions(folder_name=f'{env.folder}/PPO/{date_stamp}', sim=env.sim, swarm=env.swarm)
 
 def run_SAC(env: SwarmEnv):
     """
@@ -374,7 +427,7 @@ def run_SAC(env: SwarmEnv):
     """
     model = SAC('MlpPolicy', env, verbose=2, device='cpu', gamma=0.95, tau=0.1)
     model.learn(total_timesteps=env.sim.time_steps, progress_bar=True)
-    model.save(f'../runs/run_{env.folder}/swarm_rl_sac')
+    model.save(f'../runs/{env.folder}/swarm_rl_sac')
 
     plot_save_locations(folder_name=f'{env.folder}/SAC', sim=env.sim, swarm=env.swarm)
     plot_save_velocities(folder_name=f'{env.folder}/SAC', sim=env.sim, swarm=env.swarm)

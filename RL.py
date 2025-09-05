@@ -109,7 +109,6 @@ class SwarmEnv(gym.Env):
             information.
         :rtype: Tuple[Any, dict]
         """
-        # self.current_time = 0
         prev_members = self.swarm.members
         prev_swarm = self.swarm
         self.swarm = Swarm(num_x=prev_swarm.num_x, num_y=prev_swarm.num_y, left_location=prev_swarm.left_location,
@@ -125,8 +124,6 @@ class SwarmEnv(gym.Env):
             member.previous_locations = prev_members[i].previous_locations.copy()
             member.previous_velocities = prev_members[i].previous_velocities.copy()
             member.previous_actions = prev_members[i].previous_actions.copy()
-        # reynolds = self.inflow.amplitude * self.sim.length_y / self.fluid.viscosity
-        # print(f'{reynolds=}')
         self.episode_time = 0.0
         return self._get_observation(), {}
 
@@ -154,10 +151,6 @@ class SwarmEnv(gym.Env):
         self.v = v_temp
         self.p = p_temp
         self.swarm = swarm_temp
-        # self.v, self.p, self.swarm = step(
-        #     v=self.v, p=self.p, inflow=self.inflow, sim=self.sim, swarm=self.swarm, fluid_obj=self.fluid,
-        #     t=self.episode_time, force_actions=action
-        # )
 
         self.current_time += self.sim.dt
         self.episode_time += self.sim.dt
@@ -171,12 +164,7 @@ class SwarmEnv(gym.Env):
         # Compute rewards
         reward = self._compute_reward()
         self.rewards.append(reward)
-        # done = self.current_time >= self.sim.total_time
         done = self._compute_done()
-
-        # print(f'State for timestep {self.current_timestep - 1}:')
-        # print('  v:',type(self.v))
-        # print('  p:',type(self.p))
 
         # if self.current_timestep % 10 == 0:
         #     write(self.v, f'../runs/{self.folder}/velocity/velocity_{self.current_timestep}')
@@ -253,53 +241,51 @@ class SwarmEnv(gym.Env):
         :return: The calculated reward based on the members' movements.
         :rtype: float
         """
-        reward = 0
+        # If episode time is 0 or first timestep (dt), return 0 to avoid referencing to previous episode
+        if (self.episode_time == 0) or (self.episode_time == self.sim.dt):
+            return 0
+        
+        # If velocity field is None (calculation did not converge), return 0
         if self.v is None:
-            reward = 0
-        else:
-            distance_factor = 0.1  # Giving distance reward magnitude of 1
-            direction_factor = 1.0  # Giving direction penalty magnitude of 0.1
-            discount_factor = 0.99  # Discount factor of PPO
+            return 0
 
-            for member in self.swarm.members:
-                # Distance reward: how far left (decrease in x) from initial x
-                prev_location_x = member.previous_locations[-2]['x']  # Assuming 0 is the first location
-                cur_location_x = member.location['x']
-                distance_delta = max(0, prev_location_x - discount_factor * cur_location_x)  # Only reward for moving left
+        # Calculate reward
+        reward = 0
+        distance_factor = 1.0  # Distance reward at unit magnitude
+        direction_factor = 1.0  # Direction-change penalty at unit magnitude
+        discount_factor = 0.99  # Discount factor of PPO
 
-                # Penalty for rapid direction change in action
-                # Assume member.actions stores previous actions as dicts with 'x' and 'y'
-                # and that the most recent action is at -1, previous at -2
-                if hasattr(member, 'previous_actions') and len(member.previous_actions) >= 2:
-                    prev_action = member.previous_actions[-2]
-                    curr_action = member.previous_actions[-1]
-                    # Compute cosine of angle between previous and current action
-                    prev_vec = np.array([prev_action['x'], prev_action['y']])
-                    curr_vec = np.array([curr_action['x'], curr_action['y']])
-                    norm_prev = np.linalg.norm(prev_vec)
-                    norm_curr = np.linalg.norm(curr_vec)
-                    if norm_prev > 0 and norm_curr > 0:
-                        angle_change = np.clip(np.dot(prev_vec, curr_vec) / (norm_prev * norm_curr), -1.0, 1.0)
-                    else:
-                        angle_change = 1.0  # If one vector is zero, treat as no change (cos(0)=1)
+        for member in self.swarm.members:
+            # Distance reward: how far left (decrease in x) from initial x
+            prev_location_x = member.previous_locations[-2]['x']  # Assuming 0 is the first location
+            cur_location_x = member.location['x']
+            distance_delta = prev_location_x - discount_factor * cur_location_x
+            # distance_delta = max(0, prev_location_x - discount_factor * cur_location_x)  # Only reward for moving left
+
+            # Penalty for rapid direction change in action
+            if hasattr(member, 'previous_actions') and len(member.previous_actions) >= 2:
+                prev_action = member.previous_actions[-2]
+                curr_action = member.previous_actions[-1]
+                prev_vec = np.array([prev_action['x'], prev_action['y']])
+                curr_vec = np.array([curr_action['x'], curr_action['y']])
+                norm_prev = np.linalg.norm(prev_vec)
+                norm_curr = np.linalg.norm(curr_vec)
+                if norm_prev > 0 and norm_curr > 0:
+                    # Cosine similarity in [-1, 1]; 1 means aligned, -1 means opposite
+                    cosine_sim = np.clip(np.dot(prev_vec, curr_vec) / (norm_prev * norm_curr), -1.0, 1.0)
                 else:
-                    angle_change = 1.0
+                    cosine_sim = 1.0  # If one vector is zero, treat as aligned (no change)
+            else:
+                cosine_sim = 1.0
 
-                member_reward = distance_delta * distance_factor - angle_change * direction_factor
-                reward += member_reward
-            for member in self.swarm.members:
-                if member.location['y'] >= 1.8 and member.location['y'] <= 2.2:
-                    reward += 1
-            #     if member.location['x'] <= 25:
-            #         reward += 20
-            #     elif member.location['x'] <= 35:
-            #         reward += 10
-            #     # elif member.location['x'] >= 75:
-            #         # reward += -20
-            #     elif (member.location['x'] < member.previous_locations[-2]['x']):
-            #         reward += 1
-            #     else:
-            #         reward += -1
+            # Convert similarity to change penalty in [0, 1]; 0 when aligned, 1 when opposite
+            direction_penalty = (1.0 - cosine_sim) / 2.0
+
+            member_reward = distance_delta * distance_factor - direction_penalty * direction_factor
+            reward += member_reward
+        # for member in self.swarm.members:
+            # if member.location['y'] >= 1.8 and member.location['y'] <= 2.2:
+            #     reward += 1
                 
         return reward
 
@@ -387,7 +373,6 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
                     callback=RewardLoggerCallback(), reset_num_timesteps=False)
         model.save(f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo')
         for env_i in range(env.num_envs):
-            # model.learn(total_timesteps=timesteps, log_interval=timesteps//(num_steps*env.num_envs))
             date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
             os.makedirs(f'../runs/{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}', exist_ok=True)
             plot_save_locations(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}',

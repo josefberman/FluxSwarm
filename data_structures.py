@@ -87,9 +87,6 @@ class Swarm:
         s = []
         for i in range(num_x):
             for j in range(num_y):
-                # s.append(Member(
-                #     location={'x': left_location + i * member_interval_x, 'y': bottom_location + j * member_interval_y,
-                #               'theta': rand() * 2 * np.pi}, radius=member_radius, density=member_density, max_force=))
                 s.append(Member(
                     location={'x': left_location + i * member_interval_x, 'y': bottom_location + j * member_interval_y,
                               'theta': 0}, radius=member_radius, density=member_density, max_force=member_max_force))

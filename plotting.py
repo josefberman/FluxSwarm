@@ -11,57 +11,7 @@ from glob import glob
 from scipy.signal import savgol_filter
 from auxiliary import TO_MMHG, trapezoidal_waveform
 
-
-# def plot_scalar_field(field, ax, length_x, length_y, title):
-#     max_magnitude = np.max(np.abs(field.numpy()))
-#     im = ax.imshow(field.numpy().T, origin='lower', cmap='coolwarm_r', extent=[0, length_x, 0, length_y], aspect=2,
-#                    vmin=-max_magnitude, vmax=max_magnitude, zorder=1)
-#     ax.set_title(title)
-#     return im
-#
-#
-# def plot_save_current_step(current_time: float, folder_name: str, v_field: Field, p_field: Field,
-#                            sim: Simulation, swarm: Swarm) -> None:
-#     fig, axes = plt.subplots(3, 1, figsize=(20, 10))
-#     fields = [v_field['x'], v_field['y'], p_field * TO_MMHG]
-#     field_names = [u'Velocity - x component [mm/s]', u'Velocity - y component [mm/s]', 'Pressure [mmHg]']
-#     ax_handlers = []
-#     for i in range(0, 3):
-#         ax_handlers.append(plot_scalar_field(field=fields[i], ax=axes[i], length_x=sim.length_x, length_y=sim.length_y,
-#                                              title=field_names[i]))
-#         fig.colorbar(ax_handlers[-1], ax=axes[i], orientation='vertical', pad=0.04, fraction=0.02)
-#         for member in swarm.members:
-#             axes[i].add_patch(plt.Circle((member.location['x'], member.location['y']), member.radius, color='k'))
-#         # for _x in np.arange(0, sim.length_x, sim.dx):
-#         #     axes[i].axvline(_x, c='k', linewidth=0.1, alpha=0.5)
-#         # for _y in np.arange(0, sim.length_y, sim.dy):
-#         #     axes[i].axhline(_y, c='k', linewidth=0.1, alpha=0.5)
-#     plt.suptitle(f'Simulation time: {current_time:.2f} seconds', fontweight='bold')
-#     plt.tight_layout()
-#     plt.savefig(f'../runs/{folder_name}/figures/timestep_{current_time:.3f}.jpg', dpi=300)
-#     plt.close(fig)
-#     return None
-
-
-# def plot_save_fields(folder_name: str, pid: int, sim: Simulation):
-#     velocity_file_list = sorted(glob(f'../runs/{folder_name}/velocity_{pid}/*.npz'))
-#     pressure_file_list = sorted(glob(f'../runs/{folder_name}/pressure_{pid}/*.npz'))
-#     velocity_data = [np.load(file) for file in velocity_file_list]
-#     pressure_data = [np.load(file) for file in pressure_file_list]
-#     max_abs_velocity_x = np.max(np.abs([file['data'][:, :, 0] for file in velocity_data]))
-#     max_abs_velocity_y = np.max(np.abs([file['data'][:, :, 1] for file in velocity_data]))
-#     max_abs_pressure = np.max(np.abs([file['data'] for file in pressure_data]))
-#     for i, (v_i, p_i) in enumerate(zip(velocity_data, pressure_data)):
-#         fig, ax = plt.subplots(3, 1, figsize=(20, 10))
-#         ax[0].imshow(v_i['data'][:, :, 0].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_x,
-#                      vmax=max_abs_velocity_x, extent=[0, sim.length_x, 0, sim.length_y])
-#         ax[1].imshow(v_i['data'][:, :, 1].T, origin='lower', cmap='coolwarm_r', vmin=-max_abs_velocity_y,
-#                      vmax=max_abs_velocity_y, extent=[0, sim.length_x, 0, sim.length_y])
-#         ax[2].imshow(p_i['data'].T * TO_MMHG, origin='lower', cmap='coolwarm_r', vmin=-max_abs_pressure,
-#                      vmax=max_abs_pressure, extent=[0, sim.length_x, 0, sim.length_y])
-#         plt.tight_layout()
-#         plt.savefig(f'../runs/{folder_name}/figures/timestep_{i * sim.dt * 10:.3f}.jpg', dpi=300)
-#         plt.close(fig)
+ 
 
 def plot_save_fields(v: Field, p: Field, folder_name: str, pid: int, current_time: float, sim: Simulation):
     """
@@ -393,6 +343,4 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, inflow: Inflow, folde
     ffmpeg_writer = animation.FFMpegWriter(fps=1, codec='h264', bitrate=-1)
     ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), blit=True, repeat=False)
     ani.save(f'../runs/{folder_name}/animation_slow.mp4', ffmpeg_writer, dpi=200)
-    # ani.save(f'./{folder_name}/animation_slow.gif', writer='pillow', fps=1, dpi=300)
-    # ani.save(f'./{folder_name}/animation_fast.gif', writer='pillow', fps=10, dpi=300)
     return None

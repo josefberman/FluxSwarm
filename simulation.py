@@ -14,6 +14,9 @@ RECORDING_TIME = 0
 
 PADDING = 2
 
+# Number of angular samples around each member used for pressure sampling
+NUM_PRESSURE_ANGLES = 4
+
 
 def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, fluid_obj: Fluid, t: float,
          force_actions: np.ndarray):
@@ -49,16 +52,21 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     v = diffuse.explicit(v, 1 / reynolds, sim.dt)
     v = advect.semi_lagrangian(v, v, sim.dt)
     try:
-        v, p = fluid.make_incompressible(velocity=v, obstacles=swarm.as_obstacle_list(),
-                                         solve=Solve(method='scipy-direct', x0=p, max_iterations=0, rel_tol=1e-3,
-                                                     abs_tol=1e-6))
+        v, p = fluid.make_incompressible(
+            velocity=v,
+            obstacles=swarm.as_obstacle_list(),
+            solve=Solve(method='scipy-CG', x0=p, max_iterations=0, rel_tol=5e-3, abs_tol=1e-5)
+        )
     except Diverged:
         return None, None, swarm
     if t >= RECORDING_TIME:
-        # Calculate movement and rotation of swarm members
+        # Vectorized sampling for all members to reduce Python overhead
+        pressure_profiles_all = sample_field_around_obstacles(
+            f=p, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
+        )  # shape: (num_members, n)
         for i in range(len(swarm.members)):
             member = swarm.members[i]
-            pressure_profile = sample_field_around_obstacle(f=p, member=member, sim=sim, n=8)  # ug/(mm*s^2)
+            pressure_profile = pressure_profiles_all[i]
             advance_by_pressure_gradient(member=member, sim=sim, pressure_profile=pressure_profile)
             advance_by_forces(member=member, sim=sim, fluid=fluid_obj, internal_forces=force_actions,
                               swarm_members=swarm.members)
@@ -89,23 +97,50 @@ def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation, n: i
         to a single sample point.
     :rtype: np.array
     """
-    field_samples = np.zeros(n, dtype=object)
-    for i, angle in enumerate(np.arange(0, 2 * np.pi, 2 * np.pi / n)):
-        x_world = member.location['x'] + member.radius * np.cos(angle)
-        y_world = member.location['y'] + member.radius * np.sin(angle)
-        ix_off = int(x_world * sim.resolution[0] / sim.length_x) + int(np.sign(np.cos(angle)) * offset)
-        iy_off = int(y_world * sim.resolution[1] / sim.length_y) + int(np.sign(np.sin(angle)) * offset)
-        if ix_off >= sim.resolution[0]:
-            ix_off = sim.resolution[0] - 1
-        elif ix_off < 0:
-            ix_off = 0
-        if iy_off >= sim.resolution[1]:
-            iy_off = sim.resolution[1] - 1
-        elif iy_off < 0:
-            iy_off = 0
-        # print(f'[{ix_off},{iy_off}]')
-        field_samples[i] = f.values.x[ix_off].y[iy_off]
+    angles = np.arange(0, 2 * np.pi, 2 * np.pi / n)
+    cos_a = np.cos(angles)
+    sin_a = np.sin(angles)
+
+    x_world = member.location['x'] + member.radius * cos_a
+    y_world = member.location['y'] + member.radius * sin_a
+
+    ix_off = (x_world * sim.resolution[0] / sim.length_x).astype(int) + np.sign(cos_a).astype(int) * offset
+    iy_off = (y_world * sim.resolution[1] / sim.length_y).astype(int) + np.sign(sin_a).astype(int) * offset
+
+    ix_off = np.clip(ix_off, 0, sim.resolution[0] - 1)
+    iy_off = np.clip(iy_off, 0, sim.resolution[1] - 1)
+
+    # Fast gather using NumPy on the pressure values array
+    values = f.values.numpy('x,y')
+    field_samples = values[ix_off, iy_off].astype(np.float32)
     return field_samples
+
+
+def sample_field_around_obstacles(f: Field, swarm: Swarm, sim: Simulation, n: int, offset=2) -> np.array:
+    """
+    Vectorized sampling of field around all members. Returns array of shape (num_members, n).
+    """
+    num_members = len(swarm.members)
+    angles = np.arange(0, 2 * np.pi, 2 * np.pi / n)
+    cos_a = np.cos(angles)
+    sin_a = np.sin(angles)
+
+    member_x = np.array([m.location['x'] for m in swarm.members], dtype=np.float32)[:, None]
+    member_y = np.array([m.location['y'] for m in swarm.members], dtype=np.float32)[:, None]
+    member_r = np.array([m.radius for m in swarm.members], dtype=np.float32)[:, None]
+
+    x_world = member_x + member_r * cos_a
+    y_world = member_y + member_r * sin_a
+
+    ix_off = (x_world * sim.resolution[0] / sim.length_x).astype(int) + (np.sign(cos_a).astype(int) * offset)
+    iy_off = (y_world * sim.resolution[1] / sim.length_y).astype(int) + (np.sign(sin_a).astype(int) * offset)
+
+    ix_off = np.clip(ix_off, 0, sim.resolution[0] - 1)
+    iy_off = np.clip(iy_off, 0, sim.resolution[1] - 1)
+
+    values = f.values.numpy('x,y')
+    samples = values[ix_off, iy_off].astype(np.float32)
+    return samples
 
 
 def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profile: np.array):
@@ -126,37 +161,55 @@ def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profi
         around the member at 8 equidistant angles.
     :return: None
     """
-    lin_force_y = 0
-    lin_force_x = 0
-    for i, angle in enumerate(np.arange(start=0, stop=2 * np.pi, step=np.pi / 4)):
-        lin_force_x += -pressure_profile[i] * np.cos(angle) * np.pi / 4 * member.radius
-        lin_force_y += -pressure_profile[i] * np.sin(angle) * np.pi / 4 * member.radius
+    # Compute resultant forces from pressure samples for arbitrary number of angles
+    pressure_profile = np.asarray(pressure_profile, dtype=np.float32)
+    num_angles = max(1, pressure_profile.shape[0])
+    d_theta = 2 * np.pi / num_angles
+    angles = np.arange(0, 2 * np.pi, d_theta, dtype=np.float32)
+    cos_angles = np.cos(angles)
+    sin_angles = np.sin(angles)
+
+    lin_force_x = -np.sum(pressure_profile * cos_angles) * d_theta * member.radius
+    lin_force_y = -np.sum(pressure_profile * sin_angles) * d_theta * member.radius
     # Add force due to gradient in x
     x_pred_minus = member.location['x'] + member.velocity[
         'x'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt - member.radius
     x_pred_plus = member.location['x'] + member.velocity[
         'x'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt + member.radius
-    x_lower = PADDING * sim.dx
-    x_upper = sim.length_x - PADDING * sim.dx
+    x_lower = member.radius
+    x_upper = sim.length_x - member.radius
     prev_velocity_x = member.velocity['x']
-    if (x_pred_minus > x_lower).all and (x_pred_plus < x_upper).all:
+    if (x_pred_minus > x_lower) and (x_pred_plus < x_upper):
         member.velocity['x'] += float(lin_force_x / member.mass * sim.dt)
     else:
         member.velocity['x'] = 0
     member.location['x'] += float((member.velocity['x'] + prev_velocity_x) / 2 * sim.dt)
+    # Clamp to bounds and damp velocity if clamped
+    if member.location['x'] < x_lower:
+        member.location['x'] = x_lower
+        member.velocity['x'] = 0
+    elif member.location['x'] > x_upper:
+        member.location['x'] = x_upper
+        member.velocity['x'] = 0
     # Add force due to gradient in y
     y_pred_minus = member.location['y'] + member.velocity[
-        'y'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt - member.radius
+        'y'] * sim.dt + 0.5 * lin_force_y / member.mass * sim.dt * sim.dt - member.radius
     y_pred_plus = member.location['y'] + member.velocity[
         'y'] * sim.dt + 0.5 * lin_force_y / member.mass * sim.dt * sim.dt + member.radius
-    y_lower = PADDING * sim.dy
-    y_upper = sim.length_y - PADDING * sim.dy
+    y_lower = member.radius
+    y_upper = sim.length_y - member.radius
     prev_velocity_y = member.velocity['y']
-    if (y_pred_minus > y_lower).all and (y_pred_plus < y_upper).all:
+    if (y_pred_minus > y_lower) and (y_pred_plus < y_upper):
         member.velocity['y'] += float(lin_force_y / member.mass * sim.dt)
     else:
         member.velocity['y'] = 0
     member.location['y'] += float((member.velocity['y'] + prev_velocity_y) / 2 * sim.dt)
+    if member.location['y'] < y_lower:
+        member.location['y'] = y_lower
+        member.velocity['y'] = 0
+    elif member.location['y'] > y_upper:
+        member.location['y'] = y_upper
+        member.velocity['y'] = 0
 
 
 def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
@@ -193,23 +246,35 @@ def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
         0] / member.mass * sim.dt * sim.dt - member.radius
     x_pred_plus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[
         0] / member.mass * sim.dt * sim.dt + member.radius
-    x_lower = PADDING * sim.dx
-    x_upper = sim.length_x - PADDING * sim.dx
+    x_lower = member.radius
+    x_upper = sim.length_x - member.radius
     prev_velocity_x = member.velocity['x']
-    if (x_pred_minus > x_lower).all and (x_pred_plus < x_upper).all:
+    if (x_pred_minus > x_lower) and (x_pred_plus < x_upper):
         member.velocity['x'] += float(total_force[0] / member.mass * sim.dt)
     else:
         member.velocity['x'] = 0
     member.location['x'] += float((member.velocity['x'] + prev_velocity_x) / 2 * sim.dt)
+    if member.location['x'] < x_lower:
+        member.location['x'] = x_lower
+        member.velocity['x'] = 0
+    elif member.location['x'] > x_upper:
+        member.location['x'] = x_upper
+        member.velocity['x'] = 0
     y_pred_minus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * total_force[
         1] / member.mass * sim.dt * sim.dt - member.radius
     y_pred_plus = member.location['y'] + member.velocity['y'] * sim.dt + 0.5 * total_force[
         1] / member.mass * sim.dt * sim.dt + member.radius
-    y_lower = PADDING * sim.dy
-    y_upper = sim.length_y - PADDING * sim.dx
+    y_lower = member.radius
+    y_upper = sim.length_y - member.radius
     prev_velocity_y = member.velocity['y']
-    if (y_pred_minus > y_lower).all and (y_pred_plus < y_upper).all:
+    if (y_pred_minus > y_lower) and (y_pred_plus < y_upper):
         member.velocity['y'] += float(total_force[1] / member.mass * sim.dt)
     else:
         member.velocity['y'] = 0
     member.location['y'] += float((member.velocity['y'] + prev_velocity_y) / 2 * sim.dt)
+    if member.location['y'] < y_lower:
+        member.location['y'] = y_lower
+        member.velocity['y'] = 0
+    elif member.location['y'] > y_upper:
+        member.location['y'] = y_upper
+        member.velocity['y'] = 0

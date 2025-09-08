@@ -221,73 +221,56 @@ class SwarmEnv(gym.Env):
         else:
             count_members_finished = 0
             for member in self.swarm.members:
-                if member.location['x'] <= 20:
+                if member.location['x'] <= 30:
                     count_members_finished += 1
-                if member.location['x'] >= 80:
+                if member.location['x'] >= 70:
                     done = True
             if count_members_finished == len(self.swarm.members):
                 done = True
         return done
 
     def _compute_reward(self):
-        """
-        Computes the reward based on the movement of members in the swarm.
-
-        This method evaluates the movement of each member in the swarm. It assigns a reward
-        based on whether their current x-coordinate has increased or decreased compared to
-        their previous x-coordinate. In case the value of the v attribute is None, a negative reward
-        is given.
-
-        :return: The calculated reward based on the members' movements.
-        :rtype: float
-        """
-        # If episode time is 0 or first timestep (dt), return 0 to avoid referencing to previous episode
-        if (self.episode_time == 0) or (self.episode_time == self.sim.dt):
+        if self.episode_time <= self.sim.dt:
             return 0
-        
-        # If velocity field is None (calculation did not converge), return 0
-        if self.v is None:
-            return 0
-
-        # Calculate reward
-        reward = 0
-        distance_factor = 1.0  # Distance reward at unit magnitude
-        direction_factor = 1.0  # Direction-change penalty at unit magnitude
-        discount_factor = 0.99  # Discount factor of PPO
-
+        w_prog = 1.0
+        w_center = 0.3
+        w_energy = 0.1
+        w_jitter = 0.1
+        w_dist = 2.0
+        sigma_y = 0.4
+        v_ref = self.inflow.amplitude
+        dx_i, dyc_i, c_i, f_i, df_i, e_i, s_i = [], [], [], [], [], [], []
         for member in self.swarm.members:
-            # Distance reward: how far left (decrease in x) from initial x
-            prev_location_x = member.previous_locations[-2]['x']  # Assuming 0 is the first location
-            cur_location_x = member.location['x']
-            distance_delta = prev_location_x - discount_factor * cur_location_x
-            # distance_delta = max(0, prev_location_x - discount_factor * cur_location_x)  # Only reward for moving left
-
-            # Penalty for rapid direction change in action
-            if hasattr(member, 'previous_actions') and len(member.previous_actions) >= 2:
-                prev_action = member.previous_actions[-2]
-                curr_action = member.previous_actions[-1]
-                prev_vec = np.array([prev_action['x'], prev_action['y']])
-                curr_vec = np.array([curr_action['x'], curr_action['y']])
-                norm_prev = np.linalg.norm(prev_vec)
-                norm_curr = np.linalg.norm(curr_vec)
-                if norm_prev > 0 and norm_curr > 0:
-                    # Cosine similarity in [-1, 1]; 1 means aligned, -1 means opposite
-                    cosine_sim = np.clip(np.dot(prev_vec, curr_vec) / (norm_prev * norm_curr), -1.0, 1.0)
-                else:
-                    cosine_sim = 1.0  # If one vector is zero, treat as aligned (no change)
-            else:
-                cosine_sim = 1.0
-
-            # Convert similarity to change penalty in [0, 1]; 0 when aligned, 1 when opposite
-            direction_penalty = (1.0 - cosine_sim) / 2.0
-
-            member_reward = distance_delta * distance_factor - direction_penalty * direction_factor
-            reward += member_reward
-        # for member in self.swarm.members:
-            # if member.location['y'] >= 1.8 and member.location['y'] <= 2.2:
-            #     reward += 1
-                
-        return reward
+            dx_i.append(member.location['x'] - member.previous_locations[-2]['x']) # progress per agent
+            dyc_i.append(member.location['y'] - self.sim.length_y / 2) # centralization per agent
+            c_i.append(np.exp(-(dyc_i[-1]/(sigma_y * self.sim.length_y/2))**2)) # centralization per agent
+            f_i.append(np.sqrt(member.action['x']**2 + member.action['y']**2)) # force per agent
+            df_i.append(f_i[-1] - np.sqrt(member.previous_actions[-2]['x']**2 + member.previous_actions[-2]['y']**2)) # force differencein time per agent
+            e_i.append((f_i[-1]/member.max_force)**2) # energy per agent
+            s_i.append((df_i[-1]/member.max_force)**2) # jitter per agent
+        dx_com = np.mean(dx_i) # progress of the center of mass
+        c_com = np.mean(c_i) #centralization of the center of mass
+        e_com = np.mean(e_i) # energy of the center of mass
+        s_com = np.mean(s_i) # jitter of the center of mass
+        # Terminal reward
+        x_com = np.mean([member.location['x'] for member in self.swarm.members])
+        r_com = 0
+        r_agent = 0
+        r_com += w_prog * np.clip(max(0, -dx_com/self.sim.dt)/v_ref, 0, 1) # progress reward
+        r_com += w_center * c_com # center reward
+        r_com -= w_energy * e_com # energy penalty
+        r_com -= w_jitter * s_com # jitter penalty
+        for i, member in enumerate(self.swarm.members):
+            r_agent += w_prog * np.clip(max(0, -dx_i[i]/self.sim.dt)/v_ref, 0, 1) # progress reward
+            r_agent += w_center * c_i[i] # center reward
+            r_agent -= w_energy * e_i[i] # energy penalty
+            r_agent -= w_jitter * s_i[i] # jitter penalty
+        r_agent /= len(self.swarm.members)
+        if x_com <= 30:
+            r_com += w_dist # terminal distance reward
+        elif x_com >= 70:
+            r_com -= w_dist # terminal distance penalty
+        return r_com
 
     def render(self, mode='human'):
         pass
@@ -361,13 +344,14 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
     """
     # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     device = torch.device('cpu')
-    num_steps = 10
+    num_steps = 1024
     if isinstance(env, VecEnv):
-        if os.path.exists(f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo'):
-            model = PPO.load(f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo')
+        if os.path.exists(f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip'):
+            model = PPO.load(f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip', env=env)
+            print('Successfully loaded model')
         else:
-            model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=(num_steps * env.num_envs),
-                        device=device, gamma=0.95,
+            model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=128,
+                        device=device, gamma=0.95, learning_rate=0.0003, ent_coef=0.01, n_epochs=10,
                         tensorboard_log=f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo_tb')
         model.learn(total_timesteps=timesteps * env.num_envs, log_interval=1, progress_bar=True,
                     callback=RewardLoggerCallback(), reset_num_timesteps=False)
@@ -385,8 +369,9 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
                               sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
             # plot_save_fields(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/', pid=env.get_attr('pid')[env_i])
     elif isinstance(env, SwarmEnv):
-        if os.path.exists(f'../runs/{env.folder}/swarm_rl_ppo'):
-            model = PPO.load(f'../runs/{env.folder}/swarm_rl_ppo')
+        if os.path.exists(f'../runs/{env.folder}/swarm_rl_ppo.zip'):
+            model = PPO.load(f'../runs/{env.folder}/swarm_rl_ppo.zip', env=env)
+            print('Successfully loaded model')
         else:
             model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=num_steps, device=device, gamma=0.95,
                         tensorboard_log=f'../runs/{env.folder}/swarm_rl_ppo_tb')

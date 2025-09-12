@@ -73,6 +73,8 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
             member.previous_locations.append(member.location.copy())
             member.previous_velocities.append(member.velocity.copy())
             member.previous_actions.append({'x': force_actions[i][0], 'y': force_actions[i][1]})
+        # Enforce collision constraints between members
+        resolve_collisions(swarm=swarm, sim=sim, restitution=0.2)
     return v, p, swarm
 
 
@@ -278,3 +280,70 @@ def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
     elif member.location['y'] > y_upper:
         member.location['y'] = y_upper
         member.velocity['y'] = 0
+
+
+def resolve_collisions(swarm: Swarm, sim: Simulation, restitution: float = 0.0) -> None:
+    """
+    Resolve pairwise collisions between circular members by separating overlaps and
+    applying a simple impulse along the collision normal to reduce interpenetration.
+
+    :param swarm: Swarm containing members with location, velocity, radius, mass
+    :param sim: Simulation for boundary extents
+    :param restitution: Coefficient of restitution in [0,1], 0 = inelastic, 1 = elastic
+    :return: None
+    """
+    num = len(swarm.members)
+    for i in range(num):
+        mi = swarm.members[i]
+        for j in range(i + 1, num):
+            mj = swarm.members[j]
+
+            dx = np.array([mj.location['x'] - mi.location['x'], mj.location['y'] - mi.location['y']], dtype=float)
+            dist = float(np.linalg.norm(dx))
+            min_dist = mi.radius + mj.radius
+
+            if dist == 0.0:
+                # Arbitrary small normal to separate coincident centers
+                n = np.array([1.0, 0.0], dtype=float)
+                dist = 1e-6
+            else:
+                n = dx / dist
+
+            if dist < min_dist:
+                # Positional correction (split overlap)
+                overlap = min_dist - dist
+                correction = 0.5 * overlap * n
+                mi.location['x'] -= float(correction[0])
+                mi.location['y'] -= float(correction[1])
+                mj.location['x'] += float(correction[0])
+                mj.location['y'] += float(correction[1])
+
+                # Clamp to domain after correction
+                for m in (mi, mj):
+                    x_lower = m.radius
+                    x_upper = sim.length_x - m.radius
+                    y_lower = m.radius
+                    y_upper = sim.length_y - m.radius
+                    if m.location['x'] < x_lower:
+                        m.location['x'] = x_lower
+                    elif m.location['x'] > x_upper:
+                        m.location['x'] = x_upper
+                    if m.location['y'] < y_lower:
+                        m.location['y'] = y_lower
+                    elif m.location['y'] > y_upper:
+                        m.location['y'] = y_upper
+
+                # Velocity response (impulse along normal)
+                vi = np.array([mi.velocity['x'], mi.velocity['y']], dtype=float)
+                vj = np.array([mj.velocity['x'], mj.velocity['y']], dtype=float)
+                rel_v = vj - vi
+                rel_normal_speed = float(np.dot(rel_v, n))
+                if rel_normal_speed < 0:
+                    inv_mass_i = 0.0 if mi.mass == 0 else 1.0 / mi.mass
+                    inv_mass_j = 0.0 if mj.mass == 0 else 1.0 / mj.mass
+                    j_imp = -(1.0 + restitution) * rel_normal_speed / (inv_mass_i + inv_mass_j + 1e-12)
+                    impulse = j_imp * n
+                    vi -= impulse * inv_mass_i
+                    vj += impulse * inv_mass_j
+                    mi.velocity['x'], mi.velocity['y'] = float(vi[0]), float(vi[1])
+                    mj.velocity['x'], mj.velocity['y'] = float(vj[0]), float(vj[1])

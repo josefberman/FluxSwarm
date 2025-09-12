@@ -233,10 +233,10 @@ class SwarmEnv(gym.Env):
         if self.episode_time <= self.sim.dt:
             return 0
         w_prog = 1.0
-        w_center = 0.3
+        w_center = 0.7
         w_energy = 0.1
-        w_jitter = 0.1
-        w_dist = 2.0
+        w_jitter = 0.5
+        w_dist = 3.0
         sigma_y = 0.4
         v_ref = self.inflow.amplitude
         dx_i, dyc_i, c_i, f_i, df_i, e_i, s_i = [], [], [], [], [], [], []

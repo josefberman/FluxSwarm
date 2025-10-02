@@ -18,14 +18,15 @@ assert backend.default_backend().set_default_device('GPU')
 
 
 def main():
-    print('Max force:', 600)
+    print('Max force:', 700)
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=1000)
-    swarm = Swarm(num_x=3, num_y=3, left_location=49, bottom_location=1, member_interval_x=1, member_interval_y=1,
+    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=500)
+    swarm = Swarm(num_x=4, num_y=3, left_location=49, bottom_location=1, member_interval_x=1, member_interval_y=1,
                     member_radius=0.25, member_density=5.150,
-                    member_max_force=600)  # density in mg/mm^3, force in mg*mm/s^2
-    inflow = Inflow(frequency=0.5, amplitude=20, h_shift=np.pi / 2, v_shift=25)
+                    member_max_force=700)  # density in mg/mm^3, force in mg*mm/s^2
+    # inflow = Inflow(frequency=0.5, amplitude=10, h_shift=np.pi / 2, v_shift=25)
+    inflow = Inflow(frequency=1, amplitude=10, upstroke=0.2, plateau=0.15, downstroke=0.2)
     inflow.center_x = 0
     fluid = Fluid(viscosity=3.0)  # viscosity of blood in mg/(mm*s)
 

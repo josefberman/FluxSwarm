@@ -93,13 +93,39 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
         ax.add_patch(circ)
         circles.append(circ)
 
+    # Add a dashed white smaller circle for the center of mass
+    # Initial center of mass
+    xs0 = [float(df[f"location_{mid}_x"].iloc[0]) for mid in member_ids]
+    ys0 = [float(df[f"location_{mid}_y"].iloc[0]) for mid in member_ids]
+    com_x0 = np.mean(xs0)
+    com_y0 = np.mean(ys0)
+    com_radius = radius * 0.5
+    com_circle = Circle(
+        (com_x0, com_y0),
+        radius=com_radius,
+        edgecolor='white',
+        facecolor='none',
+        linestyle='dashed',
+        linewidth=2,
+        zorder=10,
+    )
+    ax.add_patch(com_circle)
+
     num_frames = len(df)
 
     def update(frame_idx: int):
+        xs = []
+        ys = []
         for circ, mid in zip(circles, member_ids):
             x = float(df[f"location_{mid}_x"].iloc[frame_idx])
             y = float(df[f"location_{mid}_y"].iloc[frame_idx])
             circ.center = (x, y)
+            xs.append(x)
+            ys.append(y)
+        # Update center of mass circle
+        com_x = np.mean(xs)
+        com_y = np.mean(ys)
+        com_circle.center = (com_x, com_y)
         # Update timestep text
         if "timestep" in df.columns:
             t = float(df["timestep"].iloc[frame_idx])
@@ -107,7 +133,7 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
         else:
             # Fallback: derive from frame index and 0.05 s per frame
             time_text.set_text(f"t = {frame_idx * 0.05:.2f}")
-        return [*circles, time_text]
+        return [*circles, com_circle, time_text]
 
     # Each frame is 0.05 seconds → 20 fps
     fps_used = 20

@@ -227,6 +227,57 @@ def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
     plt.savefig(f'../runs/{folder_name}/rewards.jpg', dpi=300)
 
 
+def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_history: list, title_suffix: str = ''):
+    """
+    Plot and save per-objective reward over time.
+
+    :param folder_name: output subfolder under ../runs
+    :param sim: Simulation to get dt and total_time
+    :param objective_history: list of dicts with keys 'progress', 'cohesion', 'smoothness'
+    :param title_suffix: optional string appended to plot titles
+    :return: None
+    """
+    if len(objective_history) == 0:
+        return
+    timesteps = np.linspace(start=sim.dt, stop=sim.dt * len(objective_history), num=len(objective_history))
+    prog = [d.get('progress', 0.0) for d in objective_history]
+    coh = [d.get('cohesion', 0.0) for d in objective_history]
+    sm = [d.get('smoothness', 0.0) for d in objective_history]
+
+    os.makedirs(f'../runs/{folder_name}', exist_ok=True)
+    pd.DataFrame({
+        'timestep': timesteps,
+        'progress': prog,
+        'cohesion': coh,
+        'smoothness': sm,
+    }).to_csv(f'../runs/{folder_name}/rewards_objectives.csv', index=False)
+
+    fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(20, 12))
+    axes[0].plot(timesteps, prog, c='tab:blue', linewidth=1.0, label='progress')
+    axes[0].axhline(1.0, linestyle='dashed', color='tab:blue', linewidth=1.0, label='max')
+    axes[0].set_title(f'Progress reward over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
+    axes[0].set_xlabel('Time [s]')
+    axes[0].set_ylabel('Progress')
+    axes[0].legend(loc='best')
+
+    axes[1].plot(timesteps, coh, c='tab:green', linewidth=1.0, label='cohesion')
+    axes[1].axhline(0.0, linestyle='dashed', color='tab:green', linewidth=1.0, label='max')
+    axes[1].set_title(f'Cohesion reward over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
+    axes[1].set_xlabel('Time [s]')
+    axes[1].set_ylabel('Cohesion')
+    axes[1].legend(loc='best')
+
+    axes[2].plot(timesteps, sm, c='tab:orange', linewidth=1.0, label='smoothness')
+    axes[2].axhline(1.0, linestyle='dashed', color='tab:orange', linewidth=1.0, label='max')
+    axes[2].set_title(f'Smoothness reward over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
+    axes[2].set_xlabel('Time [s]')
+    axes[2].set_ylabel('Smoothness')
+    axes[2].legend(loc='best')
+
+    plt.tight_layout()
+    plt.savefig(f'../runs/{folder_name}/rewards_objectives.jpg', dpi=300)
+
+
 def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Swarm, imshow_data: np.ndarray,
                                plot_data: np.ndarray, max_abs_value: float, title: str, x_label: str, y_label: str):
     """

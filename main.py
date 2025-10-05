@@ -9,7 +9,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from plotting import animate_save_simulation, plot_save_locations, plot_save_rewards, plot_save_velocities
 from logs import create_run_name, create_folders_for_run, log_parameters
 from data_structures import Simulation, Swarm, Inflow, Fluid
-from RL import SwarmEnv, run_PPO, run_SAC
+from RL import SwarmEnv, run_PPO, run_MOMAPPO
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -21,7 +21,7 @@ def main():
     print('Max force:', 700)
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=500)
+    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=1000)
     swarm = Swarm(num_x=4, num_y=3, left_location=49, bottom_location=1, member_interval_x=1, member_interval_y=1,
                     member_radius=0.25, member_density=5.150,
                     member_max_force=700)  # density in mg/mm^3, force in mg*mm/s^2
@@ -53,7 +53,8 @@ def main():
 
     num_envs = 1
     env = SubprocVecEnv([make_env for _ in range(num_envs)])
-    run_PPO(env, sim.time_steps)
+    # run_PPO(env, sim.time_steps)
+    run_MOMAPPO(env, sim.time_steps, n_steps=32, batch_size=8, update_epochs=10)
 
     
 

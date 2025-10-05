@@ -8,11 +8,23 @@ from data_structures import Simulation, Swarm, Fluid, Inflow
 from simulation import step, sample_field_around_obstacle
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
-from plotting import plot_save_locations, plot_save_velocities, plot_save_rewards, plot_save_actions, plot_save_fields
+from plotting import plot_save_locations, plot_save_velocities, plot_save_rewards, plot_save_actions, plot_save_fields, plot_save_rewards_objectives
 from stable_baselines3 import PPO, SAC
 import torch
 from datetime import datetime
 from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+import torch.nn as nn
+import torch.optim as optim
+from torch.distributions import Normal
+from torch.utils.tensorboard import SummaryWriter
+import subprocess
+import math
+import csv
+try:
+    from tqdm import tqdm
+except Exception:
+    tqdm = None
 
 
 class SwarmEnv(gym.Env):
@@ -75,10 +87,24 @@ class SwarmEnv(gym.Env):
         self.current_timestep = 0
         self.folder = folder
         self.rewards = []
+        # Multi-objective reward weights (can be tuned externally after init)
+        self.w_prog = 1.0         # center-of-mass progress along x
+        self.w_cohesion = 1.0     # minimize average distance to COM
+        self.w_smooth = 1.0        # maximize action smoothness (cosine similarity)
+        # Tracking for logging
+        self.last_reward_components = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        self.reward_components_history = []
+        self.objectives_history = []
         box = Box['x,y', 0:sim.length_x, 0:sim.length_y]
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=sim.resolution[0], y=sim.resolution[1])
         self.p = None
+
+        # Per-episode tracking
+        self.episode_index = 0
+        self.episode_cum_reward = 0.0
+        self.episode_cum_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        self.episodes_csv_path = f"../runs/{self.folder}/episodes_summary_{self.pid}.csv"
 
         # Define observation space: num_of_members * (position x2, velocity x2, pressure x4)
         self.observation_space = spaces.Box(
@@ -126,6 +152,9 @@ class SwarmEnv(gym.Env):
             member.previous_velocities = prev_members[i].previous_velocities.copy()
             member.previous_actions = prev_members[i].previous_actions.copy()
         self.episode_time = 0.0
+        # Reset per-episode accumulators
+        self.episode_cum_reward = 0.0
+        self.episode_cum_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
         return self._get_observation(), {}
 
     def step(self, action):
@@ -162,16 +191,33 @@ class SwarmEnv(gym.Env):
         #         plot_save_current_step(current_time=self.current_time, folder_name=self.folder, v_field=self.v,
         #                                p_field=self.p, sim=self.sim, swarm=self.swarm)
 
-        # Compute reward vector and scalarize for PPO
+        # Compute reward (scalarized multi-objective)
         reward = self._compute_reward()
         self.rewards.append(reward)
-        done = self._compute_done()
+        # Update per-episode accumulators
+        self.episode_cum_reward += float(reward)
+        self.episode_cum_objectives['progress'] += float(self.last_objectives.get('progress', 0.0))
+        self.episode_cum_objectives['cohesion'] += float(self.last_objectives.get('cohesion', 0.0))
+        self.episode_cum_objectives['smoothness'] += float(self.last_objectives.get('smoothness', 0.0))
+
+        # Compute termination signals
+        terminated = self._compute_terminated()
+        truncated = self._compute_truncated()
+
+        if terminated or truncated:
+            self._finalize_episode(terminated=terminated, truncated=truncated)
 
         # if self.current_timestep % 10 == 0:
         #     write(self.v, f'../runs/{self.folder}/velocity/velocity_{self.current_timestep}')
         #     write(self.p, f'../runs/{self.folder}/pressure/pressure_{self.current_timestep}')
 
-        return self._get_observation(), reward, done, False, {}
+        info = {
+            'reward_components': self.last_reward_components,
+            'objectives': self.last_objectives,  # unweighted objective vector for MOMARL
+            'terminated': terminated,
+            'truncated': truncated
+        }
+        return self._get_observation(), reward, terminated, truncated, info
 
     def _get_observation(self):
         """
@@ -201,75 +247,109 @@ class SwarmEnv(gym.Env):
             ])
         return np.array(obs, dtype=np.float32)
 
-    def _compute_done(self):
-        """
-        Computes whether a task is considered complete based on swarm members'
-        locations and the state of the object.
+    def _compute_truncated(self) -> bool:
+        # Truncate if simulation diverged / fields invalid
+        return self.v is None
 
-        This function determines the completion status (`done`) based on certain
-        conditions. If the attribute `v` is `None`, the task is immediately marked
-        as done. Otherwise, the function iterates through the `members` of the
-        `swarm` and evaluates their x-coordinate. If any member's x-coordinate
-        falls outside the range of 200 to 550 (inclusive boundaries not considered),
-        the task is marked as done. The function returns the computed `done` status.
+    def _compute_terminated(self) -> bool:
+        # Terminate on success/failure conditions based on member x-locations
+        # count_members_finished = 0
+        # for member in self.swarm.members:
+        #     if member.location['x'] <= self.sim.length_x / 4:
+        #         count_members_finished += 1
+        #     if member.location['x'] >= 3 * self.sim.length_x / 4:
+        #         return True
+        # if count_members_finished == len(self.swarm.members):
+        #     return True
+        # return False
+        # Terminate after 20 seconds
+        return self.episode_time > 20.0
 
-        :return: A boolean indicating whether the task is done.
-        :rtype: bool
-        """
-        done = False
-        if self.v is None:
-            done = True
-        else:
-            count_members_finished = 0
-            for member in self.swarm.members:
-                if member.location['x'] <= self.sim.length_x / 4:
-                    count_members_finished += 1
-                if member.location['x'] >= 3 * self.sim.length_x / 4:
-                    done = True
-            if count_members_finished == len(self.swarm.members):
-                done = True
-        return done
+    def _finalize_episode(self, terminated: bool, truncated: bool) -> None:
+        """Append a row to episodes CSV with cumulative per-objective rewards and status."""
+        status = 'terminated' if terminated and not truncated else ('truncated' if truncated and not terminated else 'both')
+        os.makedirs(f'../runs/{self.folder}', exist_ok=True)
+        file_exists = os.path.exists(self.episodes_csv_path)
+        with open(self.episodes_csv_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(['episode', 'cum_progress', 'cum_cohesion', 'cum_smoothness', 'cum_total_reward', 'status'])
+            writer.writerow([
+                self.episode_index,
+                f"{self.episode_cum_objectives['progress']:.6f}",
+                f"{self.episode_cum_objectives['cohesion']:.6f}",
+                f"{self.episode_cum_objectives['smoothness']:.6f}",
+                f"{self.episode_cum_reward:.6f}",
+                status
+            ])
+        self.episode_index += 1
 
     def _compute_reward(self):
+        # Warmup first step: no previous history to compare
         if self.episode_time <= self.sim.dt:
-            return 0
-        
-        w_prog = 10.0
-        w_jitter = 1.0
-        w_finish = 30.0
-        w_dist_from_com = 10.0
-        v_ref = self.inflow.amplitude
-        dv_i, s_i = [], []
-        for member in self.swarm.members:
-            dv_i.append((member.location['x'] - member.previous_locations[-2]['x']) / self.sim.dt)  # progress per agent
-            s_i.append((cosine_similarity([[member.previous_actions[-2]['x'], member.previous_actions[-2]['y']]], [[member.action['x'], member.action['y']]])+1)/2)  # jitter per agent
-        dv_com = np.mean(dv_i) / v_ref  # progress of the center of mass
-        s_com = np.mean(s_i)  # jitter of the center of mass
-        x_com = np.mean([member.location['x'] for member in self.swarm.members])
-        x_dist_from_com = np.mean([abs(member.location['x'] - x_com) for member in self.swarm.members]) / (self.sim.length_x/2)
-        r_com = 0.0
-        # Center-of-mass components
-        r_com += w_prog * (-1 * np.clip(dv_com, -20, 20))  # progress reward: 2.0*[0,1] -> [0,2]
-        # r_com -= w_jitter * (-1 * s_com)  # jitter penalty: 1.0*[0,1] -> [0,1]
-        r_com += w_dist_from_com * (1-x_dist_from_com)  # distance from center of mass penalty: 1.0*[0,1] -> [0,1]
-        # Terminal reward
-        if x_com <= self.sim.length_x / 4:
-            r_com = w_finish  # terminal distance reward: +3
-        elif x_com >= 3 * self.sim.length_x / 4:
-            r_com = -w_finish  # terminal distance penalty: -3
-        print(r_com)
-        return r_com
+            self.last_reward_components = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+            self.last_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+            self.reward_components_history.append(self.last_reward_components.copy())
+            self.objectives_history.append(self.last_objectives.copy())
+            return 0.0
 
-        # w_prog = 10.0
-        # w_jitter = 1.0
-        # total_reward = 0
-        # for member in self.swarm.members:
-        #     m_dist = -(member.location['x'] - member.previous_locations[0]['x']) / self.sim.length_x * 2  # [-1,1] per member
-        #     # m_jitter = (cosine_similarity([[member.previous_actions[-2]['x'], member.previous_actions[-2]['y']]], [[member.action['x'], member.action['y']]])+1)/2  # [0,1]
-        #     # total_reward += w_prog * m_dist - w_jitter * (1-m_jitter)
-        #     total_reward += w_prog * m_dist
-        # # return total_reward[0][0]
-        # return total_reward
+        # 1) Progress of COM along x (normalized by inflow amplitude)
+        v_ref = float(self.inflow.amplitude) if getattr(self.inflow, 'amplitude', 0.0) != 0 else 1.0
+        dv_members = []
+        for member in self.swarm.members:
+            dv_members.append(-(member.location['x'] - member.previous_locations[-2]['x']) / self.sim.dt)
+        dv_com = float(np.mean(dv_members)) / v_ref
+        r_progress = self.w_prog * dv_com
+
+        # 2) Cohesion: average 2D distance to center of mass, normalized
+        xs = np.array([m.location['x'] for m in self.swarm.members], dtype=float)
+        ys = np.array([m.location['y'] for m in self.swarm.members], dtype=float)
+        x_com = float(np.mean(xs))
+        y_com = float(np.mean(ys))
+        dists = np.sqrt((xs - x_com) ** 2 + (ys - y_com) ** 2)
+        avg_dist = float(np.mean(dists))
+        # Normalize by half-diagonal of domain to keep within ~[0,1]
+        norm_scale = float(np.sqrt((self.sim.length_x / 2) ** 2 + (self.sim.length_y / 2) ** 2))
+        avg_dist_norm = avg_dist / norm_scale if norm_scale > 0 else 0.0
+        avg_dist_norm = float(np.clip(avg_dist_norm, 0.0, 1.0))
+        r_cohesion = -1.0 * self.w_cohesion * avg_dist_norm
+
+        # 3) Smoothness: cosine similarity between actions at t and t-1, averaged over members
+        smooth_vals = []
+        for member in self.swarm.members:
+            if len(member.previous_actions) >= 2:
+                a_prev = member.previous_actions[-2]
+                a_curr = member.previous_actions[-1]
+                v1 = np.array([a_prev['x'], a_prev['y']], dtype=float)
+                v2 = np.array([a_curr['x'], a_curr['y']], dtype=float)
+                n1 = np.linalg.norm(v1)
+                n2 = np.linalg.norm(v2)
+                if n1 == 0.0 or n2 == 0.0:
+                    cos_sim = 1.0
+                else:
+                    cos_sim = float(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
+                # Map [-1,1] -> [0,1]
+                smooth_vals.append((cos_sim + 1.0) / 2.0)
+            else:
+                smooth_vals.append(1.0)
+        smoothness = float(np.mean(smooth_vals))
+        r_smooth = self.w_smooth * smoothness
+
+        total_reward = r_progress + r_cohesion + r_smooth
+        self.last_reward_components = {
+            'progress': float(r_progress),
+            'cohesion': float(r_cohesion),
+            'smoothness': float(r_smooth)
+        }
+        # Unweighted objective vector for MOMARL (all to be maximized)
+        self.last_objectives = {
+            'progress': float(r_progress/self.w_prog),
+            'cohesion': float(r_cohesion/self.w_cohesion),
+            'smoothness': float(r_smooth/self.w_smooth)
+        }
+        self.reward_components_history.append(self.last_reward_components.copy())
+        self.objectives_history.append(self.last_objectives.copy())
+        return float(total_reward)
 
 
     def render(self, mode='human'):
@@ -308,6 +388,24 @@ class RewardLoggerCallback(BaseCallback):
         self.logger.record('custom/step_reward_mean', mean_r)
         self.logger.record('custom/step_reward_min', min_r)
         self.logger.record('custom/step_reward_max', max_r)
+        # Log multi-objective components if available
+        try:
+            comps = self.training_env.get_attr('last_reward_components')
+            # VecEnv returns list over envs; single env returns list with one element
+            prog_vals = []
+            coh_vals = []
+            smooth_vals = []
+            for c in comps:
+                if isinstance(c, dict):
+                    prog_vals.append(c.get('progress', 0.0))
+                    coh_vals.append(c.get('cohesion', 0.0))
+                    smooth_vals.append(c.get('smoothness', 0.0))
+            if len(prog_vals) > 0:
+                self.logger.record('custom/r_progress', float(np.mean(prog_vals)))
+                self.logger.record('custom/r_cohesion', float(np.mean(coh_vals)))
+                self.logger.record('custom/r_smooth', float(np.mean(smooth_vals)))
+        except Exception:
+            pass
         v_attr = self.training_env.get_attr('v')
         p_attr = self.training_env.get_attr('p')
         folder_attr = self.training_env.get_attr('folder')
@@ -324,6 +422,167 @@ class RewardLoggerCallback(BaseCallback):
         #                             f'../runs/{folder_attr[i]}/PPO/pressure_{pid_attr[i]}/pressure_{current_time_attr[i]:.3f}')
         # plot_save_fields(v_attr[i], p_attr[i], folder_attr[i], pid_attr[i], current_time_attr[i], sim_attr[i])
         return True
+
+
+class ActorCriticMO(nn.Module):
+    """
+    Multi-objective actor-critic with shared torso, one critic head per objective,
+    and a Gaussian policy over joint actions (all agents).
+    """
+    def __init__(self, obs_dim: int, act_dim: int, hidden_sizes: tuple[int, int] = (256, 256)):
+        super().__init__()
+        self.torso = nn.Sequential(
+            nn.Linear(obs_dim, hidden_sizes[0]),
+            nn.Tanh(),
+            nn.Linear(hidden_sizes[0], hidden_sizes[1]),
+            nn.Tanh(),
+        )
+        self.mu = nn.Linear(hidden_sizes[1], act_dim)
+        self.log_std = nn.Parameter(torch.zeros(act_dim))
+        # Three critic heads: progress, cohesion, smoothness
+        self.v_prog = nn.Linear(hidden_sizes[1], 1)
+        self.v_coh = nn.Linear(hidden_sizes[1], 1)
+        self.v_smooth = nn.Linear(hidden_sizes[1], 1)
+
+    def forward(self, obs: torch.Tensor):
+        x = self.torso(obs)
+        mu = self.mu(x)
+        std = torch.exp(self.log_std)
+        return mu, std
+
+    def values(self, obs: torch.Tensor):
+        x = self.torso(obs)
+        return self.v_prog(x).squeeze(-1), self.v_coh(x).squeeze(-1), self.v_smooth(x).squeeze(-1)
+
+
+class RolloutBufferMO:
+    def __init__(self, buffer_size: int, obs_dim: int, act_dim: int, device: torch.device):
+        self.buffer_size = buffer_size
+        self.obs = torch.zeros((buffer_size, obs_dim), dtype=torch.float32)
+        self.actions = torch.zeros((buffer_size, act_dim), dtype=torch.float32)
+        self.logprobs = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.dones = torch.zeros((buffer_size,), dtype=torch.float32)
+        # Per-objective rewards and values
+        self.rew_prog = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.rew_coh = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.rew_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.val_prog = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.val_coh = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.val_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
+        # Advantages and returns per objective
+        self.adv_prog = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.adv_coh = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.adv_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.ret_prog = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.ret_coh = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.ret_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.ptr = 0
+        self.device = device
+
+    def add(self, obs, action, logprob, done, rew_prog, rew_coh, rew_smooth, val_prog, val_coh, val_smooth):
+        i = self.ptr
+        self.obs[i] = obs
+        self.actions[i] = action
+        self.logprobs[i] = logprob
+        self.dones[i] = float(done)
+        self.rew_prog[i] = rew_prog
+        self.rew_coh[i] = rew_coh
+        self.rew_smooth[i] = rew_smooth
+        self.val_prog[i] = val_prog
+        self.val_coh[i] = val_coh
+        self.val_smooth[i] = val_smooth
+        self.ptr += 1
+
+    def compute_gae(self, last_values: tuple[torch.Tensor, torch.Tensor, torch.Tensor], last_done: float,
+                    gamma: float = 0.99, lam: float = 0.95):
+        last_v_prog, last_v_coh, last_v_smooth = last_values
+        adv_p, adv_c, adv_s = 0.0, 0.0, 0.0
+        for t in reversed(range(self.ptr)):
+            next_nonterminal = 1.0 - (self.dones[t+1] if t < self.ptr - 1 else last_done)
+            next_v_prog = self.val_prog[t+1] if t < self.ptr - 1 else last_v_prog
+            next_v_coh = self.val_coh[t+1] if t < self.ptr - 1 else last_v_coh
+            next_v_smooth = self.val_smooth[t+1] if t < self.ptr - 1 else last_v_smooth
+
+            delta_p = self.rew_prog[t] + gamma * next_v_prog * next_nonterminal - self.val_prog[t]
+            delta_c = self.rew_coh[t] + gamma * next_v_coh * next_nonterminal - self.val_coh[t]
+            delta_s = self.rew_smooth[t] + gamma * next_v_smooth * next_nonterminal - self.val_smooth[t]
+
+            adv_p = float(delta_p) + gamma * lam * next_nonterminal * adv_p
+            adv_c = float(delta_c) + gamma * lam * next_nonterminal * adv_c
+            adv_s = float(delta_s) + gamma * lam * next_nonterminal * adv_s
+
+            self.adv_prog[t] = adv_p
+            self.adv_coh[t] = adv_c
+            self.adv_smooth[t] = adv_s
+
+        self.ret_prog = self.adv_prog + self.val_prog
+        self.ret_coh = self.adv_coh + self.val_coh
+        self.ret_smooth = self.adv_smooth + self.val_smooth
+        # Normalize advantages per objective
+        def norm(x: torch.Tensor):
+            if x.std() > 1e-8:
+                return (x - x.mean()) / (x.std() + 1e-8)
+            return x - x.mean()
+        self.adv_prog = norm(self.adv_prog)
+        self.adv_coh = norm(self.adv_coh)
+        self.adv_smooth = norm(self.adv_smooth)
+
+    def get(self, batch_size: int):
+        idxs = torch.randperm(self.ptr)
+        for start in range(0, self.ptr, batch_size):
+            end = min(start + batch_size, self.ptr)
+            batch_idx = idxs[start:end]
+            yield (
+                self.obs[batch_idx], self.actions[batch_idx], self.logprobs[batch_idx], self.dones[batch_idx],
+                self.rew_prog[batch_idx], self.rew_coh[batch_idx], self.rew_smooth[batch_idx],
+                self.val_prog[batch_idx], self.val_coh[batch_idx], self.val_smooth[batch_idx],
+                self.adv_prog[batch_idx], self.adv_coh[batch_idx], self.adv_smooth[batch_idx],
+                self.ret_prog[batch_idx], self.ret_coh[batch_idx], self.ret_smooth[batch_idx],
+            )
+
+
+def pcgrad_merge(model: nn.Module, losses: list[torch.Tensor]):
+    """Apply PCGrad to combine gradients from multiple objective losses for actor update."""
+    params = [p for p in model.parameters() if p.requires_grad]
+    grads = []
+    for i, loss in enumerate(losses):
+        model.zero_grad(set_to_none=True)
+        loss.backward(retain_graph=True)
+        g = []
+        for p in params:
+            if p.grad is None:
+                g.append(torch.zeros_like(p).view(-1))
+            else:
+                g.append(p.grad.view(-1).clone())
+        grads.append(torch.cat(g))
+    grads = [g for g in grads]
+    # PCGrad projection
+    merged = grads[0].clone()
+    for i in range(len(grads)):
+        gi = grads[i].clone()
+        for j in range(len(grads)):
+            if i == j:
+                continue
+            gj = grads[j]
+            dot = torch.dot(gi, gj)
+            if dot < 0:
+                proj = (dot / (gj.norm()**2 + 1e-12)) * gj
+                gi = gi - proj
+        if i == 0:
+            merged = gi
+        else:
+            merged = merged + gi
+    merged = merged / len(grads)
+    # Set merged grads back to params
+    offset = 0
+    for p in params:
+        numel = p.numel()
+        g = merged[offset:offset+numel].view_as(p)
+        if p.grad is None:
+            p.grad = g.clone()
+        else:
+            p.grad.copy_(g)
+        offset += numel
 
 
 def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
@@ -346,44 +605,44 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
     device = torch.device('cpu')
     num_steps = 128
     if isinstance(env, VecEnv):
-        if os.path.exists(f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip'):
-            model = PPO.load(f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip', env=env)
+        if os.path.exists(f"../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip"):
+            model = PPO.load(f"../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip", env=env)
             print('Successfully loaded model')
         else:
             model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=32,
                         device=device, gamma=0.95, learning_rate=0.0003, ent_coef=0.01, n_epochs=10,
-                        tensorboard_log=f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo_tb')
+                        tensorboard_log=f"../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo_tb")
         model.learn(total_timesteps=timesteps * env.num_envs, log_interval=1, progress_bar=True,
                     callback=RewardLoggerCallback(), reset_num_timesteps=False)
-        model.save(f'../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo')
+        model.save(f"../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo")
         for env_i in range(env.num_envs):
             date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
-            os.makedirs(f'../runs/{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}', exist_ok=True)
-            plot_save_locations(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}',
+            os.makedirs(f"../runs/{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}", exist_ok=True)
+            plot_save_locations(folder_name=f"{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}",
                                 sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
-            plot_save_velocities(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}',
+            plot_save_velocities(folder_name=f"{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}",
                                  sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
-            plot_save_rewards(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}',
+            plot_save_rewards(folder_name=f"{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}",
                               rewards=env.get_attr('rewards')[env_i], sim=env.get_attr('sim')[env_i])
-            plot_save_actions(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}',
+            plot_save_actions(folder_name=f"{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}",
                               sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
             # plot_save_fields(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/', pid=env.get_attr('pid')[env_i])
     elif isinstance(env, SwarmEnv):
-        if os.path.exists(f'../runs/{env.folder}/swarm_rl_ppo.zip'):
-            model = PPO.load(f'../runs/{env.folder}/swarm_rl_ppo.zip', env=env)
+        if os.path.exists(f"../runs/{env.folder}/swarm_rl_ppo.zip"):
+            model = PPO.load(f"../runs/{env.folder}/swarm_rl_ppo.zip", env=env)
             print('Successfully loaded model')
         else:
             model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=num_steps, device=device, gamma=0.95,
-                        tensorboard_log=f'../runs/{env.folder}/swarm_rl_ppo_tb')
+                        tensorboard_log=f"../runs/{env.folder}/swarm_rl_ppo_tb")
         model.learn(total_timesteps=timesteps, log_interval=1, progress_bar=True, callback=RewardLoggerCallback(),
                     reset_num_timesteps=False)
-        model.save(f'../runs/{env.folder}/swarm_rl_ppo')
+        model.save(f"../runs/{env.folder}/swarm_rl_ppo")
         date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
-        os.makedirs(f'../runs/{env.folder}/PPO/{date_stamp}', exist_ok=True)
-        plot_save_locations(folder_name=f'{env.folder}/PPO/{date_stamp}', sim=env.sim, swarm=env.swarm)
-        plot_save_velocities(folder_name=f'{env.folder}/PPO/{date_stamp}', sim=env.sim, swarm=env.swarm)
-        plot_save_rewards(folder_name=f'{env.folder}/PPO/{date_stamp}', rewards=env.rewards, sim=env.sim)
-        plot_save_actions(folder_name=f'{env.folder}/PPO/{date_stamp}', sim=env.sim, swarm=env.swarm)
+        os.makedirs(f"../runs/{env.folder}/PPO/{date_stamp}", exist_ok=True)
+        plot_save_locations(folder_name=f"{env.folder}/PPO/{date_stamp}", sim=env.sim, swarm=env.swarm)
+        plot_save_velocities(folder_name=f"{env.folder}/PPO/{date_stamp}", sim=env.sim, swarm=env.swarm)
+        plot_save_rewards(folder_name=f"{env.folder}/PPO/{date_stamp}", rewards=env.rewards, sim=env.sim)
+        plot_save_actions(folder_name=f"{env.folder}/PPO/{date_stamp}", sim=env.sim, swarm=env.swarm)
 
 def run_SAC(env: SwarmEnv):
     """
@@ -402,3 +661,212 @@ def run_SAC(env: SwarmEnv):
     plot_save_locations(folder_name=f'{env.folder}/SAC', sim=env.sim, swarm=env.swarm)
     plot_save_velocities(folder_name=f'{env.folder}/SAC', sim=env.sim, swarm=env.swarm)
     plot_save_rewards(folder_name=f'{env.folder}/SAC', rewards=env.rewards, sim=env.sim)
+
+
+def run_MOMAPPO(env, total_timesteps: int,
+                n_steps: int = 1024, batch_size: int = 256, update_epochs: int = 10,
+                gamma: float = 0.95, gae_lambda: float = 0.95, clip_coef: float = 0.2,
+                ent_coef: float = 0.0, vf_coef: float = 0.5, lr: float = 3e-4,
+                device: str = 'cpu', open_tensorboard: bool = True):
+    """
+    Multi-objective MAPPO training with PCGrad on the actor across three objectives
+    (progress, cohesion, smoothness). No scalarization.
+    """
+    dev = torch.device(device)
+    # Support both single env and VecEnv (assumed num_envs=1 when vectorized)
+    is_vec = isinstance(env, VecEnv)
+    if is_vec:
+        obs0_vec = env.reset()
+        obs0 = obs0_vec[0]
+    else:
+        obs0, _ = env.reset()
+    obs_flat = obs0.reshape(-1).astype(np.float32)
+
+    # Resolve folder and create TensorBoard writer
+    if is_vec:
+        folder = env.get_attr('folder')[0]
+    else:
+        folder = env.folder
+    tb_log_dir = f"../runs/{folder}/MOMAPPO_tb"
+    writer = SummaryWriter(log_dir=tb_log_dir)
+
+    # Try to open TensorBoard server
+    if open_tensorboard:
+        try:
+            subprocess.Popen([
+                "tensorboard", "--logdir", tb_log_dir, "--port", "6006", "--host", "127.0.0.1"
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"TensorBoard: http://127.0.0.1:6006 (logdir {tb_log_dir})")
+        except Exception as e:
+            print(f"Could not launch TensorBoard automatically: {e}. You can run: tensorboard --logdir {tb_log_dir}")
+    obs_dim = int(obs_flat.shape[0])
+    act_dim = int(env.action_space.shape[0] * env.action_space.shape[1])
+
+    model = ActorCriticMO(obs_dim, act_dim).to(dev)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    # Account for VecEnv parallelism and use ceiling to avoid dropping partial rollout
+    effective_total_timesteps = int(total_timesteps) * (env.num_envs if is_vec else 1)
+    num_updates = max(1, int(math.ceil(effective_total_timesteps / float(n_steps))))
+    step_count = 0
+
+    progress_iterator = range(num_updates)
+    if tqdm is not None:
+        progress_iterator = tqdm(range(num_updates), desc="MOMAPPO", dynamic_ncols=True)
+
+    for update in progress_iterator:
+        buffer = RolloutBufferMO(n_steps, obs_dim, act_dim, dev)
+        done = False
+        obs = obs0
+        last_done = 0.0
+
+        for t in range(n_steps):
+            obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float32, device=dev)
+            with torch.no_grad():
+                mu, std = model(obs_t.unsqueeze(0))
+                dist = Normal(mu, std)
+                action = dist.sample()[0]
+                logprob = dist.log_prob(action).sum()
+                value_tuple = model.values(obs_t.unsqueeze(0))
+                val_prog, val_coh, val_smooth = [v[0].cpu() for v in value_tuple]
+            # Env expects shape (num_members,2) in [-1,1]
+            act_np = action.cpu().numpy()
+            act_np = np.clip(act_np, -1.0, 1.0)
+            act_np = act_np.reshape(env.action_space.shape)
+
+            if is_vec:
+                next_obs_vec, rewards_batch, dones_batch, infos_batch = env.step(np.expand_dims(act_np, 0))
+                next_obs = next_obs_vec[0]
+                done = bool(dones_batch[0])
+                info = infos_batch[0]
+            else:
+                next_obs, _, done, _, info = env.step(act_np)
+            # Use unweighted objectives from info
+            obj = info.get('objectives', {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0})
+            rew_prog = float(obj.get('progress', 0.0))
+            rew_coh = float(obj.get('cohesion', 0.0))
+            rew_smooth = float(obj.get('smoothness', 0.0))
+
+            buffer.add(obs_t.cpu(), torch.tensor(action.cpu(), dtype=torch.float32), float(logprob.cpu()),
+                       done, rew_prog, rew_coh, rew_smooth,
+                       float(val_prog), float(val_coh), float(val_smooth))
+
+            obs = next_obs
+            last_done = float(done)
+            step_count += 1
+            if done:
+                if is_vec:
+                    obs_vec = env.reset()
+                    obs = obs_vec[0]
+                    last_done = 0.0
+                else:
+                    obs, _ = env.reset()
+
+        # Bootstrap last values
+        last_obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float32, device=dev)
+        with torch.no_grad():
+            last_vals = model.values(last_obs_t.unsqueeze(0))
+            last_vals = (last_vals[0][0].cpu(), last_vals[1][0].cpu(), last_vals[2][0].cpu())
+        buffer.compute_gae(last_vals, last_done, gamma=gamma, lam=gae_lambda)
+
+        # Log per-objective means from this rollout
+        with torch.no_grad():
+            rp_mean = float(buffer.rew_prog[:buffer.ptr].mean()) if buffer.ptr > 0 else 0.0
+            rc_mean = float(buffer.rew_coh[:buffer.ptr].mean()) if buffer.ptr > 0 else 0.0
+            rs_mean = float(buffer.rew_smooth[:buffer.ptr].mean()) if buffer.ptr > 0 else 0.0
+        writer.add_scalar('objectives/progress', rp_mean, step_count)
+        writer.add_scalar('objectives/cohesion', rc_mean, step_count)
+        writer.add_scalar('objectives/smoothness', rs_mean, step_count)
+
+        # PPO updates
+        epoch_entropies = []
+        epoch_value_losses = []
+        for epoch in range(update_epochs):
+            for batch in buffer.get(batch_size):
+                (b_obs, b_actions, b_logp_old, _b_dones,
+                 _rp, _rc, _rs, b_vp, b_vc, b_vs,
+                 b_advp, b_advc, b_advs, b_retp, b_retc, b_rets) = batch
+
+                b_obs = b_obs.to(dev)
+                b_actions = b_actions.to(dev)
+                b_logp_old = b_logp_old.to(dev)
+                b_advp = b_advp.to(dev)
+                b_advc = b_advc.to(dev)
+                b_advs = b_advs.to(dev)
+                b_retp = b_retp.to(dev)
+                b_retc = b_retc.to(dev)
+                b_rets = b_rets.to(dev)
+
+                mu, std = model(b_obs)
+                dist = Normal(mu, std)
+                logp = dist.log_prob(b_actions).sum(-1)
+                ratio = torch.exp(logp - b_logp_old)
+
+                def ppo_obj(adv):
+                    unclipped = ratio * adv
+                    clipped = torch.clamp(ratio, 1.0 - clip_coef, 1.0 + clip_coef) * adv
+                    return -torch.mean(torch.min(unclipped, clipped))
+
+                # Per-objective policy losses
+                loss_pi_prog = ppo_obj(b_advp)
+                loss_pi_coh = ppo_obj(b_advc)
+                loss_pi_smooth = ppo_obj(b_advs)
+
+                # Entropy (encourage exploration)
+                entropy = dist.entropy().sum(-1).mean()
+
+                # Critic loss (sum across objectives)
+                v_prog, v_coh, v_smooth = model.values(b_obs)
+                loss_v = 0.5 * (
+                    torch.mean((v_prog - b_retp) ** 2) +
+                    torch.mean((v_coh - b_retc) ** 2) +
+                    torch.mean((v_smooth - b_rets) ** 2)
+                )
+
+                # Combine actor gradients via PCGrad, then add critic and entropy
+                optimizer.zero_grad(set_to_none=True)
+                pcgrad_merge(model, [loss_pi_prog, loss_pi_coh, loss_pi_smooth])
+                # Add critic and entropy losses on top of actor grads
+                total_aux = vf_coef * loss_v - ent_coef * entropy
+                total_aux.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+                optimizer.step()
+
+                epoch_entropies.append(float(entropy.detach()))
+                epoch_value_losses.append(float(loss_v.detach()))
+
+        # Log training stats per update
+        if len(epoch_entropies) > 0:
+            writer.add_scalar('loss/value', float(np.mean(epoch_value_losses)), step_count)
+            writer.add_scalar('stats/entropy', float(np.mean(epoch_entropies)), step_count)
+
+        if tqdm is None:
+            print(f"MOMAPPO update {update+1}/{num_updates}, steps so far {step_count}, prog {rp_mean:.3f}, coh {rc_mean:.3f}, sm {rs_mean:.3f}")
+        else:
+            progress_iterator.set_postfix({
+                'steps': step_count,
+                'prog': f"{rp_mean:.3f}",
+                'coh': f"{rc_mean:.3f}",
+                'sm': f"{rs_mean:.3f}"
+            })
+
+    date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
+    if is_vec:
+        folder = env.get_attr('folder')[0]
+        sim_attr = env.get_attr('sim')[0]
+        swarm_attr = env.get_attr('swarm')[0]
+        rewards_attr = env.get_attr('rewards')[0]
+        objectives_attr = env.get_attr('objectives_history')[0]
+    else:
+        folder = env.folder
+        sim_attr = env.sim
+        swarm_attr = env.swarm
+        rewards_attr = env.rewards
+        objectives_attr = getattr(env, 'objectives_history', [])
+
+    os.makedirs(f"../runs/{folder}/MOMAPPO/{date_stamp}", exist_ok=True)
+    plot_save_locations(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
+    plot_save_velocities(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
+    plot_save_rewards(folder_name=f"{folder}/MOMAPPO/{date_stamp}", rewards=rewards_attr, sim=sim_attr)
+    plot_save_rewards_objectives(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, objective_history=objectives_attr)
+    writer.close()

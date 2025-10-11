@@ -215,7 +215,8 @@ class SwarmEnv(gym.Env):
             'reward_components': self.last_reward_components,
             'objectives': self.last_objectives,  # unweighted objective vector for MOMARL
             'terminated': terminated,
-            'truncated': truncated
+            'truncated': truncated,
+            'member_progress': getattr(self, 'last_member_progress_norm', [])
         }
         return self._get_observation(), reward, terminated, truncated, info
 
@@ -252,18 +253,8 @@ class SwarmEnv(gym.Env):
         return self.v is None
 
     def _compute_terminated(self) -> bool:
-        # Terminate on success/failure conditions based on member x-locations
-        # count_members_finished = 0
-        # for member in self.swarm.members:
-        #     if member.location['x'] <= self.sim.length_x / 4:
-        #         count_members_finished += 1
-        #     if member.location['x'] >= 3 * self.sim.length_x / 4:
-        #         return True
-        # if count_members_finished == len(self.swarm.members):
-        #     return True
-        # return False
-        # Terminate after 20 seconds
-        return self.episode_time > 20.0
+        # Terminate after 10 seconds
+        return self.episode_time > 10.0
 
     def _finalize_episode(self, terminated: bool, truncated: bool) -> None:
         """Append a row to episodes CSV with cumulative per-objective rewards and status."""
@@ -347,6 +338,8 @@ class SwarmEnv(gym.Env):
             'cohesion': float(r_cohesion/self.w_cohesion),
             'smoothness': float(r_smooth/self.w_smooth)
         }
+        # Per-member normalized progress (unweighted), for per-member critic head
+        self.last_member_progress_norm = [float(dv_i / v_ref) for dv_i in dv_members]
         self.reward_components_history.append(self.last_reward_components.copy())
         self.objectives_history.append(self.last_objectives.copy())
         return float(total_reward)
@@ -429,7 +422,7 @@ class ActorCriticMO(nn.Module):
     Multi-objective actor-critic with shared torso, one critic head per objective,
     and a Gaussian policy over joint actions (all agents).
     """
-    def __init__(self, obs_dim: int, act_dim: int, hidden_sizes: tuple[int, int] = (256, 256)):
+    def __init__(self, obs_dim: int, act_dim: int, hidden_sizes: tuple[int, int] = (256, 256), num_members: int | None = None):
         super().__init__()
         self.torso = nn.Sequential(
             nn.Linear(obs_dim, hidden_sizes[0]),
@@ -443,6 +436,10 @@ class ActorCriticMO(nn.Module):
         self.v_prog = nn.Linear(hidden_sizes[1], 1)
         self.v_coh = nn.Linear(hidden_sizes[1], 1)
         self.v_smooth = nn.Linear(hidden_sizes[1], 1)
+        # Optional per-member progress heads
+        self.num_members = num_members
+        if num_members is not None and num_members > 0:
+            self.v_member_prog = nn.Linear(hidden_sizes[1], num_members)
 
     def forward(self, obs: torch.Tensor):
         x = self.torso(obs)
@@ -452,11 +449,18 @@ class ActorCriticMO(nn.Module):
 
     def values(self, obs: torch.Tensor):
         x = self.torso(obs)
-        return self.v_prog(x).squeeze(-1), self.v_coh(x).squeeze(-1), self.v_smooth(x).squeeze(-1)
+        v_p = self.v_prog(x).squeeze(-1)
+        v_c = self.v_coh(x).squeeze(-1)
+        v_s = self.v_smooth(x).squeeze(-1)
+        if hasattr(self, 'v_member_prog'):
+            v_mp = self.v_member_prog(x)
+        else:
+            v_mp = None
+        return v_p, v_c, v_s, v_mp
 
 
 class RolloutBufferMO:
-    def __init__(self, buffer_size: int, obs_dim: int, act_dim: int, device: torch.device):
+    def __init__(self, buffer_size: int, obs_dim: int, act_dim: int, device: torch.device, num_members: int | None = None):
         self.buffer_size = buffer_size
         self.obs = torch.zeros((buffer_size, obs_dim), dtype=torch.float32)
         self.actions = torch.zeros((buffer_size, act_dim), dtype=torch.float32)
@@ -469,6 +473,13 @@ class RolloutBufferMO:
         self.val_prog = torch.zeros((buffer_size,), dtype=torch.float32)
         self.val_coh = torch.zeros((buffer_size,), dtype=torch.float32)
         self.val_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
+        # Per-member progress
+        self.num_members = int(num_members) if num_members is not None else 0
+        if self.num_members > 0:
+            self.rew_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
+            self.val_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
+            self.adv_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
+            self.ret_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
         # Advantages and returns per objective
         self.adv_prog = torch.zeros((buffer_size,), dtype=torch.float32)
         self.adv_coh = torch.zeros((buffer_size,), dtype=torch.float32)
@@ -479,7 +490,7 @@ class RolloutBufferMO:
         self.ptr = 0
         self.device = device
 
-    def add(self, obs, action, logprob, done, rew_prog, rew_coh, rew_smooth, val_prog, val_coh, val_smooth):
+    def add(self, obs, action, logprob, done, rew_prog, rew_coh, rew_smooth, val_prog, val_coh, val_smooth, member_prog: np.ndarray | None = None, val_member_prog: np.ndarray | None = None):
         i = self.ptr
         self.obs[i] = obs
         self.actions[i] = action
@@ -491,33 +502,53 @@ class RolloutBufferMO:
         self.val_prog[i] = val_prog
         self.val_coh[i] = val_coh
         self.val_smooth[i] = val_smooth
+        if self.num_members > 0 and member_prog is not None and val_member_prog is not None:
+            mp = torch.as_tensor(member_prog, dtype=torch.float32)
+            vm = torch.as_tensor(val_member_prog, dtype=torch.float32)
+            if mp.numel() == self.num_members:
+                self.rew_member_prog[i] = mp
+            if vm.numel() == self.num_members:
+                self.val_member_prog[i] = vm
         self.ptr += 1
 
-    def compute_gae(self, last_values: tuple[torch.Tensor, torch.Tensor, torch.Tensor], last_done: float,
+    def compute_gae(self, last_values: tuple, last_done: float,
                     gamma: float = 0.99, lam: float = 0.95):
-        last_v_prog, last_v_coh, last_v_smooth = last_values
+        # last_values may include per-member tensor at index 3
+        last_v_prog, last_v_coh, last_v_smooth = last_values[:3]
+        last_v_members = last_values[3] if len(last_values) > 3 else None
         adv_p, adv_c, adv_s = 0.0, 0.0, 0.0
+        adv_members = torch.zeros(self.num_members, dtype=torch.float32)
         for t in reversed(range(self.ptr)):
             next_nonterminal = 1.0 - (self.dones[t+1] if t < self.ptr - 1 else last_done)
             next_v_prog = self.val_prog[t+1] if t < self.ptr - 1 else last_v_prog
             next_v_coh = self.val_coh[t+1] if t < self.ptr - 1 else last_v_coh
             next_v_smooth = self.val_smooth[t+1] if t < self.ptr - 1 else last_v_smooth
+            if self.num_members > 0:
+                next_v_members = self.val_member_prog[t+1] if t < self.ptr - 1 else (last_v_members if last_v_members is not None else torch.zeros(self.num_members))
 
             delta_p = self.rew_prog[t] + gamma * next_v_prog * next_nonterminal - self.val_prog[t]
             delta_c = self.rew_coh[t] + gamma * next_v_coh * next_nonterminal - self.val_coh[t]
             delta_s = self.rew_smooth[t] + gamma * next_v_smooth * next_nonterminal - self.val_smooth[t]
+            if self.num_members > 0:
+                delta_members = self.rew_member_prog[t] + gamma * next_v_members * next_nonterminal - self.val_member_prog[t]
 
             adv_p = float(delta_p) + gamma * lam * next_nonterminal * adv_p
             adv_c = float(delta_c) + gamma * lam * next_nonterminal * adv_c
             adv_s = float(delta_s) + gamma * lam * next_nonterminal * adv_s
+            if self.num_members > 0:
+                adv_members = delta_members + gamma * lam * next_nonterminal * adv_members
 
             self.adv_prog[t] = adv_p
             self.adv_coh[t] = adv_c
             self.adv_smooth[t] = adv_s
+            if self.num_members > 0:
+                self.adv_member_prog[t] = adv_members
 
         self.ret_prog = self.adv_prog + self.val_prog
         self.ret_coh = self.adv_coh + self.val_coh
         self.ret_smooth = self.adv_smooth + self.val_smooth
+        if self.num_members > 0:
+            self.ret_member_prog = self.adv_member_prog + self.val_member_prog
         # Normalize advantages per objective
         def norm(x: torch.Tensor):
             if x.std() > 1e-8:
@@ -526,6 +557,10 @@ class RolloutBufferMO:
         self.adv_prog = norm(self.adv_prog)
         self.adv_coh = norm(self.adv_coh)
         self.adv_smooth = norm(self.adv_smooth)
+        if self.num_members > 0:
+            # normalize per member independently
+            for m in range(self.num_members):
+                self.adv_member_prog[:, m] = norm(self.adv_member_prog[:, m])
 
     def get(self, batch_size: int):
         idxs = torch.randperm(self.ptr)
@@ -538,6 +573,10 @@ class RolloutBufferMO:
                 self.val_prog[batch_idx], self.val_coh[batch_idx], self.val_smooth[batch_idx],
                 self.adv_prog[batch_idx], self.adv_coh[batch_idx], self.adv_smooth[batch_idx],
                 self.ret_prog[batch_idx], self.ret_coh[batch_idx], self.ret_smooth[batch_idx],
+                (self.rew_member_prog[batch_idx] if self.num_members > 0 else None),
+                (self.val_member_prog[batch_idx] if self.num_members > 0 else None),
+                (self.adv_member_prog[batch_idx] if self.num_members > 0 else None),
+                (self.ret_member_prog[batch_idx] if self.num_members > 0 else None),
             )
 
 
@@ -667,7 +706,8 @@ def run_MOMAPPO(env, total_timesteps: int,
                 n_steps: int = 1024, batch_size: int = 256, update_epochs: int = 10,
                 gamma: float = 0.95, gae_lambda: float = 0.95, clip_coef: float = 0.2,
                 ent_coef: float = 0.0, vf_coef: float = 0.5, lr: float = 3e-4,
-                device: str = 'cpu', open_tensorboard: bool = True):
+                device: str = 'cpu', open_tensorboard: bool = True,
+                resume: bool = True):
     """
     Multi-objective MAPPO training with PCGrad on the actor across three objectives
     (progress, cohesion, smoothness). No scalarization.
@@ -702,8 +742,23 @@ def run_MOMAPPO(env, total_timesteps: int,
     obs_dim = int(obs_flat.shape[0])
     act_dim = int(env.action_space.shape[0] * env.action_space.shape[1])
 
-    model = ActorCriticMO(obs_dim, act_dim).to(dev)
+    num_members = int(env.action_space.shape[0])
+    model = ActorCriticMO(obs_dim, act_dim, num_members=num_members).to(dev)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    # Checkpointing (resume if requested)
+    ckpt_dir = f"../runs/{folder}/MOMAPPO/models"
+    os.makedirs(ckpt_dir, exist_ok=True)
+    latest_ckpt = f"{ckpt_dir}/model_latest.pt"
+    if resume and os.path.exists(latest_ckpt):
+        try:
+            ckpt = torch.load(latest_ckpt, map_location=dev)
+            model.load_state_dict(ckpt.get('model', {}))
+            if 'optimizer' in ckpt:
+                optimizer.load_state_dict(ckpt['optimizer'])
+            print(f"Resumed MOMAPPO from {latest_ckpt}")
+        except Exception as e:
+            print(f"Warning: failed to load checkpoint {latest_ckpt}: {e}")
 
     # Account for VecEnv parallelism and use ceiling to avoid dropping partial rollout
     effective_total_timesteps = int(total_timesteps) * (env.num_envs if is_vec else 1)
@@ -715,7 +770,7 @@ def run_MOMAPPO(env, total_timesteps: int,
         progress_iterator = tqdm(range(num_updates), desc="MOMAPPO", dynamic_ncols=True)
 
     for update in progress_iterator:
-        buffer = RolloutBufferMO(n_steps, obs_dim, act_dim, dev)
+        buffer = RolloutBufferMO(n_steps, obs_dim, act_dim, dev, num_members=num_members)
         done = False
         obs = obs0
         last_done = 0.0
@@ -728,7 +783,11 @@ def run_MOMAPPO(env, total_timesteps: int,
                 action = dist.sample()[0]
                 logprob = dist.log_prob(action).sum()
                 value_tuple = model.values(obs_t.unsqueeze(0))
-                val_prog, val_coh, val_smooth = [v[0].cpu() for v in value_tuple]
+                val_prog, val_coh, val_smooth, val_member_prog = value_tuple
+                val_prog = val_prog[0].cpu()
+                val_coh = val_coh[0].cpu()
+                val_smooth = val_smooth[0].cpu()
+                val_member_prog = (val_member_prog[0].cpu() if val_member_prog is not None else None)
             # Env expects shape (num_members,2) in [-1,1]
             act_np = action.cpu().numpy()
             act_np = np.clip(act_np, -1.0, 1.0)
@@ -746,10 +805,12 @@ def run_MOMAPPO(env, total_timesteps: int,
             rew_prog = float(obj.get('progress', 0.0))
             rew_coh = float(obj.get('cohesion', 0.0))
             rew_smooth = float(obj.get('smoothness', 0.0))
+            member_prog = info.get('member_progress', None)
 
             buffer.add(obs_t.cpu(), torch.tensor(action.cpu(), dtype=torch.float32), float(logprob.cpu()),
                        done, rew_prog, rew_coh, rew_smooth,
-                       float(val_prog), float(val_coh), float(val_smooth))
+                       float(val_prog), float(val_coh), float(val_smooth),
+                       member_prog, (val_member_prog.numpy() if val_member_prog is not None else None))
 
             obs = next_obs
             last_done = float(done)
@@ -766,7 +827,11 @@ def run_MOMAPPO(env, total_timesteps: int,
         last_obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float32, device=dev)
         with torch.no_grad():
             last_vals = model.values(last_obs_t.unsqueeze(0))
-            last_vals = (last_vals[0][0].cpu(), last_vals[1][0].cpu(), last_vals[2][0].cpu())
+            lvp = last_vals[0][0].cpu()
+            lvc = last_vals[1][0].cpu()
+            lvs = last_vals[2][0].cpu()
+            lvm = (last_vals[3][0].cpu() if last_vals[3] is not None else None)
+            last_vals = (lvp, lvc, lvs, lvm)
         buffer.compute_gae(last_vals, last_done, gamma=gamma, lam=gae_lambda)
 
         # Log per-objective means from this rollout
@@ -785,7 +850,8 @@ def run_MOMAPPO(env, total_timesteps: int,
             for batch in buffer.get(batch_size):
                 (b_obs, b_actions, b_logp_old, _b_dones,
                  _rp, _rc, _rs, b_vp, b_vc, b_vs,
-                 b_advp, b_advc, b_advs, b_retp, b_retc, b_rets) = batch
+                 b_advp, b_advc, b_advs, b_retp, b_retc, b_rets,
+                 b_rmp, b_vmp, b_amp, b_rtmp) = batch
 
                 b_obs = b_obs.to(dev)
                 b_actions = b_actions.to(dev)
@@ -816,12 +882,15 @@ def run_MOMAPPO(env, total_timesteps: int,
                 entropy = dist.entropy().sum(-1).mean()
 
                 # Critic loss (sum across objectives)
-                v_prog, v_coh, v_smooth = model.values(b_obs)
+                v_prog, v_coh, v_smooth, v_member_prog = model.values(b_obs)
                 loss_v = 0.5 * (
                     torch.mean((v_prog - b_retp) ** 2) +
                     torch.mean((v_coh - b_retc) ** 2) +
                     torch.mean((v_smooth - b_rets) ** 2)
                 )
+                # Add per-member critic loss if enabled
+                if v_member_prog is not None and b_rtmp is not None:
+                    loss_v = loss_v + 0.5 * torch.mean((v_member_prog - b_rtmp) ** 2)
 
                 # Combine actor gradients via PCGrad, then add critic and entropy
                 optimizer.zero_grad(set_to_none=True)
@@ -864,9 +933,29 @@ def run_MOMAPPO(env, total_timesteps: int,
         rewards_attr = env.rewards
         objectives_attr = getattr(env, 'objectives_history', [])
 
-    os.makedirs(f"../runs/{folder}/MOMAPPO/{date_stamp}", exist_ok=True)
+    run_dir = f"../runs/{folder}/MOMAPPO/{date_stamp}"
+    os.makedirs(run_dir, exist_ok=True)
     plot_save_locations(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
     plot_save_velocities(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
     plot_save_rewards(folder_name=f"{folder}/MOMAPPO/{date_stamp}", rewards=rewards_attr, sim=sim_attr)
     plot_save_rewards_objectives(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, objective_history=objectives_attr)
+    # Save checkpoints (timestamped and latest)
+    ts_ckpt = f"{ckpt_dir}/model_{date_stamp}.pt"
+    torch.save({
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'obs_dim': obs_dim,
+        'act_dim': act_dim,
+        'num_members': num_members,
+        'total_timesteps': total_timesteps,
+    }, ts_ckpt)
+    torch.save({
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'obs_dim': obs_dim,
+        'act_dim': act_dim,
+        'num_members': num_members,
+        'total_timesteps': total_timesteps,
+    }, latest_ckpt)
+    print(f"Saved MOMAPPO checkpoints to {ts_ckpt} and {latest_ckpt}")
     writer.close()

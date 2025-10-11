@@ -26,7 +26,7 @@ def main():
                     member_radius=0.25, member_density=5.150,
                     member_max_force=700)  # density in mg/mm^3, force in mg*mm/s^2
     # inflow = Inflow(frequency=0.5, amplitude=10, h_shift=np.pi / 2, v_shift=25)
-    inflow = Inflow(frequency=1, amplitude=10, upstroke=0.2, plateau=0.15, downstroke=0.2)
+    inflow = Inflow(frequency=1, amplitude=20, upstroke=0.2, plateau=0.15, downstroke=0.2)
     inflow.center_x = 0
     fluid = Fluid(viscosity=3.0)  # viscosity of blood in mg/(mm*s)
 

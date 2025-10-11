@@ -99,14 +99,13 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
     ys0 = [float(df[f"location_{mid}_y"].iloc[0]) for mid in member_ids]
     com_x0 = np.mean(xs0)
     com_y0 = np.mean(ys0)
-    com_radius = radius * 0.5
+    com_radius = radius * 0.3
     com_circle = Circle(
         (com_x0, com_y0),
         radius=com_radius,
-        edgecolor='white',
-        facecolor='none',
-        linestyle='dashed',
-        linewidth=2,
+        edgecolor='black',
+        facecolor='black',
+        linewidth=0.5,
         zorder=10,
     )
     ax.add_patch(com_circle)

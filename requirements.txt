@@ -1,0 +1,23 @@
+# Core dependencies for FluxSwarm project
+# Physics simulation
+phiflow>=2.3.0
+h5py>=3.0.0
+
+# Machine Learning & RL
+torch>=2.0.0
+stable-baselines3>=2.0.0
+gymnasium>=0.28.0
+
+# Scientific computing
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+
+# Visualization
+matplotlib>=3.7.0
+
+# Utilities
+scikit-learn>=1.3.0
+tqdm>=4.65.0
+tensorboard>=2.13.0
+

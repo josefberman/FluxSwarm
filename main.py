@@ -1,5 +1,6 @@
 import datetime
 import os
+import argparse
 
 from phi.torch.flow import *
 import numpy as np
@@ -17,14 +18,14 @@ warnings.filterwarnings("ignore")
 assert backend.default_backend().set_default_device('GPU')
 
 
-def main():
-    print('Max force:', 700)
+def main(args):
+    print('Max force:', 100)
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=2000)
+    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=400)
     swarm = Swarm(num_x=4, num_y=3, left_location=49, bottom_location=1, member_interval_x=1, member_interval_y=1,
                     member_radius=0.25, member_density=5.150,
-                    member_max_force=700)  # density in mg/mm^3, force in mg*mm/s^2
+                    member_max_force=100)  # density in mg/mm^3, force in mg*mm/s^2
     # inflow = Inflow(frequency=0.5, amplitude=10, h_shift=np.pi / 2, v_shift=25)
     inflow = Inflow(frequency=1, amplitude=50, upstroke=0.2, plateau=0.15, downstroke=0.2)
     inflow.center_x = 0
@@ -49,7 +50,7 @@ def main():
     # ----------- Reinforcement Learning - PPO ------------------
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
     def make_env():
-        return SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name)
+        return SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name, save_fields=args.save_fields)
 
     num_envs = 1
     env = SubprocVecEnv([make_env for _ in range(num_envs)])
@@ -67,4 +68,12 @@ if __name__ == '__main__':
     from multiprocessing import freeze_support
 
     freeze_support()
-    main()
+    
+    parser = argparse.ArgumentParser(description='Run FluxSwarm simulation')
+    parser.add_argument('--save-fields', dest='save_fields', action='store_true', default=False,
+                        help='Save velocity and pressure fields to npz files (default: False)')
+    parser.add_argument('--no-save-fields', dest='save_fields', action='store_false',
+                        help='Disable saving fields to npz files')
+    
+    args = parser.parse_args()
+    main(args)

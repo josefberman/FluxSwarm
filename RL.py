@@ -75,7 +75,7 @@ class SwarmEnv(gym.Env):
     """
     metadata = {"render.modes": ["human"]}
 
-    def __init__(self, sim: Simulation, swarm: Swarm, fluid: Fluid, inflow: Inflow, folder: str):
+    def __init__(self, sim: Simulation, swarm: Swarm, fluid: Fluid, inflow: Inflow, folder: str, save_fields: bool = False):
         super(SwarmEnv, self).__init__()
         self.pid = os.getpid()
         self.sim = sim
@@ -105,6 +105,13 @@ class SwarmEnv(gym.Env):
         self.episode_cum_reward = 0.0
         self.episode_cum_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
         self.episodes_csv_path = f"../runs/{self.folder}/episodes_summary_{self.pid}.csv"
+        
+        # Field saving for animations
+        self.save_fields = save_fields
+        self.fields_vx_list = []
+        self.fields_vy_list = []
+        self.fields_p_list = []
+        self.field_timesteps = []
 
         # Define observation space: num_of_members * (position x2, velocity x2, pressure x4)
         self.observation_space = spaces.Box(
@@ -155,6 +162,14 @@ class SwarmEnv(gym.Env):
         # Reset per-episode accumulators
         self.episode_cum_reward = 0.0
         self.episode_cum_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        
+        # Clear field lists for new episode
+        if self.save_fields:
+            self.fields_vx_list.clear()
+            self.fields_vy_list.clear()
+            self.fields_p_list.clear()
+            self.field_timesteps.clear()
+        
         return self._get_observation(), {}
 
     def step(self, action):
@@ -199,6 +214,19 @@ class SwarmEnv(gym.Env):
         self.episode_cum_objectives['progress'] += float(self.last_objectives.get('progress', 0.0))
         self.episode_cum_objectives['cohesion'] += float(self.last_objectives.get('cohesion', 0.0))
         self.episode_cum_objectives['smoothness'] += float(self.last_objectives.get('smoothness', 0.0))
+
+        # Save fields if requested
+        if self.save_fields and self.v is not None and self.p is not None:
+            # Extract velocity components and pressure as numpy arrays
+            v_data = self.v.staggered_tensor()  # Returns tuple of (vx, vy)
+            vx_np = v_data[0].numpy('x,y').astype(np.float16)  # Use float16 for compression
+            vy_np = v_data[1].numpy('x,y').astype(np.float16)
+            p_np = self.p.values.numpy('x,y').astype(np.float16)
+            
+            self.fields_vx_list.append(vx_np)
+            self.fields_vy_list.append(vy_np)
+            self.fields_p_list.append(p_np)
+            self.field_timesteps.append(self.episode_time)
 
         # Compute termination signals
         terminated = self._compute_terminated()
@@ -344,6 +372,35 @@ class SwarmEnv(gym.Env):
         self.objectives_history.append(self.last_objectives.copy())
         return float(total_reward)
 
+
+    def save_fields_to_disk(self):
+        """Save accumulated fields to compressed npz file."""
+        if not self.save_fields or len(self.fields_vx_list) == 0:
+            return
+        
+        output_dir = f"../runs/{self.folder}/fields"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Stack all fields into arrays
+        vx_array = np.stack(self.fields_vx_list, axis=0)  # Shape: (timesteps, x, y)
+        vy_array = np.stack(self.fields_vy_list, axis=0)
+        p_array = np.stack(self.fields_p_list, axis=0)
+        timesteps_array = np.array(self.field_timesteps, dtype=np.float32)
+        
+        # Save as compressed npz
+        output_path = f"{output_dir}/fields_{self.pid}.npz"
+        np.savez_compressed(
+            output_path,
+            vx=vx_array,
+            vy=vy_array,
+            p=p_array,
+            timesteps=timesteps_array,
+            length_x=self.sim.length_x,
+            length_y=self.sim.length_y,
+            resolution=self.sim.resolution
+        )
+        print(f"Saved {len(self.field_timesteps)} field snapshots to {output_path}")
+        print(f"File size: {os.path.getsize(output_path) / (1024**2):.2f} MB")
 
     def render(self, mode='human'):
         pass
@@ -918,6 +975,16 @@ def run_MOMAPPO(env, total_timesteps: int,
                 'coh': f"{rc_mean:.3f}",
                 'sm': f"{rs_mean:.3f}"
             })
+
+    # Save fields if enabled
+    if is_vec:
+        for i in range(env.num_envs):
+            env_i = env.envs[i]
+            if hasattr(env_i, 'save_fields_to_disk'):
+                env_i.save_fields_to_disk()
+    else:
+        if hasattr(env, 'save_fields_to_disk'):
+            env.save_fields_to_disk()
 
     date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
     if is_vec:

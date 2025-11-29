@@ -64,15 +64,93 @@ def compute_axis_limits(df: pd.DataFrame, member_ids: List[int]) -> Tuple[Tuple[
 
 
 def load_fields(fields_path: str) -> dict:
-    """Load fields from compressed npz file."""
+    """
+    Load fields from compressed npz file.
+    
+    Handles two formats:
+    1. Combined file: single npz with arrays of shape (timesteps, x, y)
+    2. Directory pattern: path to directory containing step_*.npz files (will be handled by caller)
+    """
     data = np.load(fields_path)
+    
+    # Check if this is a combined file (has 'timesteps' plural) or single step file
+    if 'timesteps' in data:
+        # Combined file format
+        return {
+            'vx': data['vx'],  # Shape: (timesteps, x, y)
+            'vy': data['vy'],  # Shape: (timesteps, x, y)
+            'p': data['p'],    # Shape: (timesteps, x, y)
+            'timestep': data['timesteps'],  # Array of timesteps
+            'length_x': float(data['length_x']),
+            'length_y': float(data['length_y'])
+        }
+    elif 'timestep' in data:
+        # Single step file - check if it's a scalar or array
+        timestep_data = data['timestep']
+        if timestep_data.ndim == 0:
+            # Single scalar - this is a single step file, need to combine
+            raise ValueError("Single step file provided. Use load_fields_from_directory() or provide combined file.")
+        else:
+            # Array - combined format with 'timestep' key
+            return {
+                'vx': data['vx'],
+                'vy': data['vy'],
+                'p': data['p'],
+                'timestep': timestep_data,
+                'length_x': float(data['length_x']),
+                'length_y': float(data['length_y'])
+            }
+    else:
+        raise ValueError(f"Unknown field file format: missing 'timestep' or 'timesteps' key")
+
+
+def load_fields_from_directory(fields_dir: str) -> dict:
+    """Load and combine all step_*.npz files from a directory."""
+    import glob
+    
+    # Find all step files
+    pattern = os.path.join(fields_dir, "step_*.npz")
+    fields_files = sorted(glob.glob(pattern))
+    
+    if not fields_files:
+        raise ValueError(f"No step_*.npz files found in {fields_dir}")
+    
+    print(f"Loading {len(fields_files)} field step files from {fields_dir}...")
+    
+    vx_list = []
+    vy_list = []
+    p_list = []
+    timesteps_list = []
+    length_x = None
+    length_y = None
+    
+    for field_file in fields_files:
+        data = np.load(field_file)
+        vx_list.append(data['vx'])  # Shape: (x, y)
+        vy_list.append(data['vy'])  # Shape: (x, y)
+        p_list.append(data['p'])    # Shape: (x, y)
+        timesteps_list.append(float(data['timestep']))
+        
+        # Store metadata from first file
+        if length_x is None:
+            length_x = float(data['length_x'])
+            length_y = float(data['length_y'])
+    
+    # Stack into arrays: (timesteps, x, y)
+    vx_array = np.stack(vx_list, axis=0)
+    vy_array = np.stack(vy_list, axis=0)
+    p_array = np.stack(p_list, axis=0)
+    timesteps_array = np.array(timesteps_list, dtype=np.float32)
+    
+    print(f"  Combined into arrays with shape: vx={vx_array.shape}, vy={vy_array.shape}, p={p_array.shape}")
+    
     return {
-        'vx': data['vx'],
-        'vy': data['vy'],
-        'p': data['p'],
-        'timesteps': data['timesteps'],
-        'length_x': float(data['length_x']),
-        'length_y': float(data['length_y'])
+        'vx': vx_array,  # Shape: (timesteps, x, y)
+        'vy': vy_array,  # Shape: (timesteps, x, y)
+        'p': p_array,    # Shape: (timesteps, x, y)
+        'timestep': timesteps_array,  # Array of timesteps
+        'length_x': length_x,
+        'length_y': length_y
     }
 
 
@@ -91,10 +169,31 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
     x_min, x_max = 0.0, length_x
     y_min, y_max = 0.0, length_y
 
-    # Calculate proper figure size to match simulation dimensions (100mm x 4mm = 25:1 aspect ratio)
-    # Use height of 4 inches and width proportional to aspect ratio
+    # Calculate proper figure size to match simulation dimensions
+    # Cap dimensions to prevent FFmpeg errors (max ~2000 pixels per dimension)
+    target_max_pixels = 2000
+    aspect_ratio = length_x / length_y
+    
+    # Start with reasonable figure size - cap width to prevent extreme aspect ratios
     fig_height = 4.0
-    fig_width = fig_height * (length_x / length_y)  # 25.0 for default 100x4
+    max_fig_width = 10.0  # Cap figure width to 10 inches
+    fig_width = min(fig_height * aspect_ratio, max_fig_width)
+    
+    # Calculate DPI to keep pixel dimensions within target_max_pixels
+    # Calculate what DPI would give us the target max pixels for the larger dimension
+    max_fig_dim = max(fig_width, fig_height)
+    dpi = int(target_max_pixels / max_fig_dim)
+    dpi = max(50, min(dpi, 300))  # Clamp DPI between 50 and 300
+    
+    # Verify final pixel dimensions
+    final_pixel_width = fig_width * dpi
+    final_pixel_height = fig_height * dpi
+    
+    if final_pixel_width > target_max_pixels or final_pixel_height > target_max_pixels:
+        # Further scale down if needed
+        scale = min(target_max_pixels / final_pixel_width, target_max_pixels / final_pixel_height)
+        fig_width *= scale
+        fig_height *= scale
     
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.set_aspect('equal', adjustable='box')  # Equal aspect ratio for mm units
@@ -214,7 +313,8 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
     except Exception as exc:  # pragma: no cover
         raise RuntimeError("FFmpeg is required to write MP4. Please install FFmpeg and ensure it is on PATH.") from exc
 
-    ani.save(output_path, writer=writer, dpi=200)
+    # Use calculated DPI to keep video dimensions reasonable
+    ani.save(output_path, writer=writer, dpi=dpi)
     plt.close(fig)
 
 
@@ -226,8 +326,24 @@ def main() -> None:
     fields_data = None
     if args.fields:
         print(f"Loading fields from {args.fields}...")
-        fields_data = load_fields(args.fields)
-        print(f"Loaded {len(fields_data['timesteps'])} field snapshots")
+        # Check if it's a directory or a file
+        if os.path.isdir(args.fields):
+            fields_data = load_fields_from_directory(args.fields)
+        else:
+            try:
+                fields_data = load_fields(args.fields)
+            except ValueError as e:
+                if "Single step file" in str(e):
+                    # Try treating it as a directory pattern
+                    fields_dir = os.path.dirname(args.fields)
+                    if os.path.isdir(fields_dir):
+                        fields_data = load_fields_from_directory(fields_dir)
+                    else:
+                        raise
+                else:
+                    raise
+        
+        print(f"  Loaded {len(fields_data['timestep'])} field snapshots")
         print(f"  VX range: [{fields_data['vx'].min():.2f}, {fields_data['vx'].max():.2f}]")
         print(f"  VY range: [{fields_data['vy'].min():.2f}, {fields_data['vy'].max():.2f}]")
         print(f"  P range: [{fields_data['p'].min():.2f}, {fields_data['p'].max():.2f}]")

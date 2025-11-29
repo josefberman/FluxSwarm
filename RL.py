@@ -108,10 +108,7 @@ class SwarmEnv(gym.Env):
         
         # Field saving for animations
         self.save_fields = save_fields
-        self.fields_vx_list = []
-        self.fields_vy_list = []
-        self.fields_p_list = []
-        self.field_timesteps = []
+        self.field_step_counter = 0  # Counter for unique field file names
 
         # Define observation space: num_of_members * (position x2, velocity x2, pressure x4)
         self.observation_space = spaces.Box(
@@ -163,12 +160,9 @@ class SwarmEnv(gym.Env):
         self.episode_cum_reward = 0.0
         self.episode_cum_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
         
-        # Clear field lists for new episode
+        # Reset field step counter for new episode
         if self.save_fields:
-            self.fields_vx_list.clear()
-            self.fields_vy_list.clear()
-            self.fields_p_list.clear()
-            self.field_timesteps.clear()
+            self.field_step_counter = 0
         
         return self._get_observation(), {}
 
@@ -215,7 +209,7 @@ class SwarmEnv(gym.Env):
         self.episode_cum_objectives['cohesion'] += float(self.last_objectives.get('cohesion', 0.0))
         self.episode_cum_objectives['smoothness'] += float(self.last_objectives.get('smoothness', 0.0))
 
-        # Save fields if requested
+        # Save fields immediately if requested
         if self.save_fields and self.v is not None and self.p is not None:
             # Extract velocity components and pressure as numpy arrays
             v_data = self.v.staggered_tensor()  # Returns tuple of (vx, vy)
@@ -223,10 +217,24 @@ class SwarmEnv(gym.Env):
             vy_np = v_data[1].numpy('x,y').astype(np.float16)
             p_np = self.p.values.numpy('x,y').astype(np.float16)
             
-            self.fields_vx_list.append(vx_np)
-            self.fields_vy_list.append(vy_np)
-            self.fields_p_list.append(p_np)
-            self.field_timesteps.append(self.episode_time)
+            # Create output directory
+            output_dir = f"../runs/{self.folder}/fields"
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Save each field snapshot immediately
+            field_filename = f"{output_dir}/step_{self.field_step_counter:06d}.npz"
+            np.savez_compressed(
+                field_filename,
+                vx=vx_np,
+                vy=vy_np,
+                p=p_np,
+                timestep=self.episode_time,
+                length_x=self.sim.length_x,
+                length_y=self.sim.length_y,
+                resolution=self.sim.resolution
+            )
+            
+            self.field_step_counter += 1
 
         # Compute termination signals
         terminated = self._compute_terminated()
@@ -374,33 +382,9 @@ class SwarmEnv(gym.Env):
 
 
     def save_fields_to_disk(self):
-        """Save accumulated fields to compressed npz file."""
-        if not self.save_fields or len(self.fields_vx_list) == 0:
-            return
-        
-        output_dir = f"../runs/{self.folder}/fields"
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Stack all fields into arrays
-        vx_array = np.stack(self.fields_vx_list, axis=0)  # Shape: (timesteps, x, y)
-        vy_array = np.stack(self.fields_vy_list, axis=0)
-        p_array = np.stack(self.fields_p_list, axis=0)
-        timesteps_array = np.array(self.field_timesteps, dtype=np.float32)
-        
-        # Save as compressed npz
-        output_path = f"{output_dir}/fields_{self.pid}.npz"
-        np.savez_compressed(
-            output_path,
-            vx=vx_array,
-            vy=vy_array,
-            p=p_array,
-            timesteps=timesteps_array,
-            length_x=self.sim.length_x,
-            length_y=self.sim.length_y,
-            resolution=self.sim.resolution
-        )
-        print(f"Saved {len(self.field_timesteps)} field snapshots to {output_path}")
-        print(f"File size: {os.path.getsize(output_path) / (1024**2):.2f} MB")
+        """Legacy method - fields are now saved immediately after each step."""
+        # Fields are saved incrementally in step(), so this method is a no-op
+        pass
 
     def render(self, mode='human'):
         pass
@@ -822,11 +806,13 @@ def run_MOMAPPO(env, total_timesteps: int,
     num_updates = max(1, int(math.ceil(effective_total_timesteps / float(n_steps))))
     step_count = 0
 
-    progress_iterator = range(num_updates)
+    # Create progress bar tracking timesteps instead of updates
     if tqdm is not None:
-        progress_iterator = tqdm(range(num_updates), desc="MOMAPPO", dynamic_ncols=True)
+        pbar = tqdm(total=effective_total_timesteps, desc="MOMAPPO", unit="step", dynamic_ncols=True)
+    else:
+        pbar = None
 
-    for update in progress_iterator:
+    for update in range(num_updates):
         buffer = RolloutBufferMO(n_steps, obs_dim, act_dim, dev, num_members=num_members)
         done = False
         obs = obs0
@@ -872,6 +858,11 @@ def run_MOMAPPO(env, total_timesteps: int,
             obs = next_obs
             last_done = float(done)
             step_count += 1
+            
+            # Update progress bar with timestep count (postfix updated after rollout)
+            if pbar is not None:
+                pbar.update(1)
+            
             if done:
                 if is_vec:
                     obs_vec = env.reset()
@@ -966,25 +957,19 @@ def run_MOMAPPO(env, total_timesteps: int,
             writer.add_scalar('loss/value', float(np.mean(epoch_value_losses)), step_count)
             writer.add_scalar('stats/entropy', float(np.mean(epoch_entropies)), step_count)
 
-        if tqdm is None:
-            print(f"MOMAPPO update {update+1}/{num_updates}, steps so far {step_count}, prog {rp_mean:.3f}, coh {rc_mean:.3f}, sm {rs_mean:.3f}")
-        else:
-            progress_iterator.set_postfix({
+        # Update progress bar with mean rewards from this rollout
+        if pbar is not None:
+            pbar.set_postfix({
                 'steps': step_count,
                 'prog': f"{rp_mean:.3f}",
                 'coh': f"{rc_mean:.3f}",
                 'sm': f"{rs_mean:.3f}"
             })
+        elif tqdm is None:
+            print(f"MOMAPPO update {update+1}/{num_updates}, steps so far {step_count}, prog {rp_mean:.3f}, coh {rc_mean:.3f}, sm {rs_mean:.3f}")
 
-    # Save fields if enabled
-    if is_vec:
-        for i in range(env.num_envs):
-            env_i = env.envs[i]
-            if hasattr(env_i, 'save_fields_to_disk'):
-                env_i.save_fields_to_disk()
-    else:
-        if hasattr(env, 'save_fields_to_disk'):
-            env.save_fields_to_disk()
+    # Fields are saved incrementally after each step, so no need to save here
+    # (SubprocVecEnv doesn't expose envs attribute, and fields are already saved)
 
     date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
     if is_vec:
@@ -1025,4 +1010,9 @@ def run_MOMAPPO(env, total_timesteps: int,
         'total_timesteps': total_timesteps,
     }, latest_ckpt)
     print(f"Saved MOMAPPO checkpoints to {ts_ckpt} and {latest_ckpt}")
+    
+    # Close progress bar if it exists
+    if pbar is not None:
+        pbar.close()
+    
     writer.close()

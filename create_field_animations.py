@@ -1,11 +1,13 @@
 """
 Helper script to create field animations after training.
-This script automatically finds the fields file and creates three animations 
+This script automatically finds the fields files and creates three animations 
 (vx, vy, p) with the proper simulation dimensions.
 """
 import argparse
 import os
 import glob
+import numpy as np
+import tempfile
 
 
 def main():
@@ -26,7 +28,7 @@ def main():
         print(f"Error: No {args.subfolder} folders found in {args.run_folder}")
         return
     
-    latest_folder = momappo_folders[-1]
+    latest_folder = momappo_folders[-2]
     print(f"Using folder: {latest_folder}")
     
     # Find locations.csv
@@ -35,26 +37,32 @@ def main():
         print(f"Error: locations.csv not found at {locations_csv}")
         return
     
-    # Find fields npz file
-    fields_pattern = f"{args.run_folder}/fields/fields_*.npz"
-    fields_files = glob.glob(fields_pattern)
-    if not fields_files:
-        print(f"Error: No fields file found matching {fields_pattern}")
+    # Find fields directory
+    fields_dir = f"{args.run_folder}/fields"
+    if not os.path.isdir(fields_dir):
+        print(f"Error: Fields directory not found: {fields_dir}")
         print("Make sure you ran training with save_fields=True")
         return
     
-    fields_file = fields_files[0]
-    print(f"Using fields file: {fields_file}")
+    # Check for step files
+    fields_pattern = os.path.join(fields_dir, "step_*.npz")
+    fields_files = sorted(glob.glob(fields_pattern))
+    if not fields_files:
+        print(f"Error: No step_*.npz files found in {fields_dir}")
+        print("Make sure you ran training with save_fields=True")
+        return
+    
+    print(f"Found {len(fields_files)} field step files in {fields_dir}")
     
     # Output path
     output_base = f"{latest_folder}/animation"
     
-    # Construct command
+    # Pass directory directly to animate_locations.py (it can handle it now)
     cmd = (
         f'python animate_locations.py '
         f'--csv "{locations_csv}" '
         f'--output "{output_base}.mp4" '
-        f'--fields "{fields_file}" '
+        f'--fields "{fields_dir}" '
         f'--length_x {args.length_x} '
         f'--length_y {args.length_y} '
         f'--radius {args.radius}'

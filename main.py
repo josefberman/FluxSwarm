@@ -22,7 +22,7 @@ def main(args):
     print('Max force:', 100)
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=400)
+    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=5)
     swarm = Swarm(num_x=4, num_y=3, left_location=49, bottom_location=1, member_interval_x=1, member_interval_y=1,
                     member_radius=0.25, member_density=5.150,
                     member_max_force=100)  # density in mg/mm^3, force in mg*mm/s^2

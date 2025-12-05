@@ -140,7 +140,7 @@ def load_fields_from_directory(fields_dir: str) -> dict:
     vx_array = np.stack(vx_list, axis=0)
     vy_array = np.stack(vy_list, axis=0)
     p_array = np.stack(p_list, axis=0)
-    timesteps_array = np.array(timesteps_list, dtype=np.float32)
+    timesteps_array = np.array(timesteps_list, dtype=np.float64)
     
     print(f"  Combined into arrays with shape: vx={vx_array.shape}, vy={vy_array.shape}, p={p_array.shape}")
     
@@ -303,6 +303,7 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
 
     # Each frame is 0.05 seconds → 20 fps
     fps_used = 20
+    fig.tight_layout()
     ani = animation.FuncAnimation(fig, update, frames=num_frames, interval=50, blit=True)
 
     # Ensure directory exists
@@ -344,9 +345,9 @@ def main() -> None:
                     raise
         
         print(f"  Loaded {len(fields_data['timestep'])} field snapshots")
-        print(f"  VX range: [{fields_data['vx'].min():.2f}, {fields_data['vx'].max():.2f}]")
-        print(f"  VY range: [{fields_data['vy'].min():.2f}, {fields_data['vy'].max():.2f}]")
-        print(f"  P range: [{fields_data['p'].min():.2f}, {fields_data['p'].max():.2f}]")
+        print(f"  VX range: [{fields_data['vx'].min():.2e}, {fields_data['vx'].max():.2e}]")
+        print(f"  VY range: [{fields_data['vy'].min():.2e}, {fields_data['vy'].max():.2e}]")
+        print(f"  P range: [{fields_data['p'].min():.2e}, {fields_data['p'].max():.2e}]")
         
         # If field_type is not specified but fields are provided, create all three animations
         if args.field_type is None:

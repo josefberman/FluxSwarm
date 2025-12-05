@@ -61,17 +61,28 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         v, p = fluid.make_incompressible(
             velocity=v,
             obstacles=swarm.as_obstacle_list(),
+            # solve=Solve(method='scipy-CG', x0=p, max_iterations=0, rel_tol=5e-3, abs_tol=1e-5)
             solve=Solve(method='scipy-CG', x0=p, max_iterations=0, rel_tol=5e-3, abs_tol=1e-5)
         )
     except Diverged:
+        print(f'Time step {t} diverged')
         return None, None, swarm
     if t >= RECORDING_TIME:
         # Vectorized sampling for all members to reduce Python overhead
         pressure_profiles_all = sample_field_around_obstacles(
             f=p, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
         )  # shape: (num_members, n)
+        velocity_u_profiles_all = sample_field_around_obstacles(
+            f=v.staggered_tensor()[0], swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
+        )  # shape: (num_members, n)
+        velocity_v_profiles_all = sample_field_around_obstacles(
+            f=v.staggered_tensor()[1], swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
+        )  # shape: (num_members, n)
         for i in range(len(swarm.members)):
             member = swarm.members[i]
+            velocity_u_profile = velocity_u_profiles_all[i]
+            velocity_v_profile = velocity_v_profiles_all[i]
+            advance_by_viscous_drag(member=member, sim=sim, fluid=fluid_obj, velocity_u_profile=velocity_u_profile, velocity_v_profile=velocity_v_profile)
             pressure_profile = pressure_profiles_all[i]
             advance_by_pressure_gradient(member=member, sim=sim, pressure_profile=pressure_profile)
             advance_by_forces(member=member, sim=sim, fluid=fluid_obj, internal_forces=force_actions,
@@ -119,8 +130,8 @@ def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation, n: i
     iy_off = np.clip(iy_off, 0, sim.resolution[1] - 1)
 
     # Fast gather using NumPy on the pressure values array
-    values = f.values.numpy('x,y')
-    field_samples = values[ix_off, iy_off].astype(np.float32)
+    values = _field_values_to_numpy(f)
+    field_samples = values[ix_off, iy_off].astype(np.float64)
     return field_samples
 
 
@@ -133,9 +144,9 @@ def sample_field_around_obstacles(f: Field, swarm: Swarm, sim: Simulation, n: in
     cos_a = np.cos(angles)
     sin_a = np.sin(angles)
 
-    member_x = np.array([m.location['x'] for m in swarm.members], dtype=np.float32)[:, None]
-    member_y = np.array([m.location['y'] for m in swarm.members], dtype=np.float32)[:, None]
-    member_r = np.array([m.radius for m in swarm.members], dtype=np.float32)[:, None]
+    member_x = np.array([m.location['x'] for m in swarm.members], dtype=np.float64)[:, None]
+    member_y = np.array([m.location['y'] for m in swarm.members], dtype=np.float64)[:, None]
+    member_r = np.array([m.radius for m in swarm.members], dtype=np.float64)[:, None]
 
     x_world = member_x + member_r * cos_a
     y_world = member_y + member_r * sin_a
@@ -146,9 +157,26 @@ def sample_field_around_obstacles(f: Field, swarm: Swarm, sim: Simulation, n: in
     ix_off = np.clip(ix_off, 0, sim.resolution[0] - 1)
     iy_off = np.clip(iy_off, 0, sim.resolution[1] - 1)
 
-    values = f.values.numpy('x,y')
-    samples = values[ix_off, iy_off].astype(np.float32)
+    values = _field_values_to_numpy(f)
+    samples = values[ix_off, iy_off].astype(np.float64)
     return samples
+
+
+def _field_values_to_numpy(f: Field):
+    """
+    Utility to convert PhiFlow fields (Staggered or Dense) to numpy arrays with spatial dims (x,y).
+    """
+    if hasattr(f, 'values'):
+        try:
+            return f.values.numpy('x,y')
+        except (AttributeError, TypeError):
+            # Fall back for dense tensors where .values is not supported
+            pass
+    # Dense tensor or generic phi.math Tensor
+    try:
+        return f.numpy('x,y')
+    except TypeError:
+        return f.numpy()
 
 
 def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profile: np.array):
@@ -170,15 +198,17 @@ def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profi
     :return: None
     """
     # Compute resultant forces from pressure samples for arbitrary number of angles
-    pressure_profile = np.asarray(pressure_profile, dtype=np.float32)
+    pressure_profile = np.asarray(pressure_profile, dtype=np.float64)
     num_angles = max(1, pressure_profile.shape[0])
     d_theta = 2 * np.pi / num_angles
-    angles = np.arange(0, 2 * np.pi, d_theta, dtype=np.float32)
+    angles = np.arange(0, 2 * np.pi, d_theta, dtype=np.float64)
     cos_angles = np.cos(angles)
     sin_angles = np.sin(angles)
 
-    lin_force_x = -np.sum(pressure_profile * cos_angles) * d_theta * member.radius
-    lin_force_y = -np.sum(pressure_profile * sin_angles) * d_theta * member.radius
+    # lin_force_x = -np.sum(pressure_profile * cos_angles) * d_theta * member.radius
+    # lin_force_y = -np.sum(pressure_profile * sin_angles) * d_theta * member.radius
+    lin_force_x = -np.sum(pressure_profile * cos_angles) * member.radius**2
+    lin_force_y = -np.sum(pressure_profile * sin_angles) * member.radius**2
     # Add force due to gradient in x
     x_pred_minus = member.location['x'] + member.velocity[
         'x'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt - member.radius
@@ -219,6 +249,27 @@ def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profi
         member.location['y'] = y_upper
         member.velocity['y'] = 0
 
+def advance_by_viscous_drag(member: Member, sim: Simulation, fluid: Fluid, velocity_u_profile: np.array, velocity_v_profile: np.array):
+    """
+    Advances the motion of a member within the simulation domain based on the viscous drag forces applied.
+    :param member: The member object within the simulation whose motion is being updated.
+    :param sim: The simulation context, containing environmental properties and grid
+        characteristics such as domain size and timestep.
+    :param fluid: The fluid object providing the viscosity for Stokes drag calculations.
+    :param velocity_u_profile: A numpy array representing the velocity profile in the x direction around the member.
+    :param velocity_v_profile: A numpy array representing the velocity profile in the y direction around the member.
+    :return: None
+    """
+    mean_velocity_u = np.mean(velocity_u_profile)
+    mean_velocity_v = np.mean(velocity_v_profile)
+    total_force_u = -6 * np.pi * fluid.viscosity * member.radius * (member.velocity['x']-mean_velocity_u)
+    total_force_v = -6 * np.pi * fluid.viscosity * member.radius * (member.velocity['y']-mean_velocity_v)
+    prev_velocity_x = member.velocity['x']
+    prev_velocity_y = member.velocity['y']
+    member.velocity['x'] += float(total_force_u / member.mass * sim.dt)
+    member.velocity['y'] += float(total_force_v / member.mass * sim.dt)
+    member.location['x'] += float((member.velocity['x'] + prev_velocity_x) / 2 * sim.dt)
+    member.location['y'] += float((member.velocity['y'] + prev_velocity_y) / 2 * sim.dt)
 
 def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
                       internal_forces: np.array, swarm_members: list[Member]):
@@ -248,8 +299,6 @@ def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
             n = r_ij / dist
             if 0 < dist < (2 * other_member.radius + 2 * np.max([sim.dx, sim.dy])):
                 total_force += np.dot(internal_forces[i] * other_member.max_force, n)
-    # Add Stokes drag
-    # total_force -= 6 * np.pi * fluid.viscosity * member.radius * np.array([member.velocity['x'], member.velocity['y']])
     x_pred_minus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[
         0] / member.mass * sim.dt * sim.dt - member.radius
     x_pred_plus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[

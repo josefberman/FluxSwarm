@@ -21,6 +21,7 @@ from torch.utils.tensorboard import SummaryWriter
 import subprocess
 import math
 import csv
+import pandas as pd
 try:
     from tqdm import tqdm
 except Exception:
@@ -75,7 +76,7 @@ class SwarmEnv(gym.Env):
     """
     metadata = {"render.modes": ["human"]}
 
-    def __init__(self, sim: Simulation, swarm: Swarm, fluid: Fluid, inflow: Inflow, folder: str, save_fields: bool = False):
+    def __init__(self, sim: Simulation, swarm: Swarm, fluid: Fluid, inflow: Inflow, folder: str, save_fields: bool = False, episode_duration: float = 10.0):
         super(SwarmEnv, self).__init__()
         self.pid = os.getpid()
         self.sim = sim
@@ -99,6 +100,7 @@ class SwarmEnv(gym.Env):
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=sim.resolution[0], y=sim.resolution[1])
         self.p = None
+        self.episode_duration = 10.0
 
         # Per-episode tracking
         self.episode_index = 0
@@ -112,11 +114,11 @@ class SwarmEnv(gym.Env):
 
         # Define observation space: num_of_members * (position x2, velocity x2, pressure x4)
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(len(swarm.members), 8), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(len(swarm.members), 8), dtype=np.float64
         )
         # Define action space (force control x2 for each agent)
         self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(len(swarm.members), 2), dtype=np.float32
+            low=-1.0, high=1.0, shape=(len(swarm.members), 2), dtype=np.float64
         )
         os.makedirs(f'../runs/{self.folder}/PPO/velocity_{self.pid}', exist_ok=True)
         os.makedirs(f'../runs/{self.folder}/PPO/pressure_{self.pid}', exist_ok=True)
@@ -146,7 +148,7 @@ class SwarmEnv(gym.Env):
                            bottom_location=prev_swarm.bottom_location, member_interval_x=prev_swarm.member_interval_x,
                            member_interval_y=prev_swarm.member_interval_y, member_radius=prev_swarm.member_radius,
                            member_density=prev_members[0].density,
-                           member_max_force=prev_swarm.member_max_force)  # density in mg/mm^3, force in mg*mm/s^2
+                           member_max_force=prev_swarm.member_max_force)  # density in kg/m^3, force in kg*m/s^2
         box = Box['x,y', 0:self.sim.length_x, 0:self.sim.length_y]
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=self.sim.resolution[0], y=self.sim.resolution[1])
@@ -159,10 +161,6 @@ class SwarmEnv(gym.Env):
         # Reset per-episode accumulators
         self.episode_cum_reward = 0.0
         self.episode_cum_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
-        
-        # Reset field step counter for new episode
-        if self.save_fields:
-            self.field_step_counter = 0
         
         return self._get_observation(), {}
 
@@ -213,16 +211,17 @@ class SwarmEnv(gym.Env):
         if self.save_fields and self.v is not None and self.p is not None:
             # Extract velocity components and pressure as numpy arrays
             v_data = self.v.staggered_tensor()  # Returns tuple of (vx, vy)
-            vx_np = v_data[0].numpy('x,y').astype(np.float16)  # Use float16 for compression
-            vy_np = v_data[1].numpy('x,y').astype(np.float16)
-            p_np = self.p.values.numpy('x,y').astype(np.float16)
+            vx_np = v_data[0].numpy('x,y').astype(np.float64)
+            vy_np = v_data[1].numpy('x,y').astype(np.float64)
+            p_np = self.p.values.numpy('x,y').astype(np.float64)
             
             # Create output directory
             output_dir = f"../runs/{self.folder}/fields"
             os.makedirs(output_dir, exist_ok=True)
             
             # Save each field snapshot immediately
-            field_filename = f"{output_dir}/step_{self.field_step_counter:06d}.npz"
+            step_id = f"{self.field_step_counter:06d}"
+            field_filename = f"{output_dir}/step_{step_id}.npz"
             np.savez_compressed(
                 field_filename,
                 vx=vx_np,
@@ -233,6 +232,13 @@ class SwarmEnv(gym.Env):
                 length_y=self.sim.length_y,
                 resolution=self.sim.resolution
             )
+
+            # # Also export to Excel with separate sheets for each field component
+            # excel_path = f"{output_dir}/step_{step_id}.xlsx"
+            # with pd.ExcelWriter(excel_path) as writer:
+            #     pd.DataFrame(vx_np).to_excel(writer, sheet_name="v_u", index=False, header=False)
+            #     pd.DataFrame(vy_np).to_excel(writer, sheet_name="v_v", index=False, header=False)
+            #     pd.DataFrame(p_np).to_excel(writer, sheet_name="p", index=False, header=False)
             
             self.field_step_counter += 1
 
@@ -267,7 +273,7 @@ class SwarmEnv(gym.Env):
         the pressure profile values default to an array of zeros.
 
         :returns: A NumPy array of shape (number_of_members, observation_features)
-                  with `float32` as data type, where each row represents the
+                  with `float64` as data type, where each row represents the
                   observation of a single member in the swarm.
         :rtype: numpy.ndarray
         """
@@ -282,7 +288,7 @@ class SwarmEnv(gym.Env):
                 member.velocity['x'], member.velocity['y'],
                 *pressure_profile
             ])
-        return np.array(obs, dtype=np.float32)
+        return np.array(obs, dtype=np.float64)
 
     def _compute_truncated(self) -> bool:
         # Truncate if simulation diverged / fields invalid
@@ -290,7 +296,7 @@ class SwarmEnv(gym.Env):
 
     def _compute_terminated(self) -> bool:
         # Terminate after 10 seconds
-        return self.episode_time > 10.0
+        return self.episode_time > self.episode_duration
 
     def _finalize_episode(self, terminated: bool, truncated: bool) -> None:
         """Append a row to episodes CSV with cumulative per-objective rewards and status."""
@@ -503,31 +509,31 @@ class ActorCriticMO(nn.Module):
 class RolloutBufferMO:
     def __init__(self, buffer_size: int, obs_dim: int, act_dim: int, device: torch.device, num_members: int | None = None):
         self.buffer_size = buffer_size
-        self.obs = torch.zeros((buffer_size, obs_dim), dtype=torch.float32)
-        self.actions = torch.zeros((buffer_size, act_dim), dtype=torch.float32)
-        self.logprobs = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.dones = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.obs = torch.zeros((buffer_size, obs_dim), dtype=torch.float64)
+        self.actions = torch.zeros((buffer_size, act_dim), dtype=torch.float64)
+        self.logprobs = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.dones = torch.zeros((buffer_size,), dtype=torch.float64)
         # Per-objective rewards and values
-        self.rew_prog = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.rew_coh = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.rew_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.val_prog = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.val_coh = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.val_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.rew_prog = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.rew_coh = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.rew_smooth = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.val_prog = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.val_coh = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.val_smooth = torch.zeros((buffer_size,), dtype=torch.float64)
         # Per-member progress
         self.num_members = int(num_members) if num_members is not None else 0
         if self.num_members > 0:
-            self.rew_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
-            self.val_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
-            self.adv_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
-            self.ret_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
+            self.rew_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float64)
+            self.val_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float64)
+            self.adv_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float64)
+            self.ret_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float64)
         # Advantages and returns per objective
-        self.adv_prog = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.adv_coh = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.adv_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.ret_prog = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.ret_coh = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.ret_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.adv_prog = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.adv_coh = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.adv_smooth = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.ret_prog = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.ret_coh = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.ret_smooth = torch.zeros((buffer_size,), dtype=torch.float64)
         self.ptr = 0
         self.device = device
 
@@ -544,8 +550,8 @@ class RolloutBufferMO:
         self.val_coh[i] = val_coh
         self.val_smooth[i] = val_smooth
         if self.num_members > 0 and member_prog is not None and val_member_prog is not None:
-            mp = torch.as_tensor(member_prog, dtype=torch.float32)
-            vm = torch.as_tensor(val_member_prog, dtype=torch.float32)
+            mp = torch.as_tensor(member_prog, dtype=torch.float64)
+            vm = torch.as_tensor(val_member_prog, dtype=torch.float64)
             if mp.numel() == self.num_members:
                 self.rew_member_prog[i] = mp
             if vm.numel() == self.num_members:
@@ -558,7 +564,7 @@ class RolloutBufferMO:
         last_v_prog, last_v_coh, last_v_smooth = last_values[:3]
         last_v_members = last_values[3] if len(last_values) > 3 else None
         adv_p, adv_c, adv_s = 0.0, 0.0, 0.0
-        adv_members = torch.zeros(self.num_members, dtype=torch.float32)
+        adv_members = torch.zeros(self.num_members, dtype=torch.float64)
         for t in reversed(range(self.ptr)):
             next_nonterminal = 1.0 - (self.dones[t+1] if t < self.ptr - 1 else last_done)
             next_v_prog = self.val_prog[t+1] if t < self.ptr - 1 else last_v_prog
@@ -761,7 +767,7 @@ def run_MOMAPPO(env, total_timesteps: int,
         obs0 = obs0_vec[0]
     else:
         obs0, _ = env.reset()
-    obs_flat = obs0.reshape(-1).astype(np.float32)
+    obs_flat = obs0.reshape(-1).astype(np.float64)
 
     # Resolve folder and create TensorBoard writer
     if is_vec:
@@ -784,7 +790,7 @@ def run_MOMAPPO(env, total_timesteps: int,
     act_dim = int(env.action_space.shape[0] * env.action_space.shape[1])
 
     num_members = int(env.action_space.shape[0])
-    model = ActorCriticMO(obs_dim, act_dim, num_members=num_members).to(dev)
+    model = ActorCriticMO(obs_dim, act_dim, num_members=num_members).to(dev).double()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     # Checkpointing (resume if requested)
@@ -806,9 +812,9 @@ def run_MOMAPPO(env, total_timesteps: int,
     num_updates = max(1, int(math.ceil(effective_total_timesteps / float(n_steps))))
     step_count = 0
 
-    # Create progress bar tracking timesteps instead of updates
+    # Create progress bar tracking timesteps
     if tqdm is not None:
-        pbar = tqdm(total=effective_total_timesteps, desc="MOMAPPO", unit="step", dynamic_ncols=True)
+        pbar = tqdm(total=num_updates*n_steps, desc="MOMAPPO", unit="step", dynamic_ncols=True)
     else:
         pbar = None
 
@@ -819,7 +825,7 @@ def run_MOMAPPO(env, total_timesteps: int,
         last_done = 0.0
 
         for t in range(n_steps):
-            obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float32, device=dev)
+            obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float64, device=dev)
             with torch.no_grad():
                 mu, std = model(obs_t.unsqueeze(0))
                 dist = Normal(mu, std)
@@ -850,7 +856,7 @@ def run_MOMAPPO(env, total_timesteps: int,
             rew_smooth = float(obj.get('smoothness', 0.0))
             member_prog = info.get('member_progress', None)
 
-            buffer.add(obs_t.cpu(), torch.tensor(action.cpu(), dtype=torch.float32), float(logprob.cpu()),
+            buffer.add(obs_t.cpu(), torch.tensor(action.cpu(), dtype=torch.float64), float(logprob.cpu()),
                        done, rew_prog, rew_coh, rew_smooth,
                        float(val_prog), float(val_coh), float(val_smooth),
                        member_prog, (val_member_prog.numpy() if val_member_prog is not None else None))
@@ -872,7 +878,7 @@ def run_MOMAPPO(env, total_timesteps: int,
                     obs, _ = env.reset()
 
         # Bootstrap last values
-        last_obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float32, device=dev)
+        last_obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float64, device=dev)
         with torch.no_grad():
             last_vals = model.values(last_obs_t.unsqueeze(0))
             lvp = last_vals[0][0].cpu()

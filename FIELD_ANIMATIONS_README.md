@@ -9,7 +9,7 @@ When running MOMAPPO training with `save_fields=True`, the simulation saves:
 - **Y-velocity (vy)** field at each timestep  
 - **Pressure (p)** field at each timestep
 
-These fields are stored in compressed `.npz` format (using float16 for ~50% size reduction).
+These fields are stored in compressed `.npz` format (using float64 for full precision).
 
 ## How It Works
 
@@ -28,16 +28,16 @@ During training, fields are saved to: `../runs/{folder_name}/fields/fields_{pid}
 ### 2. Field Storage Format
 
 The `.npz` file contains:
-- `vx`: X-velocity field array (timesteps, x_resolution, y_resolution) - float16
-- `vy`: Y-velocity field array (timesteps, x_resolution, y_resolution) - float16
-- `p`: Pressure field array (timesteps, x_resolution, y_resolution) - float16
+- `vx`: X-velocity field array (timesteps, x_resolution, y_resolution) - float64
+- `vy`: Y-velocity field array (timesteps, x_resolution, y_resolution) - float64
+- `p`: Pressure field array (timesteps, x_resolution, y_resolution) - float64
 - `timesteps`: Array of simulation times [seconds]
 - `length_x`, `length_y`: Simulation domain dimensions
 - `resolution`: Grid resolution tuple
 
 **Example file size for 200 timesteps (1000x40 grid):**
-- Without compression: ~194 MB
-- With float16 + compression: ~50 MB
+- Without compression (float64): ~388 MB
+- With float64 + compression: depends on data variance (typically 1/2 to 1/4 of raw size)
 
 ### 3. Creating Animations
 
@@ -164,8 +164,8 @@ python animate_locations.py \
 ## Memory Considerations
 
 For 40,000 timesteps with 1000×40 resolution:
-- Raw float32: ~38 GB
-- Compressed float16: ~10 GB
+- Raw float64: ~76 GB
+- Compressed float64: larger footprint but preserves precision (~20 GB for 2000 steps @ 1000x40 as reference)
 
 **Recommendation**: For very long simulations, consider:
 1. Reducing save frequency (save every Nth step)

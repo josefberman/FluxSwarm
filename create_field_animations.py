@@ -16,8 +16,8 @@ def main():
     )
     parser.add_argument("--run_folder", required=True, help="Path to run folder (e.g., ../runs/2025-1-1_12-30-45)")
     parser.add_argument("--subfolder", default="MOMAPPO", help="Subfolder within run (default: MOMAPPO)")
-    parser.add_argument("--length_x", type=float, default=100.0, help="Simulation domain length in x (default: 100.0)")
-    parser.add_argument("--length_y", type=float, default=4.0, help="Simulation domain length in y (default: 4.0)")
+    parser.add_argument("--length_x", type=float, default=100, help="Simulation domain length in x (default: 100)")
+    parser.add_argument("--length_y", type=float, default=4, help="Simulation domain length in y (default: 4)")
     parser.add_argument("--radius", type=float, default=0.25, help="Circle radius (default: 0.25)")
     
     args = parser.parse_args()

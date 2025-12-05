@@ -89,13 +89,13 @@ class SwarmEnv(gym.Env):
             low=-np.inf,
             high=np.inf,
             shape=(len(swarm.members), 8),
-            dtype=np.float32
+            dtype=np.float64
         )
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
             shape=(len(swarm.members), 2),
-            dtype=np.float32
+            dtype=np.float64
         )
         
 
@@ -212,9 +212,9 @@ class SwarmEnv(gym.Env):
         # Save fields if requested
         if self.save_fields and self.v is not None and self.p is not None:
             v_data = self.v.staggered_tensor()
-            vx_np = v_data[0].numpy('x,y').astype(np.float16)
-            vy_np = v_data[1].numpy('x,y').astype(np.float16)
-            p_np = self.p.values.numpy('x,y').astype(np.float16)
+            vx_np = v_data[0].numpy('x,y').astype(np.float64)
+            vy_np = v_data[1].numpy('x,y').astype(np.float64)
+            p_np = self.p.values.numpy('x,y').astype(np.float64)
             
             self.fields_vx_list.append(vx_np)
             self.fields_vy_list.append(vy_np)
@@ -247,7 +247,7 @@ class SwarmEnv(gym.Env):
                     self.p, member, n_samples=4, offset=2
                 )
             else:
-                pressure_profile = np.zeros(4, dtype=np.float32)
+                pressure_profile = np.zeros(4, dtype=np.float64)
             
             obs.append([
                 member.location['x'],
@@ -256,7 +256,7 @@ class SwarmEnv(gym.Env):
                 member.velocity['y'],
                 *pressure_profile
             ])
-        return np.array(obs, dtype=np.float32)
+        return np.array(obs, dtype=np.float64)
     
     def _compute_terminated(self) -> bool:
         """Check if episode should terminate."""
@@ -374,7 +374,7 @@ class SwarmEnv(gym.Env):
         vx_array = np.stack(self.fields_vx_list, axis=0)
         vy_array = np.stack(self.fields_vy_list, axis=0)
         p_array = np.stack(self.fields_p_list, axis=0)
-        timesteps_array = np.array(self.field_timesteps, dtype=np.float32)
+        timesteps_array = np.array(self.field_timesteps, dtype=np.float64)
         
         # Save with episode index to avoid overwriting
         output_path = f"{output_dir}/fields_episode_{self.episode_index}.npz"

@@ -39,7 +39,7 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     :param force_actions: External force actions applied to the swarm.
     :return: Updated velocity and pressure fields, and the swarm state.
     """
-    force_actions = np.column_stack((np.full(len(swarm.members), -1.0), np.zeros(len(swarm.members), dtype=float)))
+    # force_actions = np.column_stack((np.full(len(swarm.members), -1.0), np.zeros(len(swarm.members), dtype=float)))
     trap_wave = beat_waveform(t=t, v_peak=inflow.amplitude, v_dia=0, tau=inflow.frequency, upstroke=inflow.upstroke, plateau=inflow.plateau, downstroke=inflow.downstroke)
     R = int(sim.resolution[1] / 2)
     delta = int(R / 2)

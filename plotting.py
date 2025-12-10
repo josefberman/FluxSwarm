@@ -387,7 +387,7 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, inflow: Inflow, folde
         fig.suptitle(f'Simulation time: {frame * sim.dt * 5:.2f} seconds.\nInflow: {inflow_mag:.2f} mm/s')
         return [v_x_h[0], v_y_h[0], p_h[0], v_x_h[1], v_y_h[1], p_h[1], *v_x_h[2], *v_y_h[2], *p_h[2]]
 
-    mpl.rcParams['animation.ffmpeg_path'] = r"C:\Users\assaf\ffmpeg\ffmpeg-7.1-essentials_build\bin\ffmpeg.exe"
+    mpl.rcParams['animation.ffmpeg_path'] = r"C:\Users\Josef\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0-full_build\bin\ffmpeg.exe"
     ffmpeg_writer = animation.FFMpegWriter(fps=10, codec='h264', bitrate=-1)
     ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), blit=True, repeat=False)
     ani.save(f'../runs/{folder_name}/animation_fast.mp4', ffmpeg_writer, dpi=200)

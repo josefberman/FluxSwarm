@@ -948,7 +948,7 @@ def run_MOMAPPO(env, total_timesteps: int,
 
                 # Combine actor gradients via PCGrad, then add critic and entropy
                 optimizer.zero_grad(set_to_none=True)
-                pcgrad_merge(model, [loss_pi_prog, loss_pi_coh, loss_pi_smooth])
+                # pcgrad_merge(model, [loss_pi_prog, loss_pi_coh, loss_pi_smooth])
                 # Add critic and entropy losses on top of actor grads
                 total_aux = vf_coef * loss_v - ent_coef * entropy
                 total_aux.backward()

@@ -44,7 +44,13 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     trap_wave = beat_waveform(t=t, v_peak=inflow.amplitude, v_dia=0, tau=inflow.frequency, upstroke=inflow.upstroke, plateau=inflow.plateau, downstroke=inflow.downstroke)
     # trap_wave = inflow.amplitude / 2
     v_tensor_u = v.staggered_tensor()[0].numpy('x,y')
-    v_tensor_u[:33, :] = trap_wave
+    R = int(sim.resolution[1]/2) #R=20
+    delta = int(R/2) #delta=10
+    v_tensor_u[:, delta:(2*R-delta+1)] = trap_wave
+    for r in range(delta):
+        v_tensor_u[:, r] = trap_wave*(1-(delta-r)**2/delta**2)
+    for r in range(2*R-delta+1, 2*R):
+        v_tensor_u[:, r] = trap_wave*(1-(r-(2*R-delta))**2/delta**2)
     v_tensor_u = tensor(v_tensor_u[:, :-1], spatial('x,y'))
     v_tensor_v = v.staggered_tensor()[1].numpy('x,y')
     v_tensor_v = tensor(v_tensor_v[1:, 1:-1], spatial('x,y'))

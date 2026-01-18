@@ -100,7 +100,7 @@ class SwarmEnv(gym.Env):
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=sim.resolution[0], y=sim.resolution[1])
         self.p = None
-        self.episode_duration = 10.0
+        self.episode_duration = 50.0
 
         # Per-episode tracking
         self.episode_index = 0

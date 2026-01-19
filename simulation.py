@@ -2,9 +2,17 @@ import numpy as np
 from scipy.spatial.distance import euclidean
 
 from data_structures import Simulation, Swarm, Inflow, Fluid, Member
-from phi.flow import *
+
+# GPU ACCELERATION: Use PyTorch backend for PhiFlow when CUDA is available
+import torch
+if torch.cuda.is_available():
+    from phi.torch.flow import *
+    print(f"[PhiFlow] GPU enabled: {torch.cuda.get_device_name(0)}")
+else:
+    from phi.flow import *
+    print("[PhiFlow] Running on CPU (CUDA not available)")
+
 from datetime import datetime
-# from plotting import plot_save_current_step
 import phi.field as field
 import phi.math
 from auxiliary import trapezoidal_waveform, beat_waveform

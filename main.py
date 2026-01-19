@@ -1,5 +1,11 @@
 import datetime
 import os
+
+# PARALLELIZATION: Enable NumPy/OpenBLAS/MKL multi-threading for better CPU utilization
+os.environ["OMP_NUM_THREADS"] = str(os.cpu_count() or 4)
+os.environ["MKL_NUM_THREADS"] = str(os.cpu_count() or 4)
+os.environ["OPENBLAS_NUM_THREADS"] = str(os.cpu_count() or 4)
+
 import argparse
 
 from phi.torch.flow import *
@@ -22,7 +28,7 @@ def main(args):
     print('Max force:', 310)
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=1000)
+    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=1)
     swarm = Swarm(num_x=4, num_y=3, left_location=49, bottom_location=1, member_interval_x=1, member_interval_y=1,
                     member_radius=0.25, member_density=5.150,
                     member_max_force=310)  # density in mg/mm^3, force in mg*mm/s^2
@@ -49,11 +55,28 @@ def main(args):
 
     # ----------- Reinforcement Learning - PPO ------------------
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-    def make_env():
-        return SwarmEnv(sim=sim, swarm=swarm, fluid=fluid, inflow=inflow, folder=folder_name, save_fields=args.save_fields)
-
-    num_envs = 1
-    env = SubprocVecEnv([make_env for _ in range(num_envs)])
+    
+    # PARALLELIZATION: Run 4 environments in parallel for better CPU/GPU utilization
+    num_envs = 4
+    
+    # Create timestamp for this training run
+    run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    def make_env(env_id: int):
+        """Factory function that creates an environment with unique timestamped ID."""
+        def _init():
+            # Each env gets a unique ID with timestamp for distinct folder names
+            env_folder = f"{folder_name}/env_{env_id}_{run_timestamp}"
+            return SwarmEnv(
+                sim=sim, swarm=swarm, fluid=fluid, inflow=inflow,
+                folder=env_folder, save_fields=args.save_fields
+            )
+        return _init
+    
+    # Create SubprocVecEnv with 4 parallel environments
+    env = SubprocVecEnv([make_env(i) for i in range(num_envs)])
+    print(f"[Parallelization] Running {num_envs} environments in parallel (timestamp: {run_timestamp})")
+    
     # run_PPO(env, sim.time_steps)
     run_MOMAPPO(env, sim.time_steps, n_steps=32, batch_size=8, update_epochs=10)
 

@@ -757,24 +757,32 @@ def run_MOMAPPO(env, total_timesteps: int,
                 resume: bool = True):
     """
     Multi-objective MAPPO training with PCGrad on the actor across three objectives
-    (progress, cohesion, smoothness). No scalarization.
+    (progress, cohesion, smoothness). Supports multiple parallel environments.
     """
     dev = torch.device(device)
-    # Support both single env and VecEnv (assumed num_envs=1 when vectorized)
     is_vec = isinstance(env, VecEnv)
+    
+    # Get number of parallel environments
+    num_envs = env.num_envs if is_vec else 1
+    print(f"[MOMAPPO] Training with {num_envs} parallel environment(s)")
+    
+    # Reset all environments
     if is_vec:
-        obs0_vec = env.reset()
-        obs0 = obs0_vec[0]
+        obs_all = env.reset()  # shape: (num_envs, num_members, obs_per_member)
     else:
-        obs0, _ = env.reset()
-    obs_flat = obs0.reshape(-1).astype(np.float64)
+        obs_all, _ = env.reset()
+        obs_all = np.expand_dims(obs_all, 0)
+    obs_flat = obs_all[0].reshape(-1).astype(np.float64)
 
-    # Resolve folder and create TensorBoard writer
+    # Resolve folder - use parent folder for shared resources
     if is_vec:
-        folder = env.get_attr('folder')[0]
+        env_folder = env.get_attr('folder')[0]
+        folder_parts = env_folder.split('/')
+        folder = '/'.join(folder_parts[:-1]) if len(folder_parts) > 1 else env_folder
     else:
         folder = env.folder
     tb_log_dir = f"../runs/{folder}/MOMAPPO_tb"
+    os.makedirs(os.path.dirname(tb_log_dir), exist_ok=True)
     writer = SummaryWriter(log_dir=tb_log_dir)
 
     # Try to open TensorBoard server
@@ -807,78 +815,98 @@ def run_MOMAPPO(env, total_timesteps: int,
         except Exception as e:
             print(f"Warning: failed to load checkpoint {latest_ckpt}: {e}")
 
-    # Account for VecEnv parallelism and use ceiling to avoid dropping partial rollout
-    effective_total_timesteps = int(total_timesteps) * (env.num_envs if is_vec else 1)
+    # Adjust total timesteps for parallel envs
+    effective_total_timesteps = int(total_timesteps)
     num_updates = max(1, int(math.ceil(effective_total_timesteps / float(n_steps))))
     step_count = 0
 
     # Create progress bar tracking timesteps
     if tqdm is not None:
-        pbar = tqdm(total=num_updates*n_steps, desc="MOMAPPO", unit="step", dynamic_ncols=True)
+        pbar = tqdm(total=num_updates * n_steps * num_envs, desc="MOMAPPO", unit="step", dynamic_ncols=True)
     else:
         pbar = None
+    
+    # Track last done state for all environments
+    last_dones = np.zeros(num_envs, dtype=np.float32)
 
     for update in range(num_updates):
-        buffer = RolloutBufferMO(n_steps, obs_dim, act_dim, dev, num_members=num_members)
-        done = False
-        obs = obs0
-        last_done = 0.0
+        # Create buffer sized for all environments
+        buffer = RolloutBufferMO(n_steps * num_envs, obs_dim, act_dim, dev, num_members=num_members)
 
         for t in range(n_steps):
-            obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float64, device=dev)
-            with torch.no_grad():
-                mu, std = model(obs_t.unsqueeze(0))
-                dist = Normal(mu, std)
-                action = dist.sample()[0]
-                logprob = dist.log_prob(action).sum()
-                value_tuple = model.values(obs_t.unsqueeze(0))
-                val_prog, val_coh, val_smooth, val_member_prog = value_tuple
-                val_prog = val_prog[0].cpu()
-                val_coh = val_coh[0].cpu()
-                val_smooth = val_smooth[0].cpu()
-                val_member_prog = (val_member_prog[0].cpu() if val_member_prog is not None else None)
-            # Env expects shape (num_members,2) in [-1,1]
-            act_np = action.cpu().numpy()
-            act_np = np.clip(act_np, -1.0, 1.0)
-            act_np = act_np.reshape(env.action_space.shape)
-
+            # Sample actions for ALL environments in parallel
+            actions_all = []
+            logprobs_all = []
+            vals_prog_all = []
+            vals_coh_all = []
+            vals_smooth_all = []
+            vals_member_all = []
+            obs_tensors = []
+            
+            for env_idx in range(num_envs):
+                obs = obs_all[env_idx]
+                obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float64, device=dev)
+                obs_tensors.append(obs_t)
+                
+                with torch.no_grad():
+                    mu, std = model(obs_t.unsqueeze(0))
+                    dist = Normal(mu, std)
+                    action = dist.sample()[0]
+                    logprob = dist.log_prob(action).sum()
+                    value_tuple = model.values(obs_t.unsqueeze(0))
+                    val_prog, val_coh, val_smooth, val_member_prog = value_tuple
+                
+                actions_all.append(action.cpu().numpy())
+                logprobs_all.append(float(logprob.cpu()))
+                vals_prog_all.append(float(val_prog[0].cpu()))
+                vals_coh_all.append(float(val_coh[0].cpu()))
+                vals_smooth_all.append(float(val_smooth[0].cpu()))
+                vals_member_all.append(val_member_prog[0].cpu().numpy() if val_member_prog is not None else None)
+            
+            # Format actions for VecEnv (shape: (num_envs, num_members, 2))
+            actions_np = np.array(actions_all)  # (num_envs, act_dim)
+            actions_np = np.clip(actions_np, -1.0, 1.0)
+            actions_np = actions_np.reshape(num_envs, *env.action_space.shape)
+            
+            # Step all environments
             if is_vec:
-                next_obs_vec, rewards_batch, dones_batch, infos_batch = env.step(np.expand_dims(act_np, 0))
-                next_obs = next_obs_vec[0]
-                done = bool(dones_batch[0])
-                info = infos_batch[0]
+                next_obs_all, rewards_batch, dones_batch, infos_batch = env.step(actions_np)
             else:
-                next_obs, _, done, _, info = env.step(act_np)
-            # Use unweighted objectives from info
-            obj = info.get('objectives', {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0})
-            rew_prog = float(obj.get('progress', 0.0))
-            rew_coh = float(obj.get('cohesion', 0.0))
-            rew_smooth = float(obj.get('smoothness', 0.0))
-            member_prog = info.get('member_progress', None)
-
-            buffer.add(obs_t.cpu(), torch.tensor(action.cpu(), dtype=torch.float64), float(logprob.cpu()),
-                       done, rew_prog, rew_coh, rew_smooth,
-                       float(val_prog), float(val_coh), float(val_smooth),
-                       member_prog, (val_member_prog.numpy() if val_member_prog is not None else None))
-
-            obs = next_obs
-            last_done = float(done)
-            step_count += 1
+                next_obs, _, done, _, info = env.step(actions_np[0])
+                next_obs_all = np.expand_dims(next_obs, 0)
+                dones_batch = np.array([done])
+                infos_batch = [info]
             
-            # Update progress bar with timestep count (postfix updated after rollout)
+            # Add experiences from ALL environments to buffer
+            for env_idx in range(num_envs):
+                obs_t = obs_tensors[env_idx]
+                action_t = torch.tensor(actions_all[env_idx], dtype=torch.float64)
+                
+                info = infos_batch[env_idx]
+                obj = info.get('objectives', {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0})
+                rew_prog = float(obj.get('progress', 0.0))
+                rew_coh = float(obj.get('cohesion', 0.0))
+                rew_smooth = float(obj.get('smoothness', 0.0))
+                member_prog = info.get('member_progress', None)
+                
+                buffer.add(
+                    obs_t.cpu(), action_t, logprobs_all[env_idx],
+                    bool(dones_batch[env_idx]),
+                    rew_prog, rew_coh, rew_smooth,
+                    vals_prog_all[env_idx], vals_coh_all[env_idx], vals_smooth_all[env_idx],
+                    member_prog, vals_member_all[env_idx]
+                )
+                step_count += 1
+            
+            # Update observations for next iteration
+            obs_all = next_obs_all
+            last_dones = dones_batch.astype(np.float32)
+            
             if pbar is not None:
-                pbar.update(1)
-            
-            if done:
-                if is_vec:
-                    obs_vec = env.reset()
-                    obs = obs_vec[0]
-                    last_done = 0.0
-                else:
-                    obs, _ = env.reset()
+                pbar.update(num_envs)
 
-        # Bootstrap last values
-        last_obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float64, device=dev)
+        # Bootstrap last values (use first env's observation as representative)
+        last_obs_t = torch.tensor(obs_all[0].reshape(-1), dtype=torch.float64, device=dev)
         with torch.no_grad():
             last_vals = model.values(last_obs_t.unsqueeze(0))
             lvp = last_vals[0][0].cpu()
@@ -886,7 +914,7 @@ def run_MOMAPPO(env, total_timesteps: int,
             lvs = last_vals[2][0].cpu()
             lvm = (last_vals[3][0].cpu() if last_vals[3] is not None else None)
             last_vals = (lvp, lvc, lvs, lvm)
-        buffer.compute_gae(last_vals, last_done, gamma=gamma, lam=gae_lambda)
+        buffer.compute_gae(last_vals, float(last_dones[0]), gamma=gamma, lam=gae_lambda)
 
         # Log per-objective means from this rollout
         with torch.no_grad():
@@ -977,13 +1005,30 @@ def run_MOMAPPO(env, total_timesteps: int,
     # Fields are saved incrementally after each step, so no need to save here
     # (SubprocVecEnv doesn't expose envs attribute, and fields are already saved)
 
+    # Save plots for each environment
     date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
+    
     if is_vec:
-        folder = env.get_attr('folder')[0]
-        sim_attr = env.get_attr('sim')[0]
-        swarm_attr = env.get_attr('swarm')[0]
-        rewards_attr = env.get_attr('rewards')[0]
-        objectives_attr = env.get_attr('objectives_history')[0]
+        # Save plots for EACH parallel environment
+        for env_idx in range(num_envs):
+            try:
+                env_folder = env.get_attr('folder')[env_idx]
+                sim_attr = env.get_attr('sim')[env_idx]
+                swarm_attr = env.get_attr('swarm')[env_idx]
+                rewards_attr = env.get_attr('rewards')[env_idx]
+                objectives_attr = env.get_attr('objectives_history')[env_idx]
+                pid_attr = env.get_attr('pid')[env_idx]
+                
+                run_dir = f"../runs/{env_folder}/MOMAPPO/{date_stamp}"
+                os.makedirs(run_dir, exist_ok=True)
+                
+                plot_save_locations(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
+                plot_save_velocities(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
+                plot_save_rewards(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", rewards=rewards_attr, sim=sim_attr)
+                plot_save_rewards_objectives(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, objective_history=objectives_attr)
+                print(f"Saved plots for env {env_idx} (pid={pid_attr}) to {run_dir}")
+            except Exception as e:
+                print(f"Warning: Failed to save plots for env {env_idx}: {e}")
     else:
         folder = env.folder
         sim_attr = env.sim
@@ -991,12 +1036,13 @@ def run_MOMAPPO(env, total_timesteps: int,
         rewards_attr = env.rewards
         objectives_attr = getattr(env, 'objectives_history', [])
 
-    run_dir = f"../runs/{folder}/MOMAPPO/{date_stamp}"
-    os.makedirs(run_dir, exist_ok=True)
-    plot_save_locations(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
-    plot_save_velocities(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
-    plot_save_rewards(folder_name=f"{folder}/MOMAPPO/{date_stamp}", rewards=rewards_attr, sim=sim_attr)
-    plot_save_rewards_objectives(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, objective_history=objectives_attr)
+        run_dir = f"../runs/{folder}/MOMAPPO/{date_stamp}"
+        os.makedirs(run_dir, exist_ok=True)
+        plot_save_locations(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
+        plot_save_velocities(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
+        plot_save_rewards(folder_name=f"{folder}/MOMAPPO/{date_stamp}", rewards=rewards_attr, sim=sim_attr)
+        plot_save_rewards_objectives(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, objective_history=objectives_attr)
+
     # Save checkpoints (timestamped and latest)
     ts_ckpt = f"{ckpt_dir}/model_{date_stamp}.pt"
     torch.save({

@@ -76,8 +76,9 @@ class SwarmEnv(gym.Env):
     """
     metadata = {"render.modes": ["human"]}
 
-    def __init__(self, sim: Simulation, swarm: Swarm, fluid: Fluid, inflow: Inflow, folder: str, save_fields: bool = False, episode_duration: float = 10.0):
+    def __init__(self, sim: Simulation, swarm: Swarm, fluid: Fluid, inflow: Inflow, folder: str, save_fields: bool = False, episode_duration: float = 10.0, env_id: int = 0):
         super(SwarmEnv, self).__init__()
+        self.env_id = env_id  # Environment index (0 = first env)
         self.pid = os.getpid()
         self.sim = sim
         self.swarm = swarm
@@ -207,8 +208,8 @@ class SwarmEnv(gym.Env):
         self.episode_cum_objectives['cohesion'] += float(self.last_objectives.get('cohesion', 0.0))
         self.episode_cum_objectives['smoothness'] += float(self.last_objectives.get('smoothness', 0.0))
 
-        # Save fields immediately if requested
-        if self.save_fields and self.v is not None and self.p is not None:
+        # Save fields every step, only for first environment (env_id=0) to reduce I/O
+        if self.save_fields and self.env_id == 0 and self.v is not None and self.p is not None:
             # Extract velocity components and pressure as numpy arrays
             v_data = self.v.staggered_tensor()  # Returns tuple of (vx, vy)
             vx_np = v_data[0].numpy('x,y').astype(np.float64)
@@ -219,7 +220,7 @@ class SwarmEnv(gym.Env):
             output_dir = f"../runs/{self.folder}/fields"
             os.makedirs(output_dir, exist_ok=True)
             
-            # Save each field snapshot immediately
+            # Save each field snapshot
             step_id = f"{self.field_step_counter:06d}"
             field_filename = f"{output_dir}/step_{step_id}.npz"
             np.savez_compressed(
@@ -232,13 +233,6 @@ class SwarmEnv(gym.Env):
                 length_y=self.sim.length_y,
                 resolution=self.sim.resolution
             )
-
-            # # Also export to Excel with separate sheets for each field component
-            # excel_path = f"{output_dir}/step_{step_id}.xlsx"
-            # with pd.ExcelWriter(excel_path) as writer:
-            #     pd.DataFrame(vx_np).to_excel(writer, sheet_name="v_u", index=False, header=False)
-            #     pd.DataFrame(vy_np).to_excel(writer, sheet_name="v_v", index=False, header=False)
-            #     pd.DataFrame(p_np).to_excel(writer, sheet_name="p", index=False, header=False)
             
             self.field_step_counter += 1
 

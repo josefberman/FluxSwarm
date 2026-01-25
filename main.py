@@ -25,15 +25,15 @@ assert backend.default_backend().set_default_device('GPU')
 
 
 def main(args):
-    print('Max force:', 310)
+    print('Max force:', 3700)
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=1)
-    swarm = Swarm(num_x=4, num_y=3, left_location=49, bottom_location=1, member_interval_x=1, member_interval_y=1,
+    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=600)
+    swarm = Swarm(num_x=4, num_y=4, left_location=49, bottom_location=0.5, member_interval_x=1, member_interval_y=1,
                     member_radius=0.25, member_density=5.150,
-                    member_max_force=310)  # density in mg/mm^3, force in mg*mm/s^2
+                    member_max_force=3700)  # density in mg/mm^3, force in mg*mm/s^2
     # inflow = Inflow(frequency=0.5, amplitude=10, h_shift=np.pi / 2, v_shift=25)
-    inflow = Inflow(frequency=1, amplitude=60, upstroke=0.2, plateau=0.15, downstroke=0.2) # velocity in mm/s
+    inflow = Inflow(frequency=1, amplitude=100, upstroke=0.2, plateau=0.15, downstroke=0.2) # velocity in mm/s
     inflow.center_x = 0
     fluid = Fluid(viscosity=3)  # viscosity of blood in mg/(mm*s)
 
@@ -56,8 +56,8 @@ def main(args):
     # ----------- Reinforcement Learning - PPO ------------------
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
     
-    # PARALLELIZATION: Run 4 environments in parallel for better CPU/GPU utilization
-    num_envs = 4
+    # PARALLELIZATION: Run 8 environments in parallel for better CPU/GPU utilization
+    num_envs = 8
     
     # Create timestamp for this training run
     run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -69,11 +69,11 @@ def main(args):
             env_folder = f"{folder_name}/env_{env_id}_{run_timestamp}"
             return SwarmEnv(
                 sim=sim, swarm=swarm, fluid=fluid, inflow=inflow,
-                folder=env_folder, save_fields=args.save_fields
+                folder=env_folder, save_fields=args.save_fields, env_id=env_id
             )
         return _init
     
-    # Create SubprocVecEnv with 4 parallel environments
+    # Create SubprocVecEnv with 8 parallel environments
     env = SubprocVecEnv([make_env(i) for i in range(num_envs)])
     print(f"[Parallelization] Running {num_envs} environments in parallel (timestamp: {run_timestamp})")
     

@@ -1,5 +1,7 @@
 import numpy as np
 from scipy.spatial.distance import euclidean
+from phi.geom import union
+from phi.field import StaggeredGrid
 
 from data_structures import Simulation, Swarm, Inflow, Fluid, Member
 
@@ -65,11 +67,17 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
     v = diffuse.explicit(v, 1 / reynolds, sim.dt)
     v = advect.semi_lagrangian(v, v, sim.dt)
+    obstacles = swarm.as_obstacle_list()
+    swarm_shapes = [obs.geometry for obs in obstacles]
+    swarm_geo = union(swarm_shapes)
+    swarm_mask = StaggeredGrid(swarm_geo, boundary=v.boundary, bounds=v.bounds,
+                               x=sim.resolution[0], y=sim.resolution[1])
+    v = v * (1.0 - swarm_mask)
     try:
         v, p = fluid.make_incompressible(
             velocity=v,
-            obstacles=swarm.as_obstacle_list(),
-            # solve=Solve(method='scipy-CG', x0=p, max_iterations=0, rel_tol=5e-3, abs_tol=1e-5)
+            # obstacles=swarm_geo,
+            obstacles=(),
             solve=Solve(method='scipy-CG', x0=p, max_iterations=0, rel_tol=5e-3, abs_tol=1e-5)
         )
     except Diverged:

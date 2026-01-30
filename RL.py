@@ -91,11 +91,10 @@ class SwarmEnv(gym.Env):
         self.rewards = []
         # Multi-objective reward weights (can be tuned externally after init)
         self.w_loc_prog = 1.0     # center-of-mass location progress (leftward)
-        self.w_prog = 1.0         # center-of-mass velocity progress along x
         self.w_cohesion = 1.0     # minimize average distance to COM
         self.w_smooth = 1.0       # maximize action smoothness (cosine similarity)
         # Tracking for logging
-        self.last_reward_components = {'location_progress': 0.0, 'velocity_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        self.last_reward_components = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
         self.reward_components_history = []
         self.objectives_history = []
         box = Box['x,y', 0:sim.length_x, 0:sim.length_y]
@@ -107,7 +106,7 @@ class SwarmEnv(gym.Env):
         # Per-episode tracking
         self.episode_index = 0
         self.episode_cum_reward = 0.0
-        self.episode_cum_objectives = {'location_progress': 0.0, 'velocity_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        self.episode_cum_objectives = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
         self.episodes_csv_path = f"../runs/{self.folder}/episodes_summary_{self.pid}.csv"
         
         # Field saving for animations
@@ -162,7 +161,7 @@ class SwarmEnv(gym.Env):
         self.episode_time = 0.0
         # Reset per-episode accumulators
         self.episode_cum_reward = 0.0
-        self.episode_cum_objectives = {'location_progress': 0.0, 'velocity_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        self.episode_cum_objectives = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
         
         return self._get_observation(), {}
 
@@ -206,7 +205,6 @@ class SwarmEnv(gym.Env):
         # Update per-episode accumulators
         self.episode_cum_reward += float(reward)
         self.episode_cum_objectives['location_progress'] += float(self.last_objectives.get('location_progress', 0.0))
-        self.episode_cum_objectives['velocity_progress'] += float(self.last_objectives.get('velocity_progress', 0.0))
         self.episode_cum_objectives['cohesion'] += float(self.last_objectives.get('cohesion', 0.0))
         self.episode_cum_objectives['smoothness'] += float(self.last_objectives.get('smoothness', 0.0))
 
@@ -291,8 +289,12 @@ class SwarmEnv(gym.Env):
         return self.v is None
 
     def _compute_terminated(self) -> bool:
-        # Terminate after 10 seconds
-        return self.episode_time > self.episode_duration
+        # Terminate after episode_duration OR if swarm COM reaches goal/fails
+        xs = np.array([m.location['x'] for m in self.swarm.members], dtype=float)
+        x_com = float(np.mean(xs))
+        reached_goal = x_com <= 0.2 * self.sim.length_x  # Success: reached left 20%
+        mission_failed = x_com >= 0.8 * self.sim.length_x  # Failure: pushed to right 80%
+        return self.episode_time > self.episode_duration or reached_goal or mission_failed
 
     def _finalize_episode(self, terminated: bool, truncated: bool) -> None:
         """Append a row to episodes CSV with cumulative per-objective rewards and status."""
@@ -302,11 +304,10 @@ class SwarmEnv(gym.Env):
         with open(self.episodes_csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(['episode', 'cum_location_progress', 'cum_velocity_progress', 'cum_cohesion', 'cum_smoothness', 'cum_total_reward', 'status'])
+                writer.writerow(['episode', 'cum_location_progress', 'cum_cohesion', 'cum_smoothness', 'cum_total_reward', 'status'])
             writer.writerow([
                 self.episode_index,
                 f"{self.episode_cum_objectives['location_progress']:.6f}",
-                f"{self.episode_cum_objectives['velocity_progress']:.6f}",
                 f"{self.episode_cum_objectives['cohesion']:.6f}",
                 f"{self.episode_cum_objectives['smoothness']:.6f}",
                 f"{self.episode_cum_reward:.6f}",
@@ -317,32 +318,26 @@ class SwarmEnv(gym.Env):
     def _compute_reward(self):
         # Warmup first step: no previous history to compare
         if self.episode_time <= self.sim.dt:
-            self.last_reward_components = {'location_progress': 0.0, 'velocity_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
-            self.last_objectives = {'location_progress': 0.0, 'velocity_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+            self.last_reward_components = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+            self.last_objectives = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
             self.reward_components_history.append(self.last_reward_components.copy())
             self.objectives_history.append(self.last_objectives.copy())
             return 0.0
 
-        # 1) Location progress: COM movement along x, leftward (negative x) is positive reward
-        # Normalized by simulation box length
-        xs = np.array([m.location['x'] for m in self.swarm.members if m.location['x'] < (self.sim.dx+self.swarm.member_radius)], dtype=float)
-        xs_prev = np.array([m.previous_locations[-2]['x'] for m in self.swarm.members if m.previous_locations[-2]['x'] < (self.sim.dx+self.swarm.member_radius)], dtype=float)
+        # 1) Location progress: higher when x_COM is closer to 0
+        xs = np.array([m.location['x'] for m in self.swarm.members], dtype=float)
+        xs_prev = np.array([m.previous_locations[-2]['x'] for m in self.swarm.members], dtype=float)
         x_com = float(np.mean(xs))
         x_com_prev = float(np.mean(xs_prev))
-        dx_com = x_com - x_com_prev  # positive = moved right, negative = moved left
-        # Reward: leftward = positive, rightward = negative, normalized by box length
-        r_location_progress = -self.w_prog * dx_com / self.sim.length_x  # negate so leftward is positive
+        # Terminal rewards for success/failure, else incremental reward
+        if x_com <= 0.2 * self.sim.length_x:
+            r_location_progress = 10.0  # Success bonus: reached goal
+        elif x_com >= 0.8 * self.sim.length_x:
+            r_location_progress = -10.0  # Failure penalty: mission failed
+        else:
+            r_location_progress = -self.w_loc_prog * (x_com - x_com_prev) / self.sim.length_x
 
-        # 2) Velocity progress of COM along x (normalized by inflow amplitude)
-        v_ref = float(self.inflow.amplitude) if getattr(self.inflow, 'amplitude', 0.0) != 0 else 1.0
-        vs = np.array([m.velocity['x'] for m in self.swarm.members if m.location['x'] < (self.sim.dx+self.swarm.member_radius)], dtype=float)
-        vs_prev = np.array([m.previous_velocities['x'] for m in self.swarm.members if m.previous_locations[-2]['x'] < (self.sim.dx+self.swarm.member_radius)], dtype=float)
-        v_com = float(np.mean(vs))
-        v_com_prev = float(np.mean(vs_prev))
-        dv_com = v_com - v_com_prev
-        r_velocity_progress = -self.w_prog * dv_com / v_ref # negate so leftward is positive
-
-        # 3) Cohesion: average 2D distance to center of mass, normalized
+        # 2) Cohesion: average 2D distance to center of mass, normalized
         ys = np.array([m.location['y'] for m in self.swarm.members], dtype=float)
         y_com = float(np.mean(ys))
         dists = np.sqrt((xs - x_com) ** 2 + (ys - y_com) ** 2)
@@ -353,7 +348,7 @@ class SwarmEnv(gym.Env):
         avg_dist_norm = float(np.clip(avg_dist_norm, 0.0, 1.0))
         r_cohesion = -1.0 * self.w_cohesion * avg_dist_norm
 
-        # 4) Smoothness: cosine similarity between actions at t and t-1, averaged over members
+        # 3) Smoothness: cosine similarity between actions at t and t-1, averaged over members
         smooth_vals = []
         for member in self.swarm.members:
             if len(member.previous_actions) >= 2:
@@ -374,22 +369,19 @@ class SwarmEnv(gym.Env):
         smoothness = float(np.mean(smooth_vals))
         r_smooth = self.w_smooth * smoothness
 
-        total_reward = r_location_progress + r_velocity_progress + r_cohesion + r_smooth
+        total_reward = r_location_progress + r_cohesion + r_smooth
         self.last_reward_components = {
             'location_progress': float(r_location_progress),
-            'velocity_progress': float(r_velocity_progress),
             'cohesion': float(r_cohesion),
             'smoothness': float(r_smooth)
         }
         # Unweighted objective vector for MOMARL (all to be maximized)
         self.last_objectives = {
             'location_progress': float(r_location_progress),  # already normalized
-            'velocity_progress': float(r_velocity_progress/self.w_prog),
             'cohesion': float(r_cohesion/self.w_cohesion),
             'smoothness': float(r_smooth/self.w_smooth)
         }
         # Per-member normalized velocity progress (unweighted), for per-member critic head
-        self.last_member_progress_norm = [float(dv_i / v_ref) for dv_i in dv_members]
         self.reward_components_history.append(self.last_reward_components.copy())
         self.objectives_history.append(self.last_objectives.copy())
         return float(total_reward)
@@ -441,18 +433,15 @@ class RewardLoggerCallback(BaseCallback):
             comps = self.training_env.get_attr('last_reward_components')
             # VecEnv returns list over envs; single env returns list with one element
             loc_prog_vals = []
-            vel_prog_vals = []
             coh_vals = []
             smooth_vals = []
             for c in comps:
                 if isinstance(c, dict):
                     loc_prog_vals.append(c.get('location_progress', 0.0))
-                    vel_prog_vals.append(c.get('velocity_progress', 0.0))
                     coh_vals.append(c.get('cohesion', 0.0))
                     smooth_vals.append(c.get('smoothness', 0.0))
             if len(loc_prog_vals) > 0:
                 self.logger.record('custom/r_location_progress', float(np.mean(loc_prog_vals)))
-                self.logger.record('custom/r_velocity_progress', float(np.mean(vel_prog_vals)))
                 self.logger.record('custom/r_cohesion', float(np.mean(coh_vals)))
                 self.logger.record('custom/r_smooth', float(np.mean(smooth_vals)))
         except Exception:

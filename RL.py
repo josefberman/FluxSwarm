@@ -108,6 +108,9 @@ class SwarmEnv(gym.Env):
         self.episode_cum_reward = 0.0
         self.episode_cum_objectives = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
         self.episodes_csv_path = f"../runs/{self.folder}/episodes_summary_{self.pid}.csv"
+        # Initial x_COM for centering reward
+        xs_initial = np.array([m.location['x'] for m in self.swarm.members], dtype=float)
+        self.x_com_initial = float(np.mean(xs_initial))
         
         # Field saving for animations
         self.save_fields = save_fields
@@ -162,6 +165,9 @@ class SwarmEnv(gym.Env):
         # Reset per-episode accumulators
         self.episode_cum_reward = 0.0
         self.episode_cum_objectives = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        # Reset initial x_COM for this episode
+        xs_initial = np.array([m.location['x'] for m in self.swarm.members], dtype=float)
+        self.x_com_initial = float(np.mean(xs_initial))
         
         return self._get_observation(), {}
 
@@ -324,18 +330,24 @@ class SwarmEnv(gym.Env):
             self.objectives_history.append(self.last_objectives.copy())
             return 0.0
 
-        # 1) Location progress: higher when x_COM is closer to 0
+        # 1) Location progress: centered reward (0 at initial position)
         xs = np.array([m.location['x'] for m in self.swarm.members], dtype=float)
-        xs_prev = np.array([m.previous_locations[-2]['x'] for m in self.swarm.members], dtype=float)
         x_com = float(np.mean(xs))
-        x_com_prev = float(np.mean(xs_prev))
-        # Terminal rewards for success/failure, else incremental reward
-        if x_com <= 0.2 * self.sim.length_x:
+        
+        # Terminal rewards and linear interpolation
+        x_goal = 0.2 * self.sim.length_x  # Goal threshold
+        x_fail = 0.8 * self.sim.length_x  # Failure threshold
+        
+        if x_com <= x_goal:
             r_location_progress = 10.0  # Success bonus: reached goal
-        elif x_com >= 0.8 * self.sim.length_x:
+        elif x_com >= x_fail:
             r_location_progress = -10.0  # Failure penalty: mission failed
         else:
-            r_location_progress = -self.w_loc_prog * (x_com - x_com_prev) / self.sim.length_x
+            # Linear interpolation: r=1 at x_goal, r=0 at x_fail
+            # Centered by subtracting the value at initial position
+            r_base = self.w_loc_prog * (x_fail - x_com) / (x_fail - x_goal)
+            r_initial = self.w_loc_prog * (x_fail - self.x_com_initial) / (x_fail - x_goal)
+            r_location_progress = r_base - r_initial
 
         # 2) Cohesion: average 2D distance to center of mass, normalized
         ys = np.array([m.location['y'] for m in self.swarm.members], dtype=float)

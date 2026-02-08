@@ -490,7 +490,8 @@ class ActorCriticMO(nn.Module):
             nn.Tanh(),
         )
         self.mu = nn.Linear(hidden_sizes[1], act_dim)
-        self.log_std = nn.Parameter(torch.zeros(act_dim))
+        # EXPLORATION: Initialize with higher action noise (log_std=-0.5 → std≈0.6)
+        self.log_std = nn.Parameter(torch.ones(act_dim) * -0.5)
         # Four critic heads: location_progress, velocity_progress, cohesion, smoothness
         self.v_loc_prog = nn.Linear(hidden_sizes[1], 1)
         self.v_vel_prog = nn.Linear(hidden_sizes[1], 1)

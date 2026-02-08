@@ -74,3 +74,24 @@ def log_parameters(folder_name, sim: Simulation, swarm: Swarm, inflow: Inflow, f
             f.write(f'  --{member.mass=}\n')
             f.write(f'  --{member.max_force=}\n')
         return None
+
+
+def log_hyperparameters(folder_name: str, **hyperparams) -> None:
+    """
+    Logs MOMAPPO hyperparameters to a timestamped file for reproducibility.
+    
+    :param folder_name: Name of the run folder to save hyperparameters.
+    :param hyperparams: Dictionary of hyperparameter key-value pairs.
+    :return: None
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = f'../runs/{folder_name}/hyperparameters_{timestamp}.txt'
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    
+    with open(log_path, 'w') as f:
+        f.write(f'MOMAPPO Hyperparameters - {timestamp}\n')
+        f.write('='*60 + '\n\n')
+        for key, value in sorted(hyperparams.items()):
+            f.write(f'{key}: {value}\n')
+    
+    return None

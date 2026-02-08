@@ -14,7 +14,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from plotting import animate_save_simulation, plot_save_locations, plot_save_rewards, plot_save_velocities
-from logs import create_run_name, create_folders_for_run, log_parameters
+from logs import create_run_name, create_folders_for_run, log_parameters, log_hyperparameters
 from data_structures import Simulation, Swarm, Inflow, Fluid
 from RL import SwarmEnv, run_PPO, run_MOMAPPO
 import warnings
@@ -28,7 +28,7 @@ def main(args):
     print('Max force:', 3700)
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=3000)
+    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=1000)
     swarm = Swarm(num_x=4, num_y=4, left_location=49, bottom_location=0.5, member_interval_x=1, member_interval_y=1,
                     member_radius=0.25, member_density=5.150,
                     member_max_force=3700)  # density in mg/mm^3, force in mg*mm/s^2
@@ -78,7 +78,20 @@ def main(args):
     print(f"[Parallelization] Running {num_envs} environments in parallel (timestamp: {run_timestamp})")
     
     # run_PPO(env, sim.time_steps)
-    run_MOMAPPO(env, sim.time_steps, n_steps=32, batch_size=8, update_epochs=10)
+    # EXPLORATION HYPERPARAMETERS: Tuned for increased exploration over exploitation
+    # - ent_coef=0.05: Entropy bonus encourages diverse actions
+    # - clip_coef=0.3: Larger policy updates allowed
+    # - gamma=0.9: Lower discount factor for short-term exploration
+    # - lr=5e-4: Higher learning rate for faster adaptation
+    run_MOMAPPO(env, sim.time_steps, n_steps=32, batch_size=8, update_epochs=10, 
+                ent_coef=0.05, clip_coef=0.3, gamma=0.9, lr=5e-4)
+    
+    # Log hyperparameters for reproducibility
+    log_hyperparameters(folder_name, 
+                       n_steps=32, batch_size=8, update_epochs=10,
+                       ent_coef=0.05, clip_coef=0.3, gamma=0.9, lr=5e-4,
+                       gae_lambda=0.95, vf_coef=0.5, total_timesteps=sim.time_steps,
+                       num_envs=num_envs, log_std_init=-0.5)
 
     
 

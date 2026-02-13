@@ -1,6 +1,8 @@
 import os
 import re
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 from pathlib import Path
 from datetime import datetime
 
@@ -8,6 +10,7 @@ from datetime import datetime
 def consolidate_episodes(base_folder):
     """
     Consolidate episode summary CSV files from multiple training session folders.
+    Creates plots showing mean and standard deviation of rewards across environments.
     
     Args:
         base_folder (str): Path to the folder containing env_0_YYYYMMDD_{id} folders
@@ -20,61 +23,201 @@ def consolidate_episodes(base_folder):
     if not base_path.exists():
         raise ValueError(f"Folder does not exist: {base_folder}")
     
-    # Pattern to match folder names: env_0_YYYYMMDD_{id}
-    folder_pattern = re.compile(r'env_0_(\d{8})_(.+)')
+    # Pattern to match folder names: env_{i}_YYYYMMDD_HHMMSS
+    folder_pattern = re.compile(r'env_(\d+)_(\d{8})_(\d{6})')
     
-    # Find all matching folders with their dates
-    folders_with_dates = []
+    # Find all matching folders and group by environment number
+    env_folders = {}  # {env_num: [(datetime, folder_path), ...]}
     for item in base_path.iterdir():
         if item.is_dir():
             match = folder_pattern.match(item.name)
             if match:
-                date_str = match.group(1)
-                env_id = match.group(2)
+                env_num = int(match.group(1))
+                date_str = match.group(2)
+                time_str = match.group(3)
                 try:
-                    # Parse the date for sorting
-                    date_obj = datetime.strptime(date_str, '%Y%m%d')
-                    folders_with_dates.append((date_obj, date_str, env_id, item))
+                    # Parse the datetime for sorting
+                    datetime_str = f"{date_str}{time_str}"
+                    date_obj = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
+                    if env_num not in env_folders:
+                        env_folders[env_num] = []
+                    env_folders[env_num].append((date_obj, item))
                 except ValueError:
-                    print(f"Warning: Could not parse date from folder: {item.name}")
+                    print(f"Warning: Could not parse datetime from folder: {item.name}")
     
-    if not folders_with_dates:
-        raise ValueError(f"No folders matching 'env_0_YYYYMMDD_{{id}}' pattern found in {base_folder}")
+    if not env_folders:
+        raise ValueError(f"No folders matching 'env_{{i}}_YYYYMMDD_HHMMSS' pattern found in {base_folder}")
     
-    # Sort by date chronologically
-    folders_with_dates.sort(key=lambda x: x[0])
+    # Sort folders within each environment chronologically
+    for env_num in env_folders:
+        env_folders[env_num].sort(key=lambda x: x[0])
     
-    print(f"Found {len(folders_with_dates)} folders to process:")
-    for date_obj, date_str, env_id, folder_path in folders_with_dates:
-        print(f"  - {folder_path.name} (Date: {date_str}, ID: {env_id})")
+    print(f"Found {len(env_folders)} different environments:")
+    for env_num in sorted(env_folders.keys()):
+        folder_count = len(env_folders[env_num])
+        print(f"  - env_{env_num}: {folder_count} folder(s)")
     
-    # Load and concatenate CSV files
-    all_dataframes = []
-    for date_obj, date_str, env_id, folder_path in folders_with_dates:
-        # Look for any episodes_summary_*.csv file in the folder
-        csv_files = list(folder_path.glob("episodes_summary_*.csv"))
+    # Load and concatenate CSV files for each environment number
+    env_dataframes = []  # List of dataframes, one per environment number
+    for env_num in sorted(env_folders.keys()):
+        env_dfs = []  # Dataframes for this environment number
         
-        if not csv_files:
-            print(f"Warning: No episodes_summary_*.csv file found in {folder_path.name}")
-            continue
+        print(f"\nProcessing env_{env_num}:")
+        for date_obj, folder_path in env_folders[env_num]:
+            # Look for any episodes_summary_*.csv file in the folder
+            csv_files = list(folder_path.glob("episodes_summary_*.csv"))
+            
+            if not csv_files:
+                print(f"  Warning: No episodes_summary_*.csv file found in {folder_path.name}")
+                continue
+            
+            if len(csv_files) > 1:
+                print(f"  Warning: Multiple CSV files found in {folder_path.name}, using first one: {csv_files[0].name}")
+            
+            csv_path = csv_files[0]
+            
+            try:
+                df = pd.read_csv(csv_path)
+                print(f"  Loaded {len(df)} episodes from {folder_path.name}")
+                env_dfs.append(df)
+            except Exception as e:
+                print(f"  Error loading {csv_path}: {e}")
         
-        if len(csv_files) > 1:
-            print(f"Warning: Multiple CSV files found in {folder_path.name}, using first one: {csv_files[0].name}")
-        
-        csv_path = csv_files[0]
-        
-        try:
-            df = pd.read_csv(csv_path)
-            print(f"Loaded {len(df)} rows from {csv_path.name}")
-            all_dataframes.append(df)
-        except Exception as e:
-            print(f"Error loading {csv_path}: {e}")
+        # Concatenate all dataframes for this environment chronologically
+        if env_dfs:
+            env_combined = pd.concat(env_dfs, ignore_index=True)
+            # Renumber episodes sequentially
+            if 'episode' in env_combined.columns:
+                env_combined['episode'] = range(1, len(env_combined) + 1)
+            print(f"  Total episodes for env_{env_num}: {len(env_combined)}")
+            env_dataframes.append(env_combined)
     
-    if not all_dataframes:
+    if not env_dataframes:
         raise ValueError("No CSV files were successfully loaded")
     
-    # Concatenate all dataframes vertically
-    combined_df = pd.concat(all_dataframes, ignore_index=True)
+    # Identify all reward columns (cumulative rewards start with 'cum_' or contain 'reward')
+    sample_df = env_dataframes[0]
+    all_columns = sample_df.columns.tolist()
+    
+    # Find columns that start with 'cum_' or contain 'reward'
+    reward_columns = []
+    for col in all_columns:
+        col_lower = col.lower()
+        if col_lower.startswith('cum_') or 'reward' in col_lower:
+            if col != 'episode':  # Exclude episode column
+                reward_columns.append(col)
+    
+    if not reward_columns:
+        print("\nWarning: No reward columns found. Looking for numeric columns...")
+        reward_columns = sample_df.select_dtypes(include=[np.number]).columns.tolist()
+        if 'episode' in reward_columns:
+            reward_columns.remove('episode')
+    
+    print(f"\nFound {len(reward_columns)} reward types: {reward_columns}")
+    
+    # Determine the maximum number of episodes across all environments
+    max_episodes = max(len(df) for df in env_dataframes)
+    print(f"Maximum episodes: {max_episodes}")
+    
+    # Create plots for each reward type with publication-quality formatting
+    # Set matplotlib parameters for publication quality
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+    plt.rcParams['font.size'] = 10
+    plt.rcParams['axes.labelsize'] = 11
+    plt.rcParams['axes.titlesize'] = 12
+    plt.rcParams['xtick.labelsize'] = 9
+    plt.rcParams['ytick.labelsize'] = 9
+    plt.rcParams['legend.fontsize'] = 9
+    plt.rcParams['figure.dpi'] = 300
+    plt.rcParams['savefig.dpi'] = 300
+    plt.rcParams['savefig.bbox'] = 'tight'
+    plt.rcParams['axes.linewidth'] = 0.8
+    plt.rcParams['grid.linewidth'] = 0.5
+    plt.rcParams['lines.linewidth'] = 1.5
+    
+    for reward_col in reward_columns:
+        # Create a matrix to store rolling means: rows=episodes, cols=environments
+        window_size = 5
+        reward_matrix = np.full((max_episodes, len(env_dataframes)), np.nan)
+        
+        for env_idx, df in enumerate(env_dataframes):
+            if reward_col in df.columns:
+                # Compute rolling mean for this environment
+                rewards = df[reward_col].values
+                rolling_mean = pd.Series(rewards).rolling(window=window_size, min_periods=1, center=False).mean().values
+                num_episodes = len(rolling_mean)
+                reward_matrix[:num_episodes, env_idx] = rolling_mean
+        
+        # Compute mean and std of rolling means across environments for each episode
+        mean_rewards = np.nanmean(reward_matrix, axis=1)
+        std_rewards = np.nanstd(reward_matrix, axis=1)
+        
+        # Create episode numbers
+        episodes = np.arange(1, max_episodes + 1)
+        
+        # Create the plot with single-column figure size (3.5 inches width for most journals)
+        fig, ax = plt.subplots(figsize=(7, 4))
+        
+        # Use grayscale-friendly colors suitable for publication
+        line_color = '#000000'  # Black for mean line
+        fill_color = '#808080'  # Gray for std dev
+        
+        # Plot shaded standard deviation first (so it appears behind the line)
+        ax.fill_between(episodes, 
+                        mean_rewards - std_rewards, 
+                        mean_rewards + std_rewards,
+                        alpha=0.25, 
+                        color=fill_color,
+                        edgecolor='none',
+                        label='±1 SD')
+        
+        # Plot mean line on top
+        ax.plot(episodes, mean_rewards, 
+                linewidth=1.5, 
+                color=line_color, 
+                label='Rolling Mean (w=5)',
+                solid_capstyle='round')
+        
+        # Format axes
+        ax.set_xlabel('Episode', fontsize=11)
+        # Expand "cum" to "cumulative" for better readability
+        ylabel = reward_col.replace('cum_', 'cumulative_').replace('_', ' ').title()
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.set_title(f'{ylabel}', 
+                    fontsize=12, pad=10)
+        
+        # Grid with subtle styling
+        ax.grid(True, alpha=0.3, linewidth=0.5, linestyle='--')
+        ax.set_axisbelow(True)  # Grid behind data
+        
+        # Legend with frame
+        ax.legend(loc='best', frameon=True, framealpha=0.9, edgecolor='gray', fancybox=False)
+        
+        # Remove top and right spines for cleaner look
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        
+        # Tighten layout
+        plt.tight_layout()
+        
+        # Save in both PNG (high-res) and PDF (vector) formats
+        plot_filename_base = f"{reward_col}_mean_std"
+        
+        # Save PNG at 300 DPI
+        png_path = base_path / f"{plot_filename_base}.png"
+        plt.savefig(png_path, dpi=300, bbox_inches='tight', format='png')
+        print(f"Saved PNG plot: {png_path}")
+        
+        # Save PDF (vector format, preferred for publications)
+        pdf_path = base_path / f"{plot_filename_base}.pdf"
+        plt.savefig(pdf_path, bbox_inches='tight', format='pdf')
+        print(f"Saved PDF plot: {pdf_path}")
+        
+        plt.close()
+    
+    # Also create consolidated Excel file with all data (for reference)
+    combined_df = pd.concat(env_dataframes, ignore_index=True)
     print(f"\nTotal rows after concatenation: {len(combined_df)}")
     
     # Renumber the episode column with ordered natural numbers

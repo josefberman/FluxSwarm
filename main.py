@@ -78,20 +78,20 @@ def main(args):
     print(f"[Parallelization] Running {num_envs} environments in parallel (timestamp: {run_timestamp})")
     
     # run_PPO(env, sim.time_steps)
-    # EXPLORATION HYPERPARAMETERS: Tuned for increased exploration over exploitation
-    # - ent_coef=0.05: Entropy bonus encourages diverse actions
-    # - clip_coef=0.3: Larger policy updates allowed
-    # - gamma=0.9: Lower discount factor for short-term exploration
-    # - lr=5e-4: Higher learning rate for faster adaptation
+    # HYPERPARAMETERS: Balanced exploration/exploitation
+    # - ent_coef=0.01: Mild entropy bonus
+    # - clip_coef=0.2: Standard PPO clip range
+    # - gamma=0.95: Standard discount factor for longer-horizon planning
+    # - lr=3e-4: Standard learning rate
     run_MOMAPPO(env, sim.time_steps, n_steps=32, batch_size=8, update_epochs=10, 
-                ent_coef=0.05, clip_coef=0.3, gamma=0.9, lr=5e-4)
+                ent_coef=0.01, clip_coef=0.2, gamma=0.95, lr=3e-4)
     
     # Log hyperparameters for reproducibility
     log_hyperparameters(folder_name, 
                        n_steps=32, batch_size=8, update_epochs=10,
-                       ent_coef=0.05, clip_coef=0.3, gamma=0.9, lr=5e-4,
+                       ent_coef=0.01, clip_coef=0.2, gamma=0.95, lr=3e-4,
                        gae_lambda=0.95, vf_coef=0.5, total_timesteps=sim.time_steps,
-                       num_envs=num_envs, log_std_init=-0.5)
+                       num_envs=num_envs, log_std_init=-1.0)
 
     
 

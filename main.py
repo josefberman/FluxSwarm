@@ -51,7 +51,7 @@ def main(args):
         create_folders_for_run(folder_name)
         log_parameters(folder_name=folder_name, sim=sim, swarm=swarm, inflow=inflow, fluid=fluid)
     else:
-        folder_name = input('Enter folder_name:')
+        folder_name = input('Enter folder_name:')1
 
     # ----------- Reinforcement Learning - PPO ------------------
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"

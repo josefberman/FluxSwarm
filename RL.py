@@ -90,7 +90,7 @@ class SwarmEnv(gym.Env):
         self.folder = folder
         self.rewards = []
         # Multi-objective reward weights (can be tuned externally after init)
-        self.w_loc_prog = 16.0     # center-of-mass location progress (leftward)
+        self.w_loc_prog = 1.0     # center-of-mass location progress (leftward)
         self.w_cohesion = 1.0     # minimize average distance to COM
         self.w_smooth = 1.0       # maximize action smoothness (cosine similarity)
         # Tracking for logging
@@ -101,7 +101,7 @@ class SwarmEnv(gym.Env):
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=sim.resolution[0], y=sim.resolution[1])
         self.p = None
-        self.episode_duration = 50.0
+        self.episode_duration = 20.0
 
         # Per-episode tracking
         self.episode_index = 0
@@ -335,6 +335,12 @@ class SwarmEnv(gym.Env):
         r_base = self.w_loc_prog * (self.sim.length_x - x_com) / (self.sim.length_x - 0)
         r_initial = self.w_loc_prog * (self.sim.length_x - self.x_com_initial) / (self.sim.length_x - 0)
         r_location_progress = r_base - r_initial
+        if x_com <= self.x_com_initial:
+            # x_com=0 -> R=W, x_com=x_0 -> R=0
+            r_location_progress = -1 * self.w_loc_prog * (x_com - self.x_com_initial) / self.x_com_initial
+        else:
+            # x_com=x_0 -> R=0, x_com=L -> R=-W
+            r_location_progress = -1 * self.w_loc_prog * (x_com - self.x_com_initial) / (self.sim.length_x - self.x_com_initial)
 
         # 2) Cohesion: average 2D distance to center of mass, normalized
         ys = np.array([m.location['y'] for m in self.swarm.members], dtype=float)
@@ -364,7 +370,7 @@ class SwarmEnv(gym.Env):
                 # Map [-1,1] -> [-0.5, 0.5] (centered around 0)
                 smooth_vals.append(cos_sim / 2.0)
             else:
-                smooth_vals.append(0.5)  # perfectly smooth → +0.5
+                smooth_vals.append(0.0)  # orthogonal vectors
         smoothness = float(np.mean(smooth_vals))
         r_smooth = self.w_smooth * smoothness
 
@@ -376,7 +382,7 @@ class SwarmEnv(gym.Env):
         }
         # Unweighted objective vector for MOMARL (all to be maximized)
         self.last_objectives = {
-            'location_progress': float(r_location_progress),  # already normalized
+            'location_progress': float(r_location_progress/self.w_loc_prog),
             'cohesion': float(r_cohesion/self.w_cohesion),
             'smoothness': float(r_smooth/self.w_smooth)
         }

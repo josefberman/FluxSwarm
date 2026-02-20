@@ -256,27 +256,30 @@ def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_hi
     
     # Location Progress (first)
     axes[0].plot(timesteps, loc_prog, c='tab:purple', linewidth=1.0, label='location_progress')
-    axes[0].axhline(0.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
+    axes[0].axhline(1.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5) # Max possible reward
+    axes[0].axhline(0.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5) # Min possible reward
     axes[0].set_title(f'Location Progress reward over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Location Progress')
-    axes[0].legend(loc='best')
+    # axes[0].legend(loc='best')
 
     # Cohesion (second)
     axes[1].plot(timesteps, coh, c='tab:green', linewidth=1.0, label='cohesion')
-    axes[1].axhline(0.0, linestyle='dashed', color='tab:green', linewidth=1.0, label='max')
+    axes[1].axhline(0.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5) # Max possible reward
+    axes[1].axhline(-1.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5) # Min possible reward
     axes[1].set_title(f'Cohesion reward over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Cohesion')
-    axes[1].legend(loc='best')
+    # axes[1].legend(loc='best')
 
     # Smoothness (third)
     axes[2].plot(timesteps, sm, c='tab:orange', linewidth=1.0, label='smoothness')
-    axes[2].axhline(1.0, linestyle='dashed', color='tab:orange', linewidth=1.0, label='max')
+    axes[2].axhline(0.5, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Max possible reward
+    axes[2].axhline(-0.5, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Min possible reward
     axes[2].set_title(f'Smoothness reward over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[2].set_xlabel('Time [s]')
     axes[2].set_ylabel('Smoothness')
-    axes[2].legend(loc='best')
+    # axes[2].legend(loc='best')
 
     plt.tight_layout()
     plt.savefig(f'../runs/{folder_name}/rewards_objectives.jpg', dpi=300)

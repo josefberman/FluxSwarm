@@ -28,7 +28,7 @@ def main(args):
     print('Max force:', 3700)
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=1000)
+    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=2000)
     swarm = Swarm(num_x=4, num_y=4, left_location=49, bottom_location=0.5, member_interval_x=1, member_interval_y=1,
                     member_radius=0.25, member_density=5.150,
                     member_max_force=3700)  # density in mg/mm^3, force in mg*mm/s^2
@@ -51,7 +51,7 @@ def main(args):
         create_folders_for_run(folder_name)
         log_parameters(folder_name=folder_name, sim=sim, swarm=swarm, inflow=inflow, fluid=fluid)
     else:
-        folder_name = input('Enter folder_name:')1
+        folder_name = input('Enter folder_name:')
 
     # ----------- Reinforcement Learning - PPO ------------------
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"

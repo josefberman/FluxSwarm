@@ -8,9 +8,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.patches import Circle
+import shutil
 import matplotlib as mpl
-
-mpl.rcParams['animation.ffmpeg_path'] = r"C:\Users\Josef\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0-full_build\bin\ffmpeg.exe"
+ffmpeg_path = shutil.which("ffmpeg")
+if ffmpeg_path:
+    mpl.rcParams['animation.ffmpeg_path'] = ffmpeg_path
 
 
 def parse_args() -> argparse.Namespace:

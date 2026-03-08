@@ -78,12 +78,13 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     :param force_actions: External force actions applied to the swarm.
     :return: Updated velocity and pressure fields, and the swarm state.
     """
-    # force_actions = np.column_stack((np.full(len(swarm.members), -1.0), np.zeros(len(swarm.members), dtype=float)))
-    mask, v_u, v_v = generate_parabolic_profile_mask(v, sim, inflow, t)
+    mask_next, v_u, v_v = generate_parabolic_profile_mask(v, sim, inflow, t + sim.dt)
+    mask_current, _, _ = generate_parabolic_profile_mask(v, sim, inflow, t)
     
-    # Apply pulse only to the left boundary (first 3 pixels) to allow organic propagation
-    x_idx = math.range_tensor(v_u.shape['x'])
-    v_tensor_u = math.where(x_idx < 3, mask, v_u)
+    # In incompressible flow, the entire fluid column accelerates instantly.
+    # Add the temporal difference to the entire field to preserve existing wakes.
+    delta_mask = mask_next - mask_current
+    v_tensor_u = v_u + math.expand(delta_mask, v_u.shape['x'])
     
     # Use TensorStack to securely pack the true component shapes natively
     from phiml.math._tensors import TensorStack

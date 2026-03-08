@@ -118,11 +118,11 @@ class SwarmEnv(gym.Env):
 
         # Define observation space: num_of_members * (position x2, velocity x2, pressure x4)
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(len(swarm.members), 8), dtype=np.float64
+            low=-np.inf, high=np.inf, shape=(len(swarm.members), 8), dtype=np.float32
         )
         # Define action space (force control x2 for each agent)
         self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(len(swarm.members), 2), dtype=np.float64
+            low=-1.0, high=1.0, shape=(len(swarm.members), 2), dtype=np.float32
         )
         os.makedirs(f'../runs/{self.folder}/PPO/velocity_{self.pid}', exist_ok=True)
         os.makedirs(f'../runs/{self.folder}/PPO/pressure_{self.pid}', exist_ok=True)
@@ -288,7 +288,7 @@ class SwarmEnv(gym.Env):
                 member.velocity['x'], member.velocity['y'],
                 *pressure_profile
             ])
-        return np.array(obs, dtype=np.float64)
+        return np.array(obs, dtype=np.float32)
 
     def _compute_truncated(self) -> bool:
         # Truncate if simulation diverged / fields invalid
@@ -515,31 +515,31 @@ class ActorCriticMO(nn.Module):
 class RolloutBufferMO:
     def __init__(self, buffer_size: int, obs_dim: int, act_dim: int, device: torch.device, num_members: int | None = None):
         self.buffer_size = buffer_size
-        self.obs = torch.zeros((buffer_size, obs_dim), dtype=torch.float64)
-        self.actions = torch.zeros((buffer_size, act_dim), dtype=torch.float64)
-        self.logprobs = torch.zeros((buffer_size,), dtype=torch.float64)
-        self.dones = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.obs = torch.zeros((buffer_size, obs_dim), dtype=torch.float32, device=device)
+        self.actions = torch.zeros((buffer_size, act_dim), dtype=torch.float32, device=device)
+        self.logprobs = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.dones = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         # Per-objective rewards and values (3 objectives)
-        self.rew_loc_prog = torch.zeros((buffer_size,), dtype=torch.float64)
-        self.rew_coh = torch.zeros((buffer_size,), dtype=torch.float64)
-        self.rew_smooth = torch.zeros((buffer_size,), dtype=torch.float64)
-        self.val_loc_prog = torch.zeros((buffer_size,), dtype=torch.float64)
-        self.val_coh = torch.zeros((buffer_size,), dtype=torch.float64)
-        self.val_smooth = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.rew_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.rew_coh = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.rew_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.val_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.val_coh = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.val_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
         # Per-member velocity progress
         self.num_members = int(num_members) if num_members is not None else 0
         if self.num_members > 0:
-            self.rew_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float64)
-            self.val_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float64)
-            self.adv_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float64)
-            self.ret_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float64)
+            self.rew_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
+            self.val_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
+            self.adv_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
+            self.ret_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
         # Advantages and returns per objective
-        self.adv_loc_prog = torch.zeros((buffer_size,), dtype=torch.float64)
-        self.adv_coh = torch.zeros((buffer_size,), dtype=torch.float64)
-        self.adv_smooth = torch.zeros((buffer_size,), dtype=torch.float64)
-        self.ret_loc_prog = torch.zeros((buffer_size,), dtype=torch.float64)
-        self.ret_coh = torch.zeros((buffer_size,), dtype=torch.float64)
-        self.ret_smooth = torch.zeros((buffer_size,), dtype=torch.float64)
+        self.adv_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.adv_coh = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.adv_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.ret_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.ret_coh = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.ret_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
         self.ptr = 0
         self.device = device
 
@@ -557,8 +557,8 @@ class RolloutBufferMO:
         self.val_coh[i] = val_coh
         self.val_smooth[i] = val_smooth
         if self.num_members > 0 and member_prog is not None and val_member_prog is not None:
-            mp = torch.as_tensor(member_prog, dtype=torch.float64)
-            vm = torch.as_tensor(val_member_prog, dtype=torch.float64)
+            mp = torch.as_tensor(member_prog, dtype=torch.float32, device=self.device)
+            vm = torch.as_tensor(val_member_prog, dtype=torch.float32, device=self.device)
             if mp.numel() == self.num_members:
                 self.rew_member_prog[i] = mp
             if vm.numel() == self.num_members:
@@ -571,7 +571,7 @@ class RolloutBufferMO:
         last_v_loc_prog, last_v_coh, last_v_smooth = last_values[:3]
         last_v_members = last_values[3] if len(last_values) > 3 else None
         adv_lp, adv_c, adv_s = 0.0, 0.0, 0.0
-        adv_members = torch.zeros(self.num_members, dtype=torch.float64)
+        adv_members = torch.zeros(self.num_members, dtype=torch.float32)
         for t in reversed(range(self.ptr)):
             next_nonterminal = 1.0 - (self.dones[t+1] if t < self.ptr - 1 else last_done)
             next_v_loc_prog = self.val_loc_prog[t+1] if t < self.ptr - 1 else last_v_loc_prog
@@ -694,8 +694,7 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
 
     :return: None
     """
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    device = torch.device('cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_steps = 128
     if isinstance(env, VecEnv):
         if os.path.exists(f"../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip"):
@@ -760,7 +759,7 @@ def run_MOMAPPO(env, total_timesteps: int,
                 n_steps: int = 1024, batch_size: int = 256, update_epochs: int = 10,
                 gamma: float = 0.95, gae_lambda: float = 0.95, clip_coef: float = 0.2,
                 ent_coef: float = 0.0, vf_coef: float = 0.5, lr: float = 3e-4,
-                device: str = 'cpu', open_tensorboard: bool = True,
+                device: str = 'cuda' if torch.cuda.is_available() else 'cpu', open_tensorboard: bool = True,
                 resume: bool = True):
     """
     Multi-objective MAPPO training with PCGrad on the actor across three objectives
@@ -779,7 +778,7 @@ def run_MOMAPPO(env, total_timesteps: int,
     else:
         obs_all, _ = env.reset()
         obs_all = np.expand_dims(obs_all, 0)
-    obs_flat = obs_all[0].reshape(-1).astype(np.float64)
+    obs_flat = obs_all[0].reshape(-1).astype(np.float32)
 
     # Resolve folder - use parent folder for shared resources
     if is_vec:
@@ -805,7 +804,7 @@ def run_MOMAPPO(env, total_timesteps: int,
     act_dim = int(env.action_space.shape[0] * env.action_space.shape[1])
 
     num_members = int(env.action_space.shape[0])
-    model = ActorCriticMO(obs_dim, act_dim, num_members=num_members).to(dev).double()
+    model = ActorCriticMO(obs_dim, act_dim, num_members=num_members).to(dev)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     # Checkpointing (resume if requested)
@@ -852,7 +851,7 @@ def run_MOMAPPO(env, total_timesteps: int,
             
             for env_idx in range(num_envs):
                 obs = obs_all[env_idx]
-                obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float64, device=dev)
+                obs_t = torch.tensor(obs.reshape(-1), dtype=torch.float32, device=dev)
                 obs_tensors.append(obs_t)
                 
                 with torch.no_grad():
@@ -887,7 +886,7 @@ def run_MOMAPPO(env, total_timesteps: int,
             # Add experiences from ALL environments to buffer
             for env_idx in range(num_envs):
                 obs_t = obs_tensors[env_idx]
-                action_t = torch.tensor(actions_all[env_idx], dtype=torch.float64)
+                action_t = torch.tensor(actions_all[env_idx], dtype=torch.float32, device=dev)
                 
                 info = infos_batch[env_idx]
                 obj = info.get('objectives', {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0})
@@ -913,7 +912,7 @@ def run_MOMAPPO(env, total_timesteps: int,
                 pbar.update(num_envs)
 
         # Bootstrap last values (use first env's observation as representative)
-        last_obs_t = torch.tensor(obs_all[0].reshape(-1), dtype=torch.float64, device=dev)
+        last_obs_t = torch.tensor(obs_all[0].reshape(-1), dtype=torch.float32, device=dev)
         with torch.no_grad():
             last_vals = model.values(last_obs_t.unsqueeze(0))
             lv_lp = last_vals[0][0].cpu()

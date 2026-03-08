@@ -51,17 +51,29 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     """
     # force_actions = np.column_stack((np.full(len(swarm.members), -1.0), np.zeros(len(swarm.members), dtype=float)))
     trap_wave = beat_waveform(t=t, v_peak=inflow.amplitude, v_dia=0, tau=inflow.frequency, upstroke=inflow.upstroke, plateau=inflow.plateau, downstroke=inflow.downstroke)
+    
     R = int(sim.resolution[1] / 2)
     delta = int(R / 2)
-    v_tensor_u = v.staggered_tensor()[0].numpy('x,y')
-    for r in range(delta):
-        v_tensor_u[:, r] = trap_wave * (1-(delta-r)**2/delta**2) # Parabolic ramps at the ends
-    for r in range(2*R-delta+1, 2*R+1):
-        v_tensor_u[:, r] = trap_wave * (1-(r-(2*R-delta))**2/delta**2) # Parabolic ramps at the ends
-    v_tensor_u[:, delta:(2*R-delta+1)] = trap_wave # Flat core
-    v_tensor_u = tensor(v_tensor_u[:, :-1], spatial('x,y'))
-    v_tensor_v = v.staggered_tensor()[1].numpy('x,y')
-    v_tensor_v = tensor(v_tensor_v[1:, 1:-1], spatial('x,y'))
+    
+    # Generate spatial mask using PhiFlow backend
+    y_coords = math.linspace(0, 2*R, 2*R)
+    
+    # Default is trap_wave for core region
+    mask = math.ones(spatial(y=2*R)) * trap_wave
+    
+    # Parabolic ramps at the bottom
+    mask = math.where(y_coords < delta, trap_wave * (1 - (delta - y_coords)**2 / delta**2), mask)
+    
+    # Parabolic ramps at the top
+    mask = math.where(y_coords >= 2*R - delta, trap_wave * (1 - (y_coords - (2*R - delta))**2 / delta**2), mask)
+    
+    # Expand to x dimension
+    mask = math.expand(mask, spatial(x=sim.resolution[0]))
+    
+    v_tensor_u = mask
+    
+    # For v component, just get the staggered tensor and crop to maintain size
+    v_tensor_v = v.staggered_tensor()[1]
     v = StaggeredGrid(math.stack([v_tensor_u, v_tensor_v], dual(vector='x,y')), boundary=v.boundary, bounds=v.bounds,
                       x=sim.resolution[0], y=sim.resolution[1])
     reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
@@ -76,9 +88,8 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     try:
         v, p = fluid.make_incompressible(
             velocity=v,
-            # obstacles=swarm_geo,
             obstacles=(),
-            solve=Solve(method='scipy-CG', x0=p, max_iterations=0, rel_tol=5e-3, abs_tol=1e-5)
+            solve=Solve(method='CG', x0=p, max_iterations=0, rel_tol=5e-3, abs_tol=1e-5)
         )
     except Diverged:
         print(f'Time step {t} diverged')
@@ -139,16 +150,17 @@ def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation, n: i
     x_world = member.location['x'] + member.radius * cos_a
     y_world = member.location['y'] + member.radius * sin_a
 
-    ix_off = (x_world * sim.resolution[0] / sim.length_x).astype(int) + np.sign(cos_a).astype(int) * offset
-    iy_off = (y_world * sim.resolution[1] / sim.length_y).astype(int) + np.sign(sin_a).astype(int) * offset
+    x_world += np.sign(cos_a) * offset * (sim.length_x / sim.resolution[0])
+    y_world += np.sign(sin_a) * offset * (sim.length_y / sim.resolution[1])
+    
+    x_world = np.clip(x_world, 0, sim.length_x)
+    y_world = np.clip(y_world, 0, sim.length_y)
 
-    ix_off = np.clip(ix_off, 0, sim.resolution[0] - 1)
-    iy_off = np.clip(iy_off, 0, sim.resolution[1] - 1)
-
-    # Fast gather using NumPy on the pressure values array
-    values = _field_values_to_numpy(f)
-    field_samples = values[ix_off, iy_off].astype(np.float64)
-    return field_samples
+    coords = np.stack([x_world, y_world], axis=-1)
+    coords_tensor = tensor(coords, spatial('n'), channel(vector='x,y'))
+    
+    samples = f.sample_at(coords_tensor).numpy('n')
+    return samples.astype(np.float64)
 
 
 def sample_field_around_obstacles(f: Field, swarm: Swarm, sim: Simulation, n: int, offset=2) -> np.array:
@@ -167,15 +179,23 @@ def sample_field_around_obstacles(f: Field, swarm: Swarm, sim: Simulation, n: in
     x_world = member_x + member_r * cos_a
     y_world = member_y + member_r * sin_a
 
-    ix_off = (x_world * sim.resolution[0] / sim.length_x).astype(int) + (np.sign(cos_a).astype(int) * offset)
-    iy_off = (y_world * sim.resolution[1] / sim.length_y).astype(int) + (np.sign(sin_a).astype(int) * offset)
-
-    ix_off = np.clip(ix_off, 0, sim.resolution[0] - 1)
-    iy_off = np.clip(iy_off, 0, sim.resolution[1] - 1)
-
-    values = _field_values_to_numpy(f)
-    samples = values[ix_off, iy_off].astype(np.float64)
-    return samples
+    # Adjust offsets exactly as before
+    x_world += np.sign(cos_a) * offset * (sim.length_x / sim.resolution[0])
+    y_world += np.sign(sin_a) * offset * (sim.length_y / sim.resolution[1])
+    
+    # Clip coordinates to domain
+    x_world = np.clip(x_world, 0, sim.length_x)
+    y_world = np.clip(y_world, 0, sim.length_y)
+    
+    # We want to use natively phi.field.Sample or similar.
+    # A PointCloud can resample the field directly at those coordinates!
+    coords = np.stack([x_world, y_world], axis=-1)  # shape (num_members, n, 2)
+    # create generic Phiflow tensor from these coordinates
+    coords_tensor = tensor(coords, instance('members'), spatial('n'), channel(vector='x,y'))
+    
+    # Sample point cloud against the field
+    samples = f.sample_at(coords_tensor).numpy('members,n')
+    return samples.astype(np.float64)
 
 
 def _field_values_to_numpy(f: Field):
@@ -357,6 +377,7 @@ def resolve_collisions(swarm: Swarm, sim: Simulation, restitution: float = 0.0) 
     """
     Resolve pairwise collisions between circular members by separating overlaps and
     applying a simple impulse along the collision normal to reduce interpenetration.
+    Vectorized to eliminate slow nested Python loops.
 
     :param swarm: Swarm containing members with location, velocity, radius, mass
     :param sim: Simulation for boundary extents
@@ -364,57 +385,64 @@ def resolve_collisions(swarm: Swarm, sim: Simulation, restitution: float = 0.0) 
     :return: None
     """
     num = len(swarm.members)
-    for i in range(num):
-        mi = swarm.members[i]
-        for j in range(i + 1, num):
-            mj = swarm.members[j]
+    if num < 2:
+        return
 
-            dx = np.array([mj.location['x'] - mi.location['x'], mj.location['y'] - mi.location['y']], dtype=float)
-            dist = float(np.linalg.norm(dx))
-            min_dist = mi.radius + mj.radius
+    # Extract properties into numpy arrays
+    pos = np.array([[m.location['x'], m.location['y']] for m in swarm.members], dtype=np.float64)
+    vel = np.array([[m.velocity['x'], m.velocity['y']] for m in swarm.members], dtype=np.float64)
+    radii = np.array([m.radius for m in swarm.members], dtype=np.float64)
+    masses = np.array([m.mass for m in swarm.members], dtype=np.float64)
+    inv_masses = np.where(masses > 0, 1.0 / masses, 0.0)
 
-            if dist == 0.0:
-                # Arbitrary small normal to separate coincident centers
-                n = np.array([1.0, 0.0], dtype=float)
-                dist = 1e-6
-            else:
-                n = dx / dist
+    # Calculate pairwise distances vector-style
+    diff = pos[:, np.newaxis, :] - pos[np.newaxis, :, :] # (num, num, 2)
+    dist_sq = np.sum(diff**2, axis=-1)
+    np.fill_diagonal(dist_sq, np.inf) # Ignore self-collision
 
-            if dist < min_dist:
-                # Positional correction (split overlap)
-                overlap = min_dist - dist
-                correction = 0.5 * overlap * n
-                mi.location['x'] -= float(correction[0])
-                mi.location['y'] -= float(correction[1])
-                mj.location['x'] += float(correction[0])
-                mj.location['y'] += float(correction[1])
+    dist = np.sqrt(dist_sq)
+    min_dist = radii[:, np.newaxis] + radii[np.newaxis, :]
 
-                # Clamp to domain after correction
-                for m in (mi, mj):
-                    x_lower = m.radius
-                    x_upper = sim.length_x - m.radius
-                    y_lower = m.radius
-                    y_upper = sim.length_y - m.radius
-                    if m.location['x'] < x_lower:
-                        m.location['x'] = x_lower
-                    elif m.location['x'] > x_upper:
-                        m.location['x'] = x_upper
-                    if m.location['y'] < y_lower:
-                        m.location['y'] = y_lower
-                    elif m.location['y'] > y_upper:
-                        m.location['y'] = y_upper
+    # Find collisions (upper triangle only to avoid double-processing)
+    colliding = (dist < min_dist) & np.triu(np.ones((num, num), dtype=bool), k=1)
+    pairs = np.argwhere(colliding)
 
-                # Velocity response (impulse along normal)
-                vi = np.array([mi.velocity['x'], mi.velocity['y']], dtype=float)
-                vj = np.array([mj.velocity['x'], mj.velocity['y']], dtype=float)
-                rel_v = vj - vi
-                rel_normal_speed = float(np.dot(rel_v, n))
-                if rel_normal_speed < 0:
-                    inv_mass_i = 0.0 if mi.mass == 0 else 1.0 / mi.mass
-                    inv_mass_j = 0.0 if mj.mass == 0 else 1.0 / mj.mass
-                    j_imp = -(1.0 + restitution) * rel_normal_speed / (inv_mass_i + inv_mass_j + 1e-12)
-                    impulse = j_imp * n
-                    vi -= impulse * inv_mass_i
-                    vj += impulse * inv_mass_j
-                    mi.velocity['x'], mi.velocity['y'] = float(vi[0]), float(vi[1])
-                    mj.velocity['x'], mj.velocity['y'] = float(vj[0]), float(vj[1])
+    for i, j in pairs:
+        d = dist[i, j]
+        if d == 0.0:
+            n = np.array([1.0, 0.0], dtype=np.float64)
+            d = 1e-6
+        else:
+            n = diff[i, j] / d
+
+        # Positional correction
+        overlap = min_dist[i, j] - d
+        correction = 0.5 * overlap * n
+        pos[i] -= correction
+        pos[j] += correction
+
+        # Velocity response
+        rel_v = vel[j] - vel[i]
+        rel_normal_speed = np.dot(rel_v, n)
+        
+        if rel_normal_speed < 0:
+            j_imp = -(1.0 + restitution) * rel_normal_speed / (inv_masses[i] + inv_masses[j] + 1e-12)
+            impulse = j_imp * n
+            vel[i] -= impulse * inv_masses[i]
+            vel[j] += impulse * inv_masses[j]
+
+    # Batch damp and clamp to domain
+    x_lower = radii
+    x_upper = sim.length_x - radii
+    y_lower = radii
+    y_upper = sim.length_y - radii
+
+    pos[:, 0] = np.clip(pos[:, 0], x_lower, x_upper)
+    pos[:, 1] = np.clip(pos[:, 1], y_lower, y_upper)
+
+    # Write back to objects
+    for i, m in enumerate(swarm.members):
+        m.location['x'] = float(pos[i, 0])
+        m.location['y'] = float(pos[i, 1])
+        m.velocity['x'] = float(vel[i, 0])
+        m.velocity['y'] = float(vel[i, 1])

@@ -90,7 +90,7 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         v, p = fluid.make_incompressible(
             velocity=v,
             obstacles=(),
-            solve=Solve(method='CG', x0=p, rel_tol=5e-3, abs_tol=1e-5)
+            solve=Solve(method='CG', x0=p, max_iterations=100_000, rel_tol=5e-3, abs_tol=1e-5)
         )
     except (Diverged, NotConverged) as e:
         print(f'Time step {t} diverged or did not converge: {e}')

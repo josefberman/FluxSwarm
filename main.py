@@ -28,7 +28,7 @@ def main(args):
     print('Max force:', 3700)
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=100)
+    sim = Simulation(length_x=100, length_y=4, resolution=(2000, 80), dt=0.05, total_time=100)
     swarm = Swarm(num_x=4, num_y=4, left_location=49, bottom_location=0.5, member_interval_x=1, member_interval_y=1,
                     member_radius=0.25, member_density=5.150,
                     member_max_force=3700)  # density in mg/mm^3, force in mg*mm/s^2
@@ -83,12 +83,12 @@ def main(args):
     # - clip_coef=0.2: Standard PPO clip range
     # - gamma=0.95: Standard discount factor for longer-horizon planning
     # - lr=3e-4: Standard learning rate
-    run_MOMAPPO(env, sim.time_steps, n_steps=32, batch_size=8, update_epochs=10, 
+    run_MOMAPPO(env, sim.time_steps, n_steps=256, batch_size=32, update_epochs=10, 
                 ent_coef=0.01, clip_coef=0.2, gamma=0.95, lr=3e-4)
     
     # Log hyperparameters for reproducibility
     log_hyperparameters(folder_name, 
-                       n_steps=32, batch_size=8, update_epochs=10,
+                       n_steps=256, batch_size=32, update_epochs=10,
                        ent_coef=0.01, clip_coef=0.2, gamma=0.95, lr=3e-4,
                        gae_lambda=0.95, vf_coef=0.5, total_timesteps=sim.time_steps,
                        num_envs=num_envs, log_std_init=-1.0)

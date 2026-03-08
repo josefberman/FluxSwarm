@@ -156,6 +156,12 @@ class SwarmEnv(gym.Env):
         box = Box['x,y', 0:self.sim.length_x, 0:self.sim.length_y]
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=self.sim.resolution[0], y=self.sim.resolution[1])
+        from simulation import generate_parabolic_profile_mask
+        from phiml.math._tensors import TensorStack
+        mask, v_u, v_v = generate_parabolic_profile_mask(self.v, self.sim, self.inflow, t=0.0)
+        v_tensor_u = phi.math.expand(mask, v_u.shape['x'])
+        stacked_v = TensorStack((v_tensor_u, v_v), dual(vector='x,y'))
+        self.v = self.v.with_values(stacked_v)
         self.p = None
         for i, member in enumerate(self.swarm.members):
             member.previous_locations = prev_members[i].previous_locations.copy()

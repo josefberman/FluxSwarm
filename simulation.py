@@ -28,28 +28,7 @@ PADDING = 2
 NUM_PRESSURE_ANGLES = 4
 
 
-def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, fluid_obj: Fluid, t: float,
-         force_actions: np.ndarray):
-    """
-    Performs a single simulation step, updating velocity, pressure fields, and swarm dynamics.
-
-    This function performs operations to advance a simulation step by modifying
-    the velocity (`v`) and pressure (`p`) fields according to specified inflow
-    conditions, fluid properties, and forces. For time frames exceeding a
-    certain threshold, it also updates the motion and dynamics of the swarm
-    within the simulated fluid domain.
-
-    :param v: Field representing the velocity grid.
-    :param p: Field representing the pressure grid.
-    :param inflow: Inflow conditions including parameters like amplitude.
-    :param sim: Simulation parameters such as resolution, time step, and domain size.
-    :param swarm: The collection of dynamic objects and their current states.
-    :param fluid_obj: Fluid properties including viscosity.
-    :param t: Current simulation time in seconds.
-    :param force_actions: External force actions applied to the swarm.
-    :return: Updated velocity and pressure fields, and the swarm state.
-    """
-    # force_actions = np.column_stack((np.full(len(swarm.members), -1.0), np.zeros(len(swarm.members), dtype=float)))
+def generate_parabolic_profile_mask(v: Field, sim: Simulation, inflow: Inflow, t: float):
     trap_wave = beat_waveform(t=t, v_peak=inflow.amplitude, v_dia=0, tau=inflow.frequency, upstroke=inflow.upstroke, plateau=inflow.plateau, downstroke=inflow.downstroke)
     
     R = int(sim.resolution[1] / 2)
@@ -69,8 +48,42 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     # Parabolic ramps at the top
     mask = math.where(y_coords >= 2*R - delta, trap_wave * (1 - (y_coords - (2*R - delta))**2 / delta**2), mask)
     
-    # Expand to match X dimension of U
-    v_tensor_u = math.expand(mask, v_u.shape['x'])
+    return mask, v_u, v_v
+
+def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, fluid_obj: Fluid, t: float,
+         force_actions: np.ndarray) -> tuple[Field | None, Field | None, Swarm]:
+    """
+    Advances the fluid simulation and swarm members' state by one time step.
+
+    This function updates the fluid's velocity and pressure fields based on
+    inflow conditions, diffusion, advection, and incompressibility. It also
+    processes the interactions between fluid and swarm members, such as
+    applying force actions, updating locations, and storing history. Divergence
+    in the simulation logic is caught and handled appropriately. Finally, the
+    function extracts profiles around the obstacles and applies relevant properties
+    such as viscous drag and pressure forces to the swarm members.
+
+    The execution consists of multiple stages including inflow wave calculation,
+    field updates (diffusion and semi-lagrangian advection), obstacle representation,
+    incompressible fluid projection, extracting profiles, and applying simulated
+    physics to the swarm members.
+
+    :param v: Field representing the velocity grid.
+    :param p: Field representing the pressure grid.
+    :param inflow: Inflow conditions including parameters like amplitude.
+    :param sim: Simulation parameters such as resolution, time step, and domain size.
+    :param swarm: The collection of dynamic objects and their current states.
+    :param fluid_obj: Fluid properties including viscosity.
+    :param t: Current simulation time in seconds.
+    :param force_actions: External force actions applied to the swarm.
+    :return: Updated velocity and pressure fields, and the swarm state.
+    """
+    # force_actions = np.column_stack((np.full(len(swarm.members), -1.0), np.zeros(len(swarm.members), dtype=float)))
+    mask, v_u, v_v = generate_parabolic_profile_mask(v, sim, inflow, t)
+    
+    # Apply pulse only to the left boundary (first 3 pixels) to allow organic propagation
+    x_idx = math.range_tensor(v_u.shape['x'])
+    v_tensor_u = math.where(x_idx < 3, mask, v_u)
     
     # Use TensorStack to securely pack the true component shapes natively
     from phiml.math._tensors import TensorStack

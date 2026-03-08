@@ -1,31 +1,24 @@
-import os
-from data_structures import Simulation, Inflow, Fluid
+import math as pymath
 from phi.torch.flow import *
 import phi
+import numpy as np
 
-sim = Simulation(length_x=100, length_y=4, resolution=(10, 10), dt=0.05, total_time=2000)
-box = Box['x,y', 0:sim.length_x, 0:sim.length_y]
-v = CenteredGrid(1.0, bounds=box, x=10, y=10)
+# Create a mock environment
+v = StaggeredGrid(0, boundary={'x': ZERO_GRADIENT, 'y': 0}, bounds=Box['x,y', 0:100, 0:4], x=10, y=10)
 
-coords = tensor([[1, 2], [3, 4]], instance('pts'), channel(vector='x,y'))
-try:
-    print("Trying f.at()")
-    res = v.at(coords)
-    print("Success:", type(res))
-except Exception as e:
-    print("f.at failed:", e)
+v_u, v_v = math.unstack(v.values, '~vector')
+print(f"Original v_u shape: {v_u.shape}")
 
-try:
-    print("Trying f.at(PointCloud)")
-    from phi.geom import PointCloud
-    res = v.at(PointCloud(coords))
-    print("Success:", type(res))
-except Exception as e:
-    print("f.at(PointCloud) failed:", e)
+# Create mask
+mask = math.ones(v_u.shape['y']) * 5.0
+print(f"Mask shape: {mask.shape}")
 
-try:
-    print("Trying field.sample")
-    res = phi.field.sample(v, coords)
-    print("Success:", type(res))
-except Exception as e:
-    print("field.sample failed:", e)
+# Option 1: Concat
+mask_x1 = math.expand(mask, spatial(x=1))
+v_tensor_u = math.concat([mask_x1, v_u[{'x': slice(1, None)}]], dim='x')
+print(f"Concat v_tensor_u shape: {v_tensor_u.shape}")
+
+# Option 2: math.where with spatial index
+x_idx = math.range_tensor(v_u.shape['x'])
+v_tensor_u_where = math.where(x_idx == 0, mask, v_u)
+print(f"Where v_tensor_u shape: {v_tensor_u_where.shape}")

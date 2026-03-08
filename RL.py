@@ -282,7 +282,7 @@ class SwarmEnv(gym.Env):
             if self.p is not None:
                 pressure_profile = sample_field_around_obstacle(f=self.p, member=member, sim=self.sim, n=4)
             else:
-                pressure_profile = np.zeros(4, dtype=object)
+                pressure_profile = np.zeros(4, dtype=np.float32)
             obs.append([
                 member.location['x'], member.location['y'],
                 member.velocity['x'], member.velocity['y'],
@@ -520,26 +520,26 @@ class RolloutBufferMO:
         self.logprobs = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.dones = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         # Per-objective rewards and values (3 objectives)
-        self.rew_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.rew_coh = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.rew_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.val_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.val_coh = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.val_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.rew_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.rew_coh = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.rew_smooth = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.val_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.val_coh = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.val_smooth = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         # Per-member velocity progress
         self.num_members = int(num_members) if num_members is not None else 0
         if self.num_members > 0:
-            self.rew_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
-            self.val_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
-            self.adv_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
-            self.ret_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32)
+            self.rew_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32, device=device)
+            self.val_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32, device=device)
+            self.adv_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32, device=device)
+            self.ret_member_prog = torch.zeros((buffer_size, self.num_members), dtype=torch.float32, device=device)
         # Advantages and returns per objective
-        self.adv_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.adv_coh = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.adv_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.ret_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.ret_coh = torch.zeros((buffer_size,), dtype=torch.float32)
-        self.ret_smooth = torch.zeros((buffer_size,), dtype=torch.float32)
+        self.adv_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.adv_coh = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.adv_smooth = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.ret_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.ret_coh = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.ret_smooth = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.ptr = 0
         self.device = device
 
@@ -571,14 +571,14 @@ class RolloutBufferMO:
         last_v_loc_prog, last_v_coh, last_v_smooth = last_values[:3]
         last_v_members = last_values[3] if len(last_values) > 3 else None
         adv_lp, adv_c, adv_s = 0.0, 0.0, 0.0
-        adv_members = torch.zeros(self.num_members, dtype=torch.float32)
+        adv_members = torch.zeros(self.num_members, dtype=torch.float32, device=self.device)
         for t in reversed(range(self.ptr)):
             next_nonterminal = 1.0 - (self.dones[t+1] if t < self.ptr - 1 else last_done)
             next_v_loc_prog = self.val_loc_prog[t+1] if t < self.ptr - 1 else last_v_loc_prog
             next_v_coh = self.val_coh[t+1] if t < self.ptr - 1 else last_v_coh
             next_v_smooth = self.val_smooth[t+1] if t < self.ptr - 1 else last_v_smooth
             if self.num_members > 0:
-                next_v_members = self.val_member_prog[t+1] if t < self.ptr - 1 else (last_v_members if last_v_members is not None else torch.zeros(self.num_members))
+                next_v_members = self.val_member_prog[t+1] if t < self.ptr - 1 else (last_v_members if last_v_members is not None else torch.zeros(self.num_members, dtype=torch.float32, device=self.device))
 
             delta_lp = self.rew_loc_prog[t] + gamma * next_v_loc_prog * next_nonterminal - self.val_loc_prog[t]
             delta_c = self.rew_coh[t] + gamma * next_v_coh * next_nonterminal - self.val_coh[t]
@@ -915,10 +915,10 @@ def run_MOMAPPO(env, total_timesteps: int,
         last_obs_t = torch.tensor(obs_all[0].reshape(-1), dtype=torch.float32, device=dev)
         with torch.no_grad():
             last_vals = model.values(last_obs_t.unsqueeze(0))
-            lv_lp = last_vals[0][0].cpu()
-            lvc = last_vals[1][0].cpu()
-            lvs = last_vals[2][0].cpu()
-            lvm = (last_vals[3][0].cpu() if last_vals[3] is not None else None)
+            lv_lp = last_vals[0][0]
+            lvc = last_vals[1][0]
+            lvs = last_vals[2][0]
+            lvm = (last_vals[3][0] if last_vals[3] is not None else None)
             last_vals = (lv_lp, lvc, lvs, lvm)
         buffer.compute_gae(last_vals, float(last_dones[0]), gamma=gamma, lam=gae_lambda)
 

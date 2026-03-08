@@ -85,14 +85,15 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     swarm_mask = StaggeredGrid(swarm_geo, boundary=v.boundary, bounds=v.bounds,
                                x=sim.resolution[0], y=sim.resolution[1])
     v = v * (1.0 - swarm_mask)
+    from phiml.math._optimize import Diverged, NotConverged
     try:
         v, p = fluid.make_incompressible(
             velocity=v,
             obstacles=(),
             solve=Solve(method='CG', x0=p, rel_tol=5e-3, abs_tol=1e-5)
         )
-    except Diverged:
-        print(f'Time step {t} diverged')
+    except (Diverged, NotConverged) as e:
+        print(f'Time step {t} diverged or did not converge: {e}')
         return None, None, swarm
     if t >= RECORDING_TIME:
         # Vectorized sampling for all members to reduce Python overhead

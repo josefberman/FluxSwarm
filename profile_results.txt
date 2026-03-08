@@ -1,0 +1,38 @@
+         16866941 function calls (16662331 primitive calls) in 9.080 seconds
+
+   Ordered by: cumulative time
+   List reduced from 1416 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       10    0.001    0.000    9.181    0.918 /home/josef/Projects/FluxSwarm/RL.py:180(step)
+       10    0.003    0.000    6.931    0.693 /home/josef/Projects/FluxSwarm/simulation.py:54(step)
+  250/210    0.004    0.000    3.480    0.017 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phi/field/_resample.py:75(sample)
+       10    0.001    0.000    3.216    0.322 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phi/physics/fluid.py:94(make_incompressible)
+      600    0.001    0.000    2.723    0.005 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phi/field/_field.py:123(sampled_elements)
+      190    0.002    0.000    2.717    0.014 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phi/field/_field.py:871(get_faces)
+      250    0.005    0.000    2.569    0.010 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phi/field/_resample.py:241(sample_grid_at_centers)
+      310    0.002    0.000    2.303    0.007 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phi/field/_field.py:26(__call__)
+3320/1990    0.038    0.000    2.288    0.001 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/_magic_ops.py:85(stack)
+       10    0.003    0.000    2.247    0.225 /home/josef/Projects/FluxSwarm/RL.py:271(_get_observation)
+      160    0.008    0.000    2.244    0.014 /home/josef/Projects/FluxSwarm/simulation.py:140(sample_field_around_obstacle)
+11300/2860    0.021    0.000    2.190    0.001 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/_tree.py:494(slice_)
+ 2400/270    0.007    0.000    2.184    0.008 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/_ops.py:1231(broadcast_op)
+      210    0.002    0.000    2.182    0.010 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/_ops.py:1137(grid_sample)
+      210    0.011    0.000    2.167    0.010 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/_ops.py:1169(_grid_sample)
+     1400    0.012    0.000    2.111    0.002 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phi/geom/_grid.py:161(__getitem__)
+1520/1260    0.001    0.000    2.068    0.002 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/magic.py:558(__getitem__)
+      350    0.002    0.000    2.055    0.006 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phi/field/_field.py:83(__post_init__)
+23110/10730    0.096    0.000    2.001    0.000 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/_tensors.py:422(__getitem__)
+       10    0.000    0.000    1.794    0.179 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/_optimize.py:517(solve_linear)
+     2800    0.002    0.000    1.791    0.001 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/dataclasses/_dataclasses.py:34(__dataclass_getitem__)
+     2800    0.015    0.000    1.789    0.001 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/dataclasses/_dataclasses.py:241(getitem)
+       10    0.000    0.000    1.762    0.176 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/_functional.py:959(__call__)
+       10    0.000    0.000    1.751    0.175 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/backend/torch/_torch_backend.py:257(select_jit)
+       10    0.000    0.000    1.751    0.175 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/torch/autograd/function.py:567(apply)
+       10    0.000    0.000    1.750    0.175 {built-in method apply}
+       10    0.000    0.000    1.750    0.175 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/backend/torch/_torch_backend.py:1235(forward)
+       10    0.000    0.000    1.750    0.175 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/_functional.py:925(forward_native)
+       10    0.000    0.000    1.748    0.175 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/_optimize.py:646(_matrix_solve_forward)
+  820/250    0.007    0.000    1.744    0.007 /home/josef/anaconda3/envs/fluxswarm/lib/python3.11/site-packages/phiml/math/_ops.py:266(slice_off)
+
+

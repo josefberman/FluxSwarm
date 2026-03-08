@@ -31,13 +31,14 @@ NUM_PRESSURE_ANGLES = 4
 def generate_parabolic_profile_mask(v: Field, sim: Simulation, inflow: Inflow, t: float):
     trap_wave = beat_waveform(t=t, v_peak=inflow.amplitude, v_dia=0, tau=inflow.frequency, upstroke=inflow.upstroke, plateau=inflow.plateau, downstroke=inflow.downstroke)
     
-    R = int(sim.resolution[1] / 2)
-    delta = int(R / 2)
+    R = sim.resolution[1] / 2.0
+    delta = R / 2.0
     
     # Parse the exact unpadded vector components from the grid
     v_u, v_v = math.unstack(v.values, '~vector')
     
-    y_coords = math.linspace(0, 2*R, v_u.shape['y'])
+    # Ensure y_coords aligns with the exact cell centers of the staggered U component
+    y_coords = math.range_tensor(v_u.shape['y']) + 0.5
     
     # Default is trap_wave for core region
     mask = math.ones(v_u.shape['y']) * trap_wave
@@ -46,7 +47,7 @@ def generate_parabolic_profile_mask(v: Field, sim: Simulation, inflow: Inflow, t
     mask = math.where(y_coords < delta, trap_wave * (1 - (delta - y_coords)**2 / delta**2), mask)
     
     # Parabolic ramps at the top
-    mask = math.where(y_coords >= 2*R - delta, trap_wave * (1 - (y_coords - (2*R - delta))**2 / delta**2), mask)
+    mask = math.where(y_coords > 2*R - delta, trap_wave * (1 - (y_coords - (2*R - delta))**2 / delta**2), mask)
     
     return mask, v_u, v_v
 

@@ -55,11 +55,13 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     R = int(sim.resolution[1] / 2)
     delta = int(R / 2)
     
-    # Generate spatial mask using PhiFlow backend
-    y_coords = math.linspace(0, 2*R, 2*R)
+    # Parse the exact unpadded vector components from the grid
+    v_u, v_v = math.unstack(v.values, '~vector')
+    
+    y_coords = math.linspace(0, 2*R, v_u.shape['y'])
     
     # Default is trap_wave for core region
-    mask = math.ones(spatial(y=2*R)) * trap_wave
+    mask = math.ones(v_u.shape['y']) * trap_wave
     
     # Parabolic ramps at the bottom
     mask = math.where(y_coords < delta, trap_wave * (1 - (delta - y_coords)**2 / delta**2), mask)
@@ -67,15 +69,13 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     # Parabolic ramps at the top
     mask = math.where(y_coords >= 2*R - delta, trap_wave * (1 - (y_coords - (2*R - delta))**2 / delta**2), mask)
     
-    # Expand to x dimension
-    mask = math.expand(mask, spatial(x=sim.resolution[0]))
+    # Expand to match X dimension of U
+    v_tensor_u = math.expand(mask, v_u.shape['x'])
     
-    v_tensor_u = mask
-    
-    # For v component, just get the staggered tensor and crop to maintain size
-    v_tensor_v = v.staggered_tensor()[1]
-    v = StaggeredGrid(math.stack([v_tensor_u, v_tensor_v], dual(vector='x,y')), boundary=v.boundary, bounds=v.bounds,
-                      x=sim.resolution[0], y=sim.resolution[1])
+    # Use TensorStack to securely pack the true component shapes natively
+    from phiml.math._tensors import TensorStack
+    stacked_v = TensorStack((v_tensor_u, v_v), dual(vector='x,y'))
+    v = v.with_values(stacked_v)
     reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
     v = diffuse.explicit(v, 1 / reynolds, sim.dt)
     v = advect.semi_lagrangian(v, v, sim.dt)
@@ -89,7 +89,7 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         v, p = fluid.make_incompressible(
             velocity=v,
             obstacles=(),
-            solve=Solve(method='CG', x0=p, max_iterations=0, rel_tol=5e-3, abs_tol=1e-5)
+            solve=Solve(method='CG', x0=p, rel_tol=5e-3, abs_tol=1e-5)
         )
     except Diverged:
         print(f'Time step {t} diverged')
@@ -99,12 +99,11 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         pressure_profiles_all = sample_field_around_obstacles(
             f=p, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
         )  # shape: (num_members, n)
-        velocity_u_profiles_all = sample_field_around_obstacles(
-            f=v.staggered_tensor()[0], swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
-        )  # shape: (num_members, n)
-        velocity_v_profiles_all = sample_field_around_obstacles(
-            f=v.staggered_tensor()[1], swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
-        )  # shape: (num_members, n)
+        velocity_profiles = sample_field_around_obstacles(
+            f=v, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
+        )
+        velocity_u_profiles_all = velocity_profiles[..., 0] # shape: (num_members, n)
+        velocity_v_profiles_all = velocity_profiles[..., 1] # shape: (num_members, n)
         for i in range(len(swarm.members)):
             member = swarm.members[i]
             velocity_u_profile = velocity_u_profiles_all[i]
@@ -159,8 +158,10 @@ def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation, n: i
     coords = np.stack([x_world, y_world], axis=-1)
     coords_tensor = tensor(coords, spatial('n'), channel(vector='x,y'))
     
-    samples = f.sample_at(coords_tensor).numpy('n')
-    return samples.astype(np.float64)
+    samples = phi.field.sample(f, coords_tensor)
+    if 'vector' in samples.shape:
+        return samples.numpy('n,vector').astype(np.float64)
+    return samples.numpy('n').astype(np.float64)
 
 
 def sample_field_around_obstacles(f: Field, swarm: Swarm, sim: Simulation, n: int, offset=2) -> np.array:
@@ -193,9 +194,10 @@ def sample_field_around_obstacles(f: Field, swarm: Swarm, sim: Simulation, n: in
     # create generic Phiflow tensor from these coordinates
     coords_tensor = tensor(coords, instance('members'), spatial('n'), channel(vector='x,y'))
     
-    # Sample point cloud against the field
-    samples = f.sample_at(coords_tensor).numpy('members,n')
-    return samples.astype(np.float64)
+    samples = phi.field.sample(f, coords_tensor)
+    if 'vector' in samples.shape:
+        return samples.numpy('members,n,vector').astype(np.float64)
+    return samples.numpy('members,n').astype(np.float64)
 
 
 def _field_values_to_numpy(f: Field):

@@ -79,37 +79,42 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     :param force_actions: External force actions applied to the swarm.
     :return: Updated velocity and pressure fields, and the swarm state.
     """
-    mask_next, v_u, v_v = generate_parabolic_profile_mask(v, sim, inflow, t + sim.dt)
-    mask_current, _, _ = generate_parabolic_profile_mask(v, sim, inflow, t)
-    
-    # In incompressible flow, the entire fluid column accelerates instantly.
-    # Add the temporal difference to the entire field to preserve existing wakes.
-    delta_mask = mask_next - mask_current
-    v_tensor_u = v_u + math.expand(delta_mask, v_u.shape['x'])
-    
-    # Use TensorStack to securely pack the true component shapes natively
     from phiml.math._tensors import TensorStack
-    stacked_v = TensorStack((v_tensor_u, v_v), dual(vector='x,y'))
-    v = v.with_values(stacked_v)
-    reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
-    v = diffuse.explicit(v, 1 / reynolds, sim.dt)
-    v = advect.semi_lagrangian(v, v, sim.dt)
-    obstacles = swarm.as_obstacle_list()
-    swarm_shapes = [obs.geometry for obs in obstacles]
-    swarm_geo = union(swarm_shapes)
-    swarm_mask = StaggeredGrid(swarm_geo, boundary=v.boundary, bounds=v.bounds,
-                               x=sim.resolution[0], y=sim.resolution[1])
-    v = v * (1.0 - swarm_mask)
     from phiml.math._optimize import Diverged, NotConverged
-    try:
-        v, p = fluid.make_incompressible(
-            velocity=v,
-            obstacles=(),
-            solve=Solve(method='CG', x0=p, max_iterations=100_000, rel_tol=5e-3, abs_tol=1e-5)
-        )
-    except (Diverged, NotConverged) as e:
-        print(f'Time step {t} diverged or did not converge: {e}')
-        return None, None, swarm
+
+    dt_sub = sim.dt / sim.substeps
+    for step_idx in range(sim.substeps):
+        t_sub = t + step_idx * dt_sub
+        mask_next, v_u, v_v = generate_parabolic_profile_mask(v, sim, inflow, t_sub + dt_sub)
+        mask_current, _, _ = generate_parabolic_profile_mask(v, sim, inflow, t_sub)
+        
+        # In incompressible flow, the entire fluid column accelerates instantly.
+        # Add the temporal difference to the entire field to preserve existing wakes.
+        delta_mask = mask_next - mask_current
+        v_tensor_u = v_u + math.expand(delta_mask, v_u.shape['x'])
+        
+        # Use TensorStack to securely pack the true component shapes natively
+        stacked_v = TensorStack((v_tensor_u, v_v), dual(vector='x,y'))
+        v = v.with_values(stacked_v)
+        reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
+        v = diffuse.explicit(v, 1 / reynolds, dt_sub)
+        v = advect.semi_lagrangian(v, v, dt_sub)
+        obstacles = swarm.as_obstacle_list()
+        swarm_shapes = [obs.geometry for obs in obstacles]
+        swarm_geo = union(swarm_shapes)
+        swarm_mask = StaggeredGrid(swarm_geo, boundary=v.boundary, bounds=v.bounds,
+                                   x=sim.resolution[0], y=sim.resolution[1])
+        v = v * (1.0 - swarm_mask)
+        
+        try:
+            v, p = fluid.make_incompressible(
+                velocity=v,
+                obstacles=(),
+                solve=Solve(method='CG', x0=p, max_iterations=100_000, rel_tol=5e-3, abs_tol=1e-5)
+            )
+        except (Diverged, NotConverged) as e:
+            print(f'Time sub-step {t_sub} diverged or did not converge: {e}')
+            return None, None, swarm
     if t >= RECORDING_TIME:
         # Vectorized sampling for all members to reduce Python overhead
         pressure_profiles_all = sample_field_around_obstacles(

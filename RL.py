@@ -373,8 +373,6 @@ class SwarmEnv(gym.Env):
                     cos_sim = 1.0
                 else:
                     cos_sim = float(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
-                # Map [-1,1] -> [-0.5, 0.5] (centered around 0)
-                smooth_vals.append(cos_sim / 2.0)
             else:
                 smooth_vals.append(0.0)  # orthogonal vectors
         smoothness = float(np.mean(smooth_vals))

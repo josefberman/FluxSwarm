@@ -190,7 +190,7 @@ class Simulation:
     """
 
     def __init__(self, length_x: float = 0, length_y: float = 0, resolution: tuple[int, int] = (0, 0), dt: float = 0,
-                 total_time: float = 0):
+                 total_time: float = 0, substeps: int = 1):
         self.length_x = length_x
         self.length_y = length_y
         self.resolution = resolution
@@ -199,3 +199,4 @@ class Simulation:
         self.dt = dt
         self.total_time = total_time
         self.time_steps = floor(self.total_time / self.dt)
+        self.substeps = substeps

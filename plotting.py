@@ -274,8 +274,8 @@ def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_hi
 
     # Smoothness (third)
     axes[2].plot(timesteps, sm, c='tab:orange', linewidth=1.0, label='smoothness')
-    axes[2].axhline(0.5, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Max possible reward
-    axes[2].axhline(-0.5, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Min possible reward
+    axes[2].axhline(1.0, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Max possible reward
+    axes[2].axhline(-1.0, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Min possible reward
     axes[2].set_title(f'Smoothness reward over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[2].set_xlabel('Time [s]')
     axes[2].set_ylabel('Smoothness')

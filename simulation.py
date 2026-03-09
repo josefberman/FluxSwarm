@@ -303,21 +303,30 @@ def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profi
         member.location['y'] = y_upper
         member.velocity['y'] = 0
 
-def advance_by_viscous_drag(member: Member, sim: Simulation, fluid: Fluid, velocity_u_profile: np.array, velocity_v_profile: np.array):
+def advance_by_viscous_drag(member: Member, sim: Simulation, fluid: Fluid, velocity_profile: np.array):
     """
     Advances the motion of a member within the simulation domain based on the viscous drag forces applied.
     :param member: The member object within the simulation whose motion is being updated.
     :param sim: The simulation context, containing environmental properties and grid
         characteristics such as domain size and timestep.
     :param fluid: The fluid object providing the viscosity for Stokes drag calculations.
-    :param velocity_u_profile: A numpy array representing the velocity profile in the x direction around the member.
-    :param velocity_v_profile: A numpy array representing the velocity profile in the y direction around the member.
+    :param velocity_profile: A numpy array representing the velocity profile in the x direction around the member.
     :return: None
     """
-    mean_velocity_u = np.mean(velocity_u_profile)
-    mean_velocity_v = np.mean(velocity_v_profile)
-    total_force_u = -6 * np.pi * fluid.viscosity * member.radius * (member.velocity['x']-mean_velocity_u)
-    total_force_v = -6 * np.pi * fluid.viscosity * member.radius * (member.velocity['y']-mean_velocity_v)
+    velocity_u_profile, velocity_v_profile = velocity_profile
+    v_rel_u = np.mean(velocity_u_profile) - (-member.velocity['x'])
+    v_rel_v = np.mean(velocity_v_profile) - (-member.velocity['y'])
+    v_mag = np.sqrt(v_rel_u**2 + v_rel_v**2) + 1e-9 # avoid division by zero
+    rho = 1.06 # density of blood in mg/mm^3
+    Re = rho * v_mag * 2 * member.radius / fluid.viscosity
+    if Re < 0.1:
+        cd = 24/Re
+    else:
+        cd = 24/Re * (1 + 0.15 * Re**0.687)
+    area = np.pi * member.radius**2
+    f_mag = 0.5 * rho * v_mag**2 * area * cd
+    total_force_u = -f_mag * v_rel_u / v_mag
+    total_force_v = -f_mag * v_rel_v / v_mag
     prev_velocity_x = member.velocity['x']
     prev_velocity_y = member.velocity['y']
     member.velocity['x'] += float(total_force_u / member.mass * sim.dt)
@@ -436,18 +445,18 @@ def resolve_collisions(swarm: Swarm, sim: Simulation, restitution: float = 0.0) 
         # Positional correction
         overlap = min_dist[i, j] - d
         correction = 0.5 * overlap * n
-        pos[i] -= correction
-        pos[j] += correction
+        pos[i] += correction
+        pos[j] -= correction
 
         # Velocity response
-        rel_v = vel[j] - vel[i]
-        rel_normal_speed = np.dot(rel_v, n)
+        v_rel = vel[i] - vel[j]
+        v_sep = np.dot(v_rel, n)
         
-        if rel_normal_speed < 0:
-            j_imp = -(1.0 + restitution) * rel_normal_speed / (inv_masses[i] + inv_masses[j] + 1e-12)
+        if v_sep < 0:
+            j_imp = -(1.0 + restitution) * v_sep / (inv_masses[i] + inv_masses[j] + 1e-12)
             impulse = j_imp * n
-            vel[i] -= impulse * inv_masses[i]
-            vel[j] += impulse * inv_masses[j]
+            vel[i] += impulse * inv_masses[i]
+            vel[j] -= impulse * inv_masses[j]
 
     # Batch damp and clamp to domain
     x_lower = radii

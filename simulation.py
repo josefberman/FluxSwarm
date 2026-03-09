@@ -124,7 +124,7 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
             member = swarm.members[i]
             velocity_u_profile = velocity_u_profiles_all[i]
             velocity_v_profile = velocity_v_profiles_all[i]
-            advance_by_viscous_drag(member=member, sim=sim, fluid=fluid_obj, velocity_u_profile=velocity_u_profile, velocity_v_profile=velocity_v_profile)
+            advance_by_viscous_drag(member=member, sim=sim, fluid=fluid_obj, velocity_profile=(velocity_u_profile, velocity_v_profile))
             pressure_profile = pressure_profiles_all[i]
             advance_by_pressure_gradient(member=member, sim=sim, pressure_profile=pressure_profile)
             advance_by_forces(member=member, sim=sim, fluid=fluid_obj, internal_forces=force_actions,

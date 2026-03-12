@@ -27,13 +27,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--length_y", type=float, default=4.0, help="Simulation domain length in y-direction (default: 4.0)")
     parser.add_argument("--fields", type=str, default=None, help="Path to fields npz file for background visualization")
     parser.add_argument("--field_type", type=str, default=None, choices=['vx', 'vy', 'p'], help="Field type to display (vx, vy, or p)")
+    parser.add_argument("--subsample", type=int, default=1, help="Only render every Nth timestep to save time/memory (default: 1)")
     return parser.parse_args()
 
 
-def read_locations(csv_path: str) -> pd.DataFrame:
+def read_locations(csv_path: str, subsample: int = 1) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
     if "timestep" in df.columns:
         df = df.sort_values("timestep").reset_index(drop=True)
+    if subsample > 1:
+        df = df.iloc[::subsample].reset_index(drop=True)
     return df
 
 
@@ -65,95 +68,82 @@ def compute_axis_limits(df: pd.DataFrame, member_ids: List[int]) -> Tuple[Tuple[
     return (x_min - x_pad, x_max + x_pad), (y_min - y_pad, y_max + y_pad)
 
 
-def load_fields(fields_path: str) -> dict:
+def load_fields(fields_path: str, subsample: int = 1) -> dict:
     """
-    Load fields from compressed npz file.
-    
-    Handles two formats:
-    1. Combined file: single npz with arrays of shape (timesteps, x, y)
-    2. Directory pattern: path to directory containing step_*.npz files (will be handled by caller)
+    Load fields from a single combined .npz file (shape: (timesteps, x, y)).
+    Subsamples by keeping every Nth timestep.
     """
     data = np.load(fields_path)
     
-    # Check if this is a combined file (has 'timesteps' plural) or single step file
     if 'timesteps' in data:
-        # Combined file format
-        return {
-            'vx': data['vx'],  # Shape: (timesteps, x, y)
-            'vy': data['vy'],  # Shape: (timesteps, x, y)
-            'p': data['p'],    # Shape: (timesteps, x, y)
-            'timestep': data['timesteps'],  # Array of timesteps
-            'length_x': float(data['length_x']),
-            'length_y': float(data['length_y'])
-        }
-    elif 'timestep' in data:
-        # Single step file - check if it's a scalar or array
-        timestep_data = data['timestep']
-        if timestep_data.ndim == 0:
-            # Single scalar - this is a single step file, need to combine
-            raise ValueError("Single step file provided. Use load_fields_from_directory() or provide combined file.")
-        else:
-            # Array - combined format with 'timestep' key
-            return {
-                'vx': data['vx'],
-                'vy': data['vy'],
-                'p': data['p'],
-                'timestep': timestep_data,
-                'length_x': float(data['length_x']),
-                'length_y': float(data['length_y'])
-            }
+        key = 'timesteps'
+    elif 'timestep' in data and data['timestep'].ndim > 0:
+        key = 'timestep'
     else:
-        raise ValueError(f"Unknown field file format: missing 'timestep' or 'timesteps' key")
+        raise ValueError("Single step file provided. Use a directory of step_*.npz files instead.")
+    
+    return {
+        'vx': data['vx'][::subsample],
+        'vy': data['vy'][::subsample],
+        'p':  data['p'][::subsample],
+        'timestep': data[key][::subsample],
+        'length_x': float(data['length_x']),
+        'length_y': float(data['length_y'])
+    }
 
 
-def load_fields_from_directory(fields_dir: str) -> dict:
-    """Load and combine all step_*.npz files from a directory."""
+def scan_fields_directory(fields_dir: str) -> Tuple[np.ndarray, List[str]]:
+    """
+    Scan a directory of step_*.npz files and return:
+      - sorted array of timestep values
+      - corresponding sorted list of file paths
+    Does NOT load any field data — just reads the 'timestep' scalar from each file.
+    """
     import glob
-    
-    # Find all step files
-    pattern = os.path.join(fields_dir, "step_*.npz")
-    fields_files = sorted(glob.glob(pattern))
-    
-    if not fields_files:
+    files = sorted(glob.glob(os.path.join(fields_dir, "step_*.npz")))
+    if not files:
         raise ValueError(f"No step_*.npz files found in {fields_dir}")
-    
-    print(f"Loading {len(fields_files)} field step files from {fields_dir}...")
-    
-    vx_list = []
-    vy_list = []
-    p_list = []
-    timesteps_list = []
-    length_x = None
-    length_y = None
-    
-    for field_file in fields_files:
-        data = np.load(field_file)
-        vx_list.append(data['vx'])  # Shape: (x, y)
-        vy_list.append(data['vy'])  # Shape: (x, y)
-        p_list.append(data['p'])    # Shape: (x, y)
-        timesteps_list.append(float(data['timestep']))
-        
-        # Store metadata from first file
+
+    timesteps = []
+    for f in files:
+        d = np.load(f)
+        timesteps.append(float(d['timestep']))
+    return np.array(timesteps, dtype=np.float64), files
+
+
+def load_fields_for_frames(fields_dir: str, frame_times: np.ndarray) -> dict:
+    """
+    For each timestamp in `frame_times` (the subsampled CSV timesteps),
+    find the nearest field file and load it. Returns a dict of stacked arrays
+    perfectly aligned to `frame_times`.
+    """
+    field_timesteps, field_files = scan_fields_directory(fields_dir)
+    print(f"Field directory contains {len(field_files)} snapshots covering "
+          f"t=[{field_timesteps[0]:.2f}, {field_timesteps[-1]:.2f}]")
+
+    vx_list, vy_list, p_list = [], [], []
+    length_x = length_y = None
+
+    for t in frame_times:
+        idx = int(np.argmin(np.abs(field_timesteps - t)))
+        data = np.load(field_files[idx])
+        vx_list.append(data['vx'])
+        vy_list.append(data['vy'])
+        p_list.append(data['p'])
         if length_x is None:
             length_x = float(data['length_x'])
             length_y = float(data['length_y'])
-    
-    # Stack into arrays: (timesteps, x, y)
-    vx_array = np.stack(vx_list, axis=0)
-    vy_array = np.stack(vy_list, axis=0)
-    p_array = np.stack(p_list, axis=0)
-    timesteps_array = np.array(timesteps_list, dtype=np.float64)
-    
-    print(f"  Combined into arrays with shape: vx={vx_array.shape}, vy={vy_array.shape}, p={p_array.shape}")
-    
+
+    print(f"  Loaded {len(vx_list)} field frames matching {len(frame_times)} animation frames")
     return {
-        'vx': vx_array,  # Shape: (timesteps, x, y)
-        'vy': vy_array,  # Shape: (timesteps, x, y)
-        'p': p_array,    # Shape: (timesteps, x, y)
-        'timestep': timesteps_array,  # Array of timesteps
+        'vx': np.stack(vx_list, axis=0),
+        'vy': np.stack(vy_list, axis=0),
+        'p':  np.stack(p_list,  axis=0),
+        'timestep': frame_times,
         'length_x': length_x,
-        'length_y': length_y
+        'length_y': length_y,
     }
+
 
 
 def build_colors(n: int) -> List[str]:
@@ -273,10 +263,11 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
     num_frames = len(df)
 
     def update(frame_idx: int):
-        # Update field background if present
+        # Update field background if present — fields_data is already aligned to df rows
         artists = []
-        if field_img and fields_data:
+        if field_img is not None and fields_data is not None:
             field_array = fields_data[field_type]
+            # fields_data was built exactly matching df rows, so direct index is correct
             if frame_idx < len(field_array):
                 field_img.set_data(field_array[frame_idx].T)
                 artists.append(field_img)
@@ -298,15 +289,22 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
             t = float(df["timestep"].iloc[frame_idx])
             time_text.set_text(f"t = {t:.2f} s")
         else:
-            # Fallback: derive from frame index and 0.05 s per frame
             time_text.set_text(f"t = {frame_idx * 0.05:.2f} s")
         
         return [*artists, *circles, com_circle, time_text]
 
-    # Each frame is 0.05 seconds → 20 fps
-    fps_used = 20
+    # Compute FPS from actual timestep gap in the (possibly subsampled) df
+    # so the video always plays at real-time speed regardless of subsampling.
+    if "timestep" in df.columns and len(df) > 1:
+        dt_frame = float(df["timestep"].iloc[1] - df["timestep"].iloc[0])
+        fps_used = max(1, round(1.0 / dt_frame))
+    else:
+        fps_used = fps  # fall back to user-supplied fps
+    frame_interval_ms = max(1, int(1000 / fps_used))
+    print(f"  Animation: {num_frames} frames at {fps_used} fps "
+          f"(real-time dt per frame = {frame_interval_ms / 1000:.3f} s)")
     fig.tight_layout()
-    ani = animation.FuncAnimation(fig, update, frames=num_frames, interval=50, blit=True)
+    ani = animation.FuncAnimation(fig, update, frames=num_frames, interval=frame_interval_ms, blit=True)
 
     # Ensure directory exists
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
@@ -323,73 +321,55 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
 
 def main() -> None:
     args = parse_args()
-    df = read_locations(args.csv)
+    df = read_locations(args.csv, args.subsample)
     
+    # Gather the actual simulation timestamps we'll be animating
+    if "timestep" in df.columns:
+        frame_times = df["timestep"].to_numpy(dtype=np.float64)
+    else:
+        frame_times = None
+
     # Load fields if provided
     fields_data = None
     if args.fields:
         print(f"Loading fields from {args.fields}...")
-        # Check if it's a directory or a file
         if os.path.isdir(args.fields):
-            fields_data = load_fields_from_directory(args.fields)
+            if frame_times is not None:
+                # Load only the field snapshots that match our animation frames
+                fields_data = load_fields_for_frames(args.fields, frame_times)
+            else:
+                # No timesteps in CSV — fall back to loading all and using direct index
+                fields_data = load_fields_for_frames(args.fields,
+                    np.linspace(0, 1, len(df)))  # dummy; index-based fallback
         else:
-            try:
-                fields_data = load_fields(args.fields)
-            except ValueError as e:
-                if "Single step file" in str(e):
-                    # Try treating it as a directory pattern
-                    fields_dir = os.path.dirname(args.fields)
-                    if os.path.isdir(fields_dir):
-                        fields_data = load_fields_from_directory(fields_dir)
-                    else:
-                        raise
-                else:
-                    raise
+            fields_data = load_fields(args.fields, args.subsample)
         
         print(f"  Loaded {len(fields_data['timestep'])} field snapshots")
         print(f"  VX range: [{fields_data['vx'].min():.2e}, {fields_data['vx'].max():.2e}]")
         print(f"  VY range: [{fields_data['vy'].min():.2e}, {fields_data['vy'].max():.2e}]")
-        print(f"  P range: [{fields_data['p'].min():.2e}, {fields_data['p'].max():.2e}]")
+        print(f"  P range:  [{fields_data['p'].min():.2e}, {fields_data['p'].max():.2e}]")
         
-        # If field_type is not specified but fields are provided, create all three animations
         if args.field_type is None:
             print("\nCreating animations for all three fields...")
-            base_output = args.output.rsplit('.', 1)[0]  # Remove extension
-            
+            base_output = args.output.rsplit('.', 1)[0]
             for field_type in ['vx', 'vy', 'p']:
                 output_path = f"{base_output}_{field_type}.mp4"
                 print(f"Creating {field_type} animation -> {output_path}")
                 create_animation(
-                    df=df, 
-                    output_path=output_path, 
-                    fps=args.fps, 
-                    radius=args.radius, 
-                    length_x=args.length_x, 
-                    length_y=args.length_y,
-                    fields_data=fields_data,
-                    field_type=field_type
+                    df=df, output_path=output_path, fps=args.fps, radius=args.radius,
+                    length_x=args.length_x, length_y=args.length_y,
+                    fields_data=fields_data, field_type=field_type
                 )
         else:
-            # Create single animation with specified field type
             create_animation(
-                df=df, 
-                output_path=args.output, 
-                fps=args.fps, 
-                radius=args.radius, 
-                length_x=args.length_x, 
-                length_y=args.length_y,
-                fields_data=fields_data,
-                field_type=args.field_type
+                df=df, output_path=args.output, fps=args.fps, radius=args.radius,
+                length_x=args.length_x, length_y=args.length_y,
+                fields_data=fields_data, field_type=args.field_type
             )
     else:
-        # No fields, create basic animation
         create_animation(
-            df=df, 
-            output_path=args.output, 
-            fps=args.fps, 
-            radius=args.radius, 
-            length_x=args.length_x, 
-            length_y=args.length_y
+            df=df, output_path=args.output, fps=args.fps, radius=args.radius,
+            length_x=args.length_x, length_y=args.length_y
         )
 
 

@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--length_x", type=float, default=100, help="Simulation domain length in x (default: 100)")
     parser.add_argument("--length_y", type=float, default=4, help="Simulation domain length in y (default: 4)")
     parser.add_argument("--radius", type=float, default=0.25, help="Circle radius (default: 0.25)")
+    parser.add_argument("--subsample", type=int, default=1, help="Only render every Nth timestep to save time/memory (default: 1)")
     
     args = parser.parse_args()
     
@@ -65,7 +66,8 @@ def main():
         f'--fields "{fields_dir}" '
         f'--length_x {args.length_x} '
         f'--length_y {args.length_y} '
-        f'--radius {args.radius}'
+        f'--radius {args.radius} '
+        f'--subsample {args.subsample}'
     )
     
     print(f"\nRunning command:\n{cmd}\n")

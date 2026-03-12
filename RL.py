@@ -240,7 +240,7 @@ class SwarmEnv(gym.Env):
                 vx=vx_np,
                 vy=vy_np,
                 p=p_np,
-                timestep=self.episode_time,
+                timestep=self.current_time,
                 length_x=self.sim.length_x,
                 length_y=self.sim.length_y,
                 resolution=self.sim.resolution
@@ -369,10 +369,15 @@ class SwarmEnv(gym.Env):
                 v2 = np.array([a_curr['x'], a_curr['y']], dtype=float)
                 n1 = np.linalg.norm(v1)
                 n2 = np.linalg.norm(v2)
-                if n1 == 0.0 or n2 == 0.0:
+                # SAFEGUARD: Catch perfectly 0-velocity instances or extreme floating point underflow
+                if n1 < 1e-8 or n2 < 1e-8:
                     cos_sim = 1.0
                 else:
-                    cos_sim = float(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
+                    val = np.dot(v1, v2) / (n1 * n2)
+                    if not np.isfinite(val):
+                        print("[WARNING: RL.py] NaN/Inf detected in smoothness reward calculation.")
+                        val = 1.0
+                    cos_sim = float(np.clip(val, -1.0, 1.0))
             else:
                 smooth_vals.append(0.0)  # orthogonal vectors
         smoothness = float(np.mean(smooth_vals))
@@ -501,7 +506,10 @@ class ActorCriticMO(nn.Module):
     def forward(self, obs: torch.Tensor):
         x = self.torso(obs)
         mu = self.mu(x)
-        std = torch.exp(self.log_std)
+        # SAFEGUARD: Prevent log_std from becoming too small (which makes std=0 and log_prob=NaN)
+        # or too large (which makes std=Inf)
+        clamped_log_std = torch.clamp(self.log_std, min=-20.0, max=2.0)
+        std = torch.exp(clamped_log_std)
         return mu, std
 
     def values(self, obs: torch.Tensor):
@@ -663,7 +671,15 @@ def pcgrad_merge(model: nn.Module, losses: list[torch.Tensor]):
             gj = grads[j]
             dot = torch.dot(gi, gj)
             if dot < 0:
-                proj = (dot / (gj.norm()**2 + 1e-12)) * gj
+                norm_sq = gj.norm()**2
+                # SAFEGUARD: Prevent divide by zero or NaN if gj norm exploded
+                if not torch.isfinite(norm_sq) or norm_sq < 1e-12:
+                    print(f"[WARNING: RL.py] PCGrad exploded norm detected on grad {j} - skipping projection")
+                    continue
+                proj = (dot / (norm_sq + 1e-12)) * gj
+                if torch.isnan(proj).any() or torch.isinf(proj).any():
+                    print(f"[WARNING: RL.py] PCGrad NaN/Inf projection generated - skipping")
+                    continue
                 gi = gi - proj
         if i == 0:
             merged = gi
@@ -955,8 +971,20 @@ def run_MOMAPPO(env, total_timesteps: int,
                 b_retc = b_retc.to(dev)
                 b_rets = b_rets.to(dev)
 
+                # Skip batch if observations or old log-probs contain NaN
+                if torch.isnan(b_obs).any() or torch.isnan(b_logp_old).any():
+                    print("[MOMAPPO] WARNING: NaN in batch obs/logprobs — skipping batch")
+                    continue
+
                 mu, std = model(b_obs)
+
+                # Skip batch if network produced NaN (weights already corrupted)
+                if torch.isnan(mu).any():
+                    print("[MOMAPPO] WARNING: NaN in actor output (mu) — skipping batch")
+                    continue
+
                 dist = Normal(mu, std)
+
                 logp = dist.log_prob(b_actions).sum(-1)
                 ratio = torch.exp(logp - b_logp_old)
 
@@ -991,6 +1019,16 @@ def run_MOMAPPO(env, total_timesteps: int,
                 total_aux = vf_coef * loss_v - ent_coef * entropy
                 total_aux.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+                # Guard: skip optimizer step if any gradient is NaN
+                # (clip_grad_norm_ cannot rescue NaN grads — NaN/NaN = NaN scaling)
+                grad_nan = any(
+                    p.grad is not None and torch.isnan(p.grad).any()
+                    for p in model.parameters()
+                )
+                if grad_nan:
+                    print("[MOMAPPO] WARNING: NaN gradient detected — skipping optimizer step")
+                    optimizer.zero_grad(set_to_none=True)
+                    continue
                 optimizer.step()
 
                 epoch_entropies.append(float(entropy.detach()))

@@ -264,10 +264,13 @@ def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profi
     cos_angles = np.cos(angles)
     sin_angles = np.sin(angles)
 
-    # lin_force_x = -np.sum(pressure_profile * cos_angles) * d_theta * member.radius
-    # lin_force_y = -np.sum(pressure_profile * sin_angles) * d_theta * member.radius
     lin_force_x = -np.sum(pressure_profile * cos_angles) * member.radius**2
     lin_force_y = -np.sum(pressure_profile * sin_angles) * member.radius**2
+    
+    # SAFEGUARD: Check for exploding pressure forces
+    if not np.isfinite(lin_force_x) or not np.isfinite(lin_force_y):
+        print("[WARNING: simulation.py] NaN/Inf detected in pressure gradient force. Clamping to 0.")
+        lin_force_x, lin_force_y = 0.0, 0.0
     # Add force due to gradient in x
     x_pred_minus = member.location['x'] + member.velocity[
         'x'] * sim.dt + 0.5 * lin_force_x / member.mass * sim.dt * sim.dt - member.radius
@@ -332,6 +335,12 @@ def advance_by_viscous_drag(member: Member, sim: Simulation, fluid: Fluid, veloc
     f_mag = 0.5 * rho * v_mag**2 * area * cd
     total_force_u = -f_mag * v_rel_u / v_mag
     total_force_v = -f_mag * v_rel_v / v_mag
+    
+    # SAFEGUARD: Catch exploding drag forces (e.g. from infinite relative velocity)
+    if not np.isfinite(total_force_u) or not np.isfinite(total_force_v):
+        print("[WARNING: simulation.py] NaN/Inf detected in viscous drag force. Clamping to 0.")
+        total_force_u, total_force_v = 0.0, 0.0
+        
     prev_velocity_x = member.velocity['x']
     prev_velocity_y = member.velocity['y']
     member.velocity['x'] += float(total_force_u / member.mass * sim.dt)
@@ -367,6 +376,11 @@ def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
             n = r_ij / dist
             if 0 < dist < (2 * other_member.radius + 2 * np.max([sim.dx, sim.dy])):
                 total_force += np.dot(internal_forces[i] * other_member.max_force, n)
+    # SAFEGUARD: Catch diverging internal/contact forces
+    if not np.isfinite(total_force).all():
+        print("[WARNING: simulation.py] NaN/Inf detected in internal/contact forces. Clamping to 0.")
+        total_force = np.zeros(2)
+        
     x_pred_minus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[
         0] / member.mass * sim.dt * sim.dt - member.radius
     x_pred_plus = member.location['x'] + member.velocity['x'] * sim.dt + 0.5 * total_force[

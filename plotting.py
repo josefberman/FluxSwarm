@@ -68,8 +68,7 @@ def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
         including their historical positions.
     :return: None
     """
-    data_dict = {'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt,
-                                         num=len(swarm.members[0].previous_locations))}
+    data_dict = {'timestep': np.array([t + sim.dt for t in range(len(swarm.members[0].previous_locations))])}
     for i, member in enumerate(swarm.members):
         data_dict[f'location_{i}_x'] = [item['x'] for item in member.previous_locations]
         data_dict[f'location_{i}_y'] = [item['y'] for item in member.previous_locations]
@@ -110,9 +109,7 @@ def plot_save_actions(folder_name: str, sim: Simulation, swarm: Swarm):
     action data as a CSV file and generates plots for visualization that highlight
     both individual member actions and the average actions.
     """
-    data_dict = {'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt,
-                                         num=len(swarm.members[0].previous_actions))}
-
+    data_dict = {'timestep': np.array([t + sim.dt for t in range(len(swarm.members[0].previous_actions))])}
     for i, member in enumerate(swarm.members):
         data_dict[f'action_{i}_x'] = [item['x'] for item in member.previous_actions]
         data_dict[f'action_{i}_y'] = [item['y'] for item in member.previous_actions]
@@ -163,8 +160,7 @@ def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
     :type swarm: Swarm
     :return: None
     """
-    data_dict = {'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt,
-                                         num=len(swarm.members[0].previous_velocities))}
+    data_dict = {'timestep': np.array([t + sim.dt for t in range(len(swarm.members[0].previous_velocities))])}
     for i, member in enumerate(swarm.members):
         data_dict[f'velocity_{i}_x'] = [item['x'] for item in member.previous_velocities]
         data_dict[f'velocity_{i}_y'] = [item['y'] for item in member.previous_velocities]

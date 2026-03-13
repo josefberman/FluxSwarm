@@ -111,7 +111,7 @@ If exploration is too aggressive, adjust parameters incrementally:
 
 All hyperparameters are automatically logged to:
 ```
-../runs/{folder_name}/hyperparameters_{timestamp}.txt
+run/{folder_name}/hyperparameters_{timestamp}.txt
 ```
 
 This ensures full reproducibility of training runs.

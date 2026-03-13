@@ -107,7 +107,7 @@ class SwarmEnv(gym.Env):
         self.episode_index = 0
         self.episode_cum_reward = 0.0
         self.episode_cum_objectives = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
-        self.episodes_csv_path = f"../runs/{self.folder}/episodes_summary_{self.pid}.csv"
+        self.episodes_csv_path = f"run/{self.folder}/episodes_summary_{self.pid}.csv"
         # Initial x_COM for centering reward
         xs_initial = np.array([m.location['x'] for m in self.swarm.members], dtype=float)
         self.x_com_initial = float(np.mean(xs_initial))
@@ -124,8 +124,8 @@ class SwarmEnv(gym.Env):
         self.action_space = spaces.Box(
             low=-1.0, high=1.0, shape=(len(swarm.members), 2), dtype=np.float32
         )
-        os.makedirs(f'../runs/{self.folder}/PPO/velocity_{self.pid}', exist_ok=True)
-        os.makedirs(f'../runs/{self.folder}/PPO/pressure_{self.pid}', exist_ok=True)
+        os.makedirs(f'run/{self.folder}/PPO/velocity_{self.pid}', exist_ok=True)
+        os.makedirs(f'run/{self.folder}/PPO/pressure_{self.pid}', exist_ok=True)
 
     def reset(self, seed=None, options=None):
         """
@@ -229,7 +229,7 @@ class SwarmEnv(gym.Env):
             p_np = self.p.values.numpy('x,y').astype(np.float64)
             
             # Create output directory
-            output_dir = f"../runs/{self.folder}/fields"
+            output_dir = f"run/{self.folder}/fields"
             os.makedirs(output_dir, exist_ok=True)
             
             # Save each field snapshot
@@ -256,8 +256,8 @@ class SwarmEnv(gym.Env):
             self._finalize_episode(terminated=terminated, truncated=truncated)
 
         # if self.current_timestep % 10 == 0:
-        #     write(self.v, f'../runs/{self.folder}/velocity/velocity_{self.current_timestep}')
-        #     write(self.p, f'../runs/{self.folder}/pressure/pressure_{self.current_timestep}')
+        #     write(self.v, f'run/{self.folder}/velocity/velocity_{self.current_timestep}')
+        #     write(self.p, f'run/{self.folder}/pressure/pressure_{self.current_timestep}')
 
         info = {
             'reward_components': self.last_reward_components,
@@ -307,7 +307,7 @@ class SwarmEnv(gym.Env):
     def _finalize_episode(self, terminated: bool, truncated: bool) -> None:
         """Append a row to episodes CSV with cumulative per-objective rewards and status."""
         status = 'terminated' if terminated and not truncated else ('truncated' if truncated and not terminated else 'both')
-        os.makedirs(f'../runs/{self.folder}', exist_ok=True)
+        os.makedirs(f'run/{self.folder}', exist_ok=True)
         file_exists = os.path.exists(self.episodes_csv_path)
         with open(self.episodes_csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
@@ -470,10 +470,10 @@ class RewardLoggerCallback(BaseCallback):
         #     for i in range(len(v_attr)):
         #         if v_attr[i] is not None:
         #             phi.field.write(v_attr[i],
-        #                             f'../runs/{folder_attr[i]}/PPO/velocity_{pid_attr[i]}/velocity_{current_time_attr[i]:.3f}')
+        #                             f'run/{folder_attr[i]}/PPO/velocity_{pid_attr[i]}/velocity_{current_time_attr[i]:.3f}')
         #         if p_attr[i] is not None:
         #             phi.field.write(p_attr[i],
-        #                             f'../runs/{folder_attr[i]}/PPO/pressure_{pid_attr[i]}/pressure_{current_time_attr[i]:.3f}')
+        #                             f'run/{folder_attr[i]}/PPO/pressure_{pid_attr[i]}/pressure_{current_time_attr[i]:.3f}')
         # plot_save_fields(v_attr[i], p_attr[i], folder_attr[i], pid_attr[i], current_time_attr[i], sim_attr[i])
         return True
 
@@ -717,19 +717,19 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_steps = 128
     if isinstance(env, VecEnv):
-        if os.path.exists(f"../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip"):
-            model = PPO.load(f"../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip", env=env)
+        if os.path.exists(f"run/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip"):
+            model = PPO.load(f"run/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip", env=env)
             print('Successfully loaded model')
         else:
             model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=32,
                         device=device, gamma=0.95, learning_rate=0.0003, ent_coef=0.01, n_epochs=10,
-                        tensorboard_log=f"../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo_tb")
+                        tensorboard_log=f"run/{env.get_attr('folder')[0]}/swarm_rl_ppo_tb")
         model.learn(total_timesteps=timesteps * env.num_envs, log_interval=1, progress_bar=True,
                     callback=RewardLoggerCallback(), reset_num_timesteps=False)
-        model.save(f"../runs/{env.get_attr('folder')[0]}/swarm_rl_ppo")
+        model.save(f"run/{env.get_attr('folder')[0]}/swarm_rl_ppo")
         for env_i in range(env.num_envs):
             date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
-            os.makedirs(f"../runs/{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}", exist_ok=True)
+            os.makedirs(f"run/{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}", exist_ok=True)
             plot_save_locations(folder_name=f"{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}",
                                 sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
             plot_save_velocities(folder_name=f"{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}",
@@ -740,17 +740,17 @@ def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
                               sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
             # plot_save_fields(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/', pid=env.get_attr('pid')[env_i])
     elif isinstance(env, SwarmEnv):
-        if os.path.exists(f"../runs/{env.folder}/swarm_rl_ppo.zip"):
-            model = PPO.load(f"../runs/{env.folder}/swarm_rl_ppo.zip", env=env)
+        if os.path.exists(f"run/{env.folder}/swarm_rl_ppo.zip"):
+            model = PPO.load(f"run/{env.folder}/swarm_rl_ppo.zip", env=env)
             print('Successfully loaded model')
         else:
             model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=num_steps, device=device, gamma=0.95,
-                        tensorboard_log=f"../runs/{env.folder}/swarm_rl_ppo_tb")
+                        tensorboard_log=f"run/{env.folder}/swarm_rl_ppo_tb")
         model.learn(total_timesteps=timesteps, log_interval=1, progress_bar=True, callback=RewardLoggerCallback(),
                     reset_num_timesteps=False)
-        model.save(f"../runs/{env.folder}/swarm_rl_ppo")
+        model.save(f"run/{env.folder}/swarm_rl_ppo")
         date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
-        os.makedirs(f"../runs/{env.folder}/PPO/{date_stamp}", exist_ok=True)
+        os.makedirs(f"run/{env.folder}/PPO/{date_stamp}", exist_ok=True)
         plot_save_locations(folder_name=f"{env.folder}/PPO/{date_stamp}", sim=env.sim, swarm=env.swarm)
         plot_save_velocities(folder_name=f"{env.folder}/PPO/{date_stamp}", sim=env.sim, swarm=env.swarm)
         plot_save_rewards(folder_name=f"{env.folder}/PPO/{date_stamp}", rewards=env.rewards, sim=env.sim)
@@ -768,7 +768,7 @@ def run_SAC(env: SwarmEnv):
     """
     model = SAC('MlpPolicy', env, verbose=2, device='cpu', gamma=0.95, tau=0.1)
     model.learn(total_timesteps=env.sim.time_steps, progress_bar=True)
-    model.save(f'../runs/{env.folder}/swarm_rl_sac')
+    model.save(f'run/{env.folder}/swarm_rl_sac')
 
     plot_save_locations(folder_name=f'{env.folder}/SAC', sim=env.sim, swarm=env.swarm)
     plot_save_velocities(folder_name=f'{env.folder}/SAC', sim=env.sim, swarm=env.swarm)
@@ -807,7 +807,7 @@ def run_MOMAPPO(env, total_timesteps: int,
         folder = '/'.join(folder_parts[:-1]) if len(folder_parts) > 1 else env_folder
     else:
         folder = env.folder
-    tb_log_dir = f"../runs/{folder}/MOMAPPO_tb"
+    tb_log_dir = f"run/{folder}/MOMAPPO_tb"
     os.makedirs(os.path.dirname(tb_log_dir), exist_ok=True)
     writer = SummaryWriter(log_dir=tb_log_dir)
 
@@ -828,7 +828,7 @@ def run_MOMAPPO(env, total_timesteps: int,
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     # Checkpointing (resume if requested)
-    ckpt_dir = f"../runs/{folder}/MOMAPPO/models"
+    ckpt_dir = f"run/{folder}/MOMAPPO/models"
     os.makedirs(ckpt_dir, exist_ok=True)
     latest_ckpt = f"{ckpt_dir}/model_latest.pt"
     if resume and os.path.exists(latest_ckpt):
@@ -1067,7 +1067,7 @@ def run_MOMAPPO(env, total_timesteps: int,
                 objectives_attr = env.get_attr('objectives_history')[env_idx]
                 pid_attr = env.get_attr('pid')[env_idx]
                 
-                run_dir = f"../runs/{env_folder}/MOMAPPO/{date_stamp}"
+                run_dir = f"run/{env_folder}/MOMAPPO/{date_stamp}"
                 os.makedirs(run_dir, exist_ok=True)
                 
                 plot_save_locations(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
@@ -1084,7 +1084,7 @@ def run_MOMAPPO(env, total_timesteps: int,
         rewards_attr = env.rewards
         objectives_attr = getattr(env, 'objectives_history', [])
 
-        run_dir = f"../runs/{folder}/MOMAPPO/{date_stamp}"
+        run_dir = f"run/{folder}/MOMAPPO/{date_stamp}"
         os.makedirs(run_dir, exist_ok=True)
         plot_save_locations(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
         plot_save_velocities(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)

@@ -37,7 +37,7 @@ def plot_save_fields(v: Field, p: Field, folder_name: str, pid: int, current_tim
     :type sim: Simulation
     :return: None
     """
-    os.makedirs(f'../runs/{folder_name}/PPO/figures/{pid}', exist_ok=True)
+    os.makedirs(f'run/{folder_name}/PPO/figures/{pid}', exist_ok=True)
     max_abs_velocity_x = np.max(np.abs(v['x'].numpy()))
     max_abs_velocity_y = np.max(np.abs(v['y'].numpy()))
     max_abs_pressure = np.max(np.abs(p.numpy()))
@@ -49,7 +49,7 @@ def plot_save_fields(v: Field, p: Field, folder_name: str, pid: int, current_tim
     ax[2].imshow(p.numpy().T * TO_MMHG, origin='lower', cmap='coolwarm_r', vmin=-max_abs_pressure,
                  vmax=max_abs_pressure, extent=[0, sim.length_x, 0, sim.length_y])
     plt.tight_layout()
-    plt.savefig(f'../runs/{folder_name}/PPO/figures/{pid}/timestep_{current_time:.3f}.jpg', dpi=300)
+    plt.savefig(f'run/{folder_name}/PPO/figures/{pid}/timestep_{current_time:.3f}.jpg', dpi=300)
     plt.close(fig)
 
 
@@ -73,7 +73,7 @@ def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
     for i, member in enumerate(swarm.members):
         data_dict[f'location_{i}_x'] = [item['x'] for item in member.previous_locations]
         data_dict[f'location_{i}_y'] = [item['y'] for item in member.previous_locations]
-    pd.DataFrame(data_dict).to_csv(f'../runs/{folder_name}/locations.csv')
+    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/locations.csv')
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     list_of_member_locations = []
     for member in swarm.members:
@@ -98,7 +98,7 @@ def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
     axes[1].set_ylabel('Location [mm]')
     axes[1].set_ylim(0, sim.length_y)
     plt.tight_layout()
-    plt.savefig(f'../runs/{folder_name}/locations.jpg', dpi=300)
+    plt.savefig(f'run/{folder_name}/locations.jpg', dpi=300)
 
 
 def plot_save_actions(folder_name: str, sim: Simulation, swarm: Swarm):
@@ -116,7 +116,7 @@ def plot_save_actions(folder_name: str, sim: Simulation, swarm: Swarm):
     for i, member in enumerate(swarm.members):
         data_dict[f'action_{i}_x'] = [item['x'] for item in member.previous_actions]
         data_dict[f'action_{i}_y'] = [item['y'] for item in member.previous_actions]
-    pd.DataFrame(data_dict).to_csv(f'../runs/{folder_name}/actions.csv')
+    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/actions.csv')
 
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     list_of_member_actions = []
@@ -140,7 +140,7 @@ def plot_save_actions(folder_name: str, sim: Simulation, swarm: Swarm):
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Action [mm/s]')
     plt.tight_layout()
-    plt.savefig(f'../runs/{folder_name}/actions.jpg', dpi=300)
+    plt.savefig(f'run/{folder_name}/actions.jpg', dpi=300)
 
 
 def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
@@ -168,7 +168,7 @@ def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
     for i, member in enumerate(swarm.members):
         data_dict[f'velocity_{i}_x'] = [item['x'] for item in member.previous_velocities]
         data_dict[f'velocity_{i}_y'] = [item['y'] for item in member.previous_velocities]
-    pd.DataFrame(data_dict).to_csv(f'../runs/{folder_name}/velocities.csv')
+    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/velocities.csv')
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     list_of_member_velocities = []
     for member in swarm.members:
@@ -191,7 +191,7 @@ def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Velocity [mm/s]')
     plt.tight_layout()
-    plt.savefig(f'../runs/{folder_name}/velocities.jpg', dpi=300)
+    plt.savefig(f'run/{folder_name}/velocities.jpg', dpi=300)
 
 
 def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
@@ -211,7 +211,7 @@ def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
     :return: None
     """
     pd.DataFrame({'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)),
-                  'reward': rewards}).to_csv(f'../runs/{folder_name}/rewards.csv')
+                  'reward': rewards}).to_csv(f'run/{folder_name}/rewards.csv')
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)), np.cumsum(rewards), c='k',
                  linewidth=0.5)
@@ -224,7 +224,7 @@ def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Step reward')
     plt.tight_layout()
-    plt.savefig(f'../runs/{folder_name}/rewards.jpg', dpi=300)
+    plt.savefig(f'run/{folder_name}/rewards.jpg', dpi=300)
 
 
 def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_history: list, title_suffix: str = ''):
@@ -244,13 +244,13 @@ def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_hi
     coh = [d.get('cohesion', 0.0) for d in objective_history]
     sm = [d.get('smoothness', 0.0) for d in objective_history]
 
-    os.makedirs(f'../runs/{folder_name}', exist_ok=True)
+    os.makedirs(f'run/{folder_name}', exist_ok=True)
     pd.DataFrame({
         'timestep': timesteps,
         'location_progress': loc_prog,
         'cohesion': coh,
         'smoothness': sm,
-    }).to_csv(f'../runs/{folder_name}/rewards_objectives.csv', index=False)
+    }).to_csv(f'run/{folder_name}/rewards_objectives.csv', index=False)
 
     fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(20, 12))
     
@@ -282,7 +282,7 @@ def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_hi
     # axes[2].legend(loc='best')
 
     plt.tight_layout()
-    plt.savefig(f'../runs/{folder_name}/rewards_objectives.jpg', dpi=300)
+    plt.savefig(f'run/{folder_name}/rewards_objectives.jpg', dpi=300)
 
 
 def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Swarm, imshow_data: np.ndarray,
@@ -344,8 +344,8 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, inflow: Inflow, folde
     :param folder_name: The name of the folder containing simulation data files used for animation.
     :return: None
     """
-    velocity_file_list = sorted(glob(f'../runs/{folder_name}/velocity/*.npz'))
-    pressure_file_list = sorted(glob(f'../runs/{folder_name}/pressure/*.npz'))
+    velocity_file_list = sorted(glob(f'run/{folder_name}/velocity/*.npz'))
+    pressure_file_list = sorted(glob(f'run/{folder_name}/pressure/*.npz'))
     velocity_data = [np.load(file) for file in velocity_file_list]
     pressure_data = [np.load(file) for file in pressure_file_list]
     max_abs_velocity_x = np.max(np.abs([file['data'][:, :, 0] for file in velocity_data]))
@@ -397,8 +397,8 @@ def animate_save_simulation(sim: Simulation, swarm: Swarm, inflow: Inflow, folde
     mpl.rcParams['animation.ffmpeg_path'] = r"C:\Users\Josef\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0-full_build\bin\ffmpeg.exe"
     ffmpeg_writer = animation.FFMpegWriter(fps=10, codec='h264', bitrate=-1)
     ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), blit=True, repeat=False)
-    ani.save(f'../runs/{folder_name}/animation_fast.mp4', ffmpeg_writer, dpi=200)
+    ani.save(f'run/{folder_name}/animation_fast.mp4', ffmpeg_writer, dpi=200)
     ffmpeg_writer = animation.FFMpegWriter(fps=1, codec='h264', bitrate=-1)
     ani = animation.FuncAnimation(fig, update, frames=len(pressure_data), blit=True, repeat=False)
-    ani.save(f'../runs/{folder_name}/animation_slow.mp4', ffmpeg_writer, dpi=200)
+    ani.save(f'run/{folder_name}/animation_slow.mp4', ffmpeg_writer, dpi=200)
     return None

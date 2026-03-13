@@ -19,13 +19,13 @@ def create_folders_for_run(folder_name) -> None:
     :param folder_name:
     :return: None
     """
-    os.makedirs(f'../runs/{folder_name}', exist_ok=True)
-    os.makedirs(f'../runs/{folder_name}/velocity', exist_ok=True)
-    os.makedirs(f'../runs/{folder_name}/pressure', exist_ok=True)
-    os.makedirs(f'../runs/{folder_name}/inflow', exist_ok=True)
-    os.makedirs(f'../runs/{folder_name}/figures', exist_ok=True)
-    os.makedirs(f'../runs/{folder_name}/PPO', exist_ok=True)
-    os.makedirs(f'../runs/{folder_name}/SAC', exist_ok=True)
+    os.makedirs(f'run/{folder_name}', exist_ok=True)
+    os.makedirs(f'run/{folder_name}/velocity', exist_ok=True)
+    os.makedirs(f'run/{folder_name}/pressure', exist_ok=True)
+    os.makedirs(f'run/{folder_name}/inflow', exist_ok=True)
+    os.makedirs(f'run/{folder_name}/figures', exist_ok=True)
+    os.makedirs(f'run/{folder_name}/PPO', exist_ok=True)
+    os.makedirs(f'run/{folder_name}/SAC', exist_ok=True)
     return None
 
 
@@ -39,7 +39,7 @@ def log_parameters(folder_name, sim: Simulation, swarm: Swarm, inflow: Inflow, f
     :param fluid: Fluid object to save fluid properties.
     :return: None
     """
-    with open(f'../runs/{folder_name}/configuration.txt', 'w') as f:
+    with open(f'run/{folder_name}/configuration.txt', 'w') as f:
         f.write('Simulation:\n')
         f.write(f'--{sim.length_x=}\n')
         f.write(f'--{sim.length_y=}\n')
@@ -85,7 +85,7 @@ def log_hyperparameters(folder_name: str, **hyperparams) -> None:
     :return: None
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = f'../runs/{folder_name}/hyperparameters_{timestamp}.txt'
+    log_path = f'run/{folder_name}/hyperparameters_{timestamp}.txt'
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     
     with open(log_path, 'w') as f:

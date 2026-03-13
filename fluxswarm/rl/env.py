@@ -71,7 +71,7 @@ class SwarmEnv(gym.Env):
         self.episode_index = 0
         self.episode_cum_reward = 0.0
         self.episode_cum_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
-        self.episodes_csv_path = f"../runs/{self.folder}/episodes_summary.csv"
+        self.episodes_csv_path = f"run/{self.folder}/episodes_summary.csv"
         # run_dir will be set by run_MOMAPPO after initialization for incremental CSV saving
         self.run_dir = None
         self.rewards = []
@@ -109,8 +109,8 @@ class SwarmEnv(gym.Env):
         """
         base_path = self.run_dir if self.run_dir else self.folder
         return (
-            f"../runs/{base_path}/locations.csv",
-            f"../runs/{base_path}/velocities.csv"
+            f"run/{base_path}/locations.csv",
+            f"run/{base_path}/velocities.csv"
         )
     
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[np.ndarray, Dict]:
@@ -134,7 +134,7 @@ class SwarmEnv(gym.Env):
         # Initialize CSV files with headers if needed
         locations_csv_path, velocities_csv_path = self._get_csv_paths()
         base_path = self.run_dir if self.run_dir else self.folder
-        os.makedirs(f'../runs/{base_path}', exist_ok=True)
+        os.makedirs(f'run/{base_path}', exist_ok=True)
         
         if not self.locations_csv_initialized:
             with open(locations_csv_path, 'w', newline='') as f:
@@ -344,7 +344,7 @@ class SwarmEnv(gym.Env):
     def _finalize_episode(self, terminated: bool, truncated: bool) -> None:
         """Save episode summary to CSV."""
         status = 'terminated' if terminated and not truncated else ('truncated' if truncated and not terminated else 'both')
-        os.makedirs(f'../runs/{self.folder}', exist_ok=True)
+        os.makedirs(f'run/{self.folder}', exist_ok=True)
         
         file_exists = os.path.exists(self.episodes_csv_path)
         with open(self.episodes_csv_path, 'a', newline='') as f:
@@ -368,7 +368,7 @@ class SwarmEnv(gym.Env):
         
         # Use run_dir if available, otherwise folder
         base_path = self.run_dir if self.run_dir else self.folder
-        output_dir = f"../runs/{base_path}/fields"
+        output_dir = f"run/{base_path}/fields"
         os.makedirs(output_dir, exist_ok=True)
         
         vx_array = np.stack(self.fields_vx_list, axis=0)

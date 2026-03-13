@@ -23,7 +23,7 @@ def make_env():
                     folder=folder_name, save_fields=True)
 ```
 
-During training, fields are saved to: `../runs/{folder_name}/fields/fields_{pid}.npz`
+During training, fields are saved to: `run/{folder_name}/fields/fields_{pid}.npz`
 
 ### 2. Field Storage Format
 
@@ -46,7 +46,7 @@ The `.npz` file contains:
 Use the helper script to automatically create all three animations:
 
 ```bash
-python create_field_animations.py --run_folder "../runs/2025-1-1_12-30-45"
+python create_field_animations.py --run_folder "run/2025-1-1_12-30-45"
 ```
 
 This creates three MP4 files:
@@ -60,9 +60,9 @@ Create animation for a specific field:
 
 ```bash
 python animate_locations.py \
-    --csv "../runs/folder/MOMAPPO/timestamp/locations.csv" \
+    --csv "run/folder/MOMAPPO/timestamp/locations.csv" \
     --output "animation_vx.mp4" \
-    --fields "../runs/folder/fields/fields_12345.npz" \
+    --fields "run/folder/fields/fields_12345.npz" \
     --field_type vx \
     --length_x 100.0 \
     --length_y 4.0
@@ -221,7 +221,7 @@ python main.py
 # ... training runs with save_fields=True
 
 # 2. After training completes, create animations
-python create_field_animations.py --run_folder "../runs/2025-1-9_12-30-45"
+python create_field_animations.py --run_folder "run/2025-1-9_12-30-45"
 
 # 3. View animations
 # Open animation_vx.mp4, animation_vy.mp4, animation_p.mp4

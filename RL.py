@@ -378,9 +378,10 @@ class SwarmEnv(gym.Env):
                         print("[WARNING: RL.py] NaN/Inf detected in smoothness reward calculation.")
                         val = 1.0
                     cos_sim = float(np.clip(val, -1.0, 1.0))
+                smooth_vals.append(cos_sim)
             else:
-                smooth_vals.append(0.0)  # orthogonal vectors
-        smoothness = float(np.mean(smooth_vals))
+                smooth_vals.append(0.0)  # orthogonal vectors / insufficient history
+        smoothness = float(np.mean(smooth_vals)) if len(smooth_vals) > 0 else 0.0
         r_smooth = self.w_smooth * smoothness
 
         total_reward = r_location_progress + r_cohesion + r_smooth

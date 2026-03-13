@@ -25,15 +25,36 @@ assert backend.default_backend().set_default_device('GPU')
 
 
 def main(args):
-    print('Max force:', 3700)
+    print('Max force:', args.swarm_max_force)
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
-    sim = Simulation(length_x=100, length_y=4, resolution=(1000, 40), dt=0.05, total_time=100, substeps=10)
-    swarm = Swarm(num_x=4, num_y=4, left_location=49, bottom_location=0.5, member_interval_x=1, member_interval_y=1,
-                    member_radius=0.25, member_density=5.150,
-                    member_max_force=3700)  # density in mg/mm^3, force in mg*mm/s^2
+    sim = Simulation(
+        length_x=100,
+        length_y=4,
+        resolution=(1000, 40),
+        dt=args.dt,
+        total_time=args.total_time,
+        substeps=args.dt_substeps,
+    )
+    swarm = Swarm(
+        num_x=args.swarm_num_x,
+        num_y=args.swarm_num_y,
+        left_location=49,
+        bottom_location=0.5,
+        member_interval_x=1,
+        member_interval_y=1,
+        member_radius=0.25,
+        member_density=5.150,
+        member_max_force=args.swarm_max_force,
+    )  # density in mg/mm^3, force in mg*mm/s^2
     # inflow = Inflow(frequency=0.5, amplitude=10, h_shift=np.pi / 2, v_shift=25)
-    inflow = Inflow(frequency=1, amplitude=162, upstroke=0.2, plateau=0.15, downstroke=0.2) # velocity in mm/s
+    inflow = Inflow(
+        frequency=1,
+        amplitude=args.inflow_velocity,
+        upstroke=0.2,
+        plateau=0.15,
+        downstroke=0.2,
+    )  # velocity in mm/s
     inflow.center_x = 0
     fluid = Fluid(viscosity=3)  # viscosity of blood in mg/(mm*s)
 
@@ -104,12 +125,74 @@ if __name__ == '__main__':
     from multiprocessing import freeze_support
 
     freeze_support()
-    
-    parser = argparse.ArgumentParser(description='Run FluxSwarm simulation')
-    parser.add_argument('--save-fields', dest='save_fields', action='store_true', default=False,
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run the FluxSwarm reinforcement learning training loop.\n\n"
+            "This script sets up the fluid simulation, swarm layout, and inflow profile, "
+            "then trains a MOMAPPO agent using multiple parallel environments. "
+            "Use the flags below to override key simulation, swarm, and inflow parameters."
+        )
+    )
+    parser.add_argument(
+        '--save-fields',
+        dest='save_fields',
+        action='store_true',
+        default=False,
                         help='Save velocity and pressure fields to npz files (default: False)')
-    parser.add_argument('--no-save-fields', dest='save_fields', action='store_false',
+    parser.add_argument(
+        '--no-save-fields',
+        dest='save_fields',
+        action='store_false',
                         help='Disable saving fields to npz files')
+
+    # Simulation controls
+    parser.add_argument(
+        '--total-time',
+        type=float,
+        default=100.0,
+        help='Total simulation time in seconds for each episode (default: 100.0)',
+    )
+    parser.add_argument(
+        '--dt',
+        type=float,
+        default=0.05,
+        help='Base simulation timestep dt in seconds (default: 0.05)',
+    )
+    parser.add_argument(
+        '--dt-substeps',
+        type=int,
+        default=10,
+        help='Number of substeps per dt used in the simulator (default: 10)',
+    )
+
+    # Swarm layout controls
+    parser.add_argument(
+        '--swarm-num-x',
+        type=int,
+        default=4,
+        help='Number of swarm members along the x-direction (default: 4)',
+    )
+    parser.add_argument(
+        '--swarm-num-y',
+        type=int,
+        default=4,
+        help='Number of swarm members along the y-direction (default: 4)',
+    )
+    parser.add_argument(
+        '--swarm-max-force',
+        type=float,
+        default=3700.0,
+        help='Maximum propulsion force per swarm member in mg*mm/s^2 (default: 3700.0)',
+    )
+
+    # Inflow controls
+    parser.add_argument(
+        '--inflow-velocity',
+        type=float,
+        default=162.0,
+        help='Peak inflow centerline velocity in mm/s (default: 162.0)',
+    )
     
     args = parser.parse_args()
     main(args)

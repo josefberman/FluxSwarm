@@ -77,8 +77,8 @@ def main(args):
     # ----------- Reinforcement Learning - PPO ------------------
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
     
-    # PARALLELIZATION: Run 8 environments in parallel for better CPU/GPU utilization
-    num_envs = 8
+    # PARALLELIZATION: Run args.num_envs environments in parallel for better CPU/GPU utilization
+    num_envs = args.num_envs
     
     # Create timestamp for this training run
     run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -94,7 +94,7 @@ def main(args):
             )
         return _init
     
-    # Create SubprocVecEnv with 8 parallel environments
+    # Create SubprocVecEnv with args.num_envs parallel environments
     env = SubprocVecEnv([make_env(i) for i in range(num_envs)])
     print(f"[Parallelization] Running {num_envs} environments in parallel (timestamp: {run_timestamp})")
     
@@ -104,15 +104,15 @@ def main(args):
     # - clip_coef=0.2: Standard PPO clip range
     # - gamma=0.95: Standard discount factor for longer-horizon planning
     # - lr=3e-4: Standard learning rate
-    run_MOMAPPO(env, sim.time_steps, n_steps=256, batch_size=32, update_epochs=10, 
-                ent_coef=0.01, clip_coef=0.2, gamma=0.95, lr=3e-4)
+    run_MOMAPPO(env, sim.time_steps, n_steps=args.n_steps, batch_size=args.batch_size, update_epochs=args.update_epochs, 
+                ent_coef=args.ent_coef, clip_coef=args.clip_coef, gamma=args.gamma, lr=args.lr)
     
     # Log hyperparameters for reproducibility
     log_hyperparameters(folder_name, 
-                       n_steps=256, batch_size=32, update_epochs=10,
-                       ent_coef=0.01, clip_coef=0.2, gamma=0.95, lr=3e-4,
+                       n_steps=args.n_steps, batch_size=args.batch_size, update_epochs=args.update_epochs,
+                       ent_coef=args.ent_coef, clip_coef=args.clip_coef, gamma=args.gamma, lr=args.lr,
                        gae_lambda=0.95, vf_coef=0.5, total_timesteps=sim.time_steps,
-                       num_envs=num_envs, log_std_init=-1.0)
+                       num_envs=args.num_envs, log_std_init=-1.0)
 
     
 
@@ -192,6 +192,56 @@ if __name__ == '__main__':
         type=float,
         default=162.0,
         help='Peak inflow centerline velocity in mm/s (default: 162.0)',
+    )
+
+    # RL controls
+    parser.add_argument(
+        '--num-envs',
+        type=int,
+        default=8,
+        help='Number of parallel environments (default: 8)',
+    )
+    parser.add_argument(
+        '--n-steps',
+        type=int,
+        default=256,
+        help='Number of steps per environment (default: 256)',
+    )
+    parser.add_argument(
+        '--batch-size',
+        type=int,
+        default=32,
+        help='Batch size (default: 32)',
+    )
+    parser.add_argument(
+        '--update-epochs',
+        type=int,
+        default=10,
+        help='Number of update epochs (default: 10)',
+    )
+    parser.add_argument(
+        '--ent-coef',
+        type=float,
+        default=0.01,
+        help='Entropy coefficient (default: 0.01)',
+    )
+    parser.add_argument(
+        '--clip-coef',
+        type=float,
+        default=0.2,
+        help='Clip coefficient (default: 0.2)',
+    )
+    parser.add_argument(
+        '--gamma',
+        type=float,
+        default=0.95,
+        help='Discount factor (default: 0.95)',
+    )
+    parser.add_argument(
+        '--lr',
+        type=float,
+        default=3e-4,
+        help='Learning rate (default: 3e-4)',
     )
     
     args = parser.parse_args()

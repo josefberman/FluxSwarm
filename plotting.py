@@ -223,7 +223,8 @@ def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
     plt.savefig(f'run/{folder_name}/rewards.jpg', dpi=300)
 
 
-def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_history: list, title_suffix: str = ''):
+def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_history: list, title_suffix: str = '',
+                                objective_weights: tuple[float, float, float] = (16.0, 1.0, 1.0)):
     """
     Plot and save per-objective reward over time.
 
@@ -231,6 +232,8 @@ def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_hi
     :param sim: Simulation to get dt and total_time
     :param objective_history: list of dicts with keys 'location_progress', 'cohesion', 'smoothness'
     :param title_suffix: optional string appended to plot titles
+    :param objective_weights: (w_loc_prog, w_cohesion, w_smooth) used to convert weighted
+        rewards back to unweighted objectives if needed.
     :return: None
     """
     if len(objective_history) == 0:
@@ -239,6 +242,17 @@ def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_hi
     loc_prog = [d.get('location_progress', 0.0) for d in objective_history]
     coh = [d.get('cohesion', 0.0) for d in objective_history]
     sm = [d.get('smoothness', 0.0) for d in objective_history]
+
+    w_loc_prog, w_cohesion, w_smooth = objective_weights
+
+    # Ensure plotted objectives are unweighted. If history already looks unweighted,
+    # keep it as-is; otherwise divide by the configured objective weight.
+    if w_loc_prog > 0 and any(abs(v) > 1.5 for v in loc_prog):
+        loc_prog = [float(v) / float(w_loc_prog) for v in loc_prog]
+    if w_cohesion > 0 and any(abs(v) > 1.5 for v in coh):
+        coh = [float(v) / float(w_cohesion) for v in coh]
+    if w_smooth > 0 and any(abs(v) > 1.5 for v in sm):
+        sm = [float(v) / float(w_smooth) for v in sm]
 
     os.makedirs(f'run/{folder_name}', exist_ok=True)
     pd.DataFrame({

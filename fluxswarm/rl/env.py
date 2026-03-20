@@ -233,7 +233,6 @@ class SwarmEnv(gym.Env):
             'objectives': self.last_objectives,
             'terminated': terminated,
             'truncated': truncated,
-            'member_progress': getattr(self, 'last_member_progress_norm', [])
         }
         
         return self._get_observation(), reward, terminated, truncated, info
@@ -335,7 +334,6 @@ class SwarmEnv(gym.Env):
             'smoothness': float(r_smooth / self.w_smooth) if self.w_smooth > 0 else 0.0
         }
         
-        self.last_member_progress_norm = [float(dv_i / v_ref) for dv_i in dv_members]
         self.reward_components_history.append(self.last_reward_components.copy())
         self.objectives_history.append(self.last_objectives.copy())
         

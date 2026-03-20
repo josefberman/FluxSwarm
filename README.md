@@ -149,6 +149,26 @@ Recommended basic workflow:
 3. Run a short training job to verify end-to-end execution.
 4. Inspect TensorBoard and generated plots.
 
+## Citation
+
+If you use FluxSwarm in academic work, please cite this project.
+
+- Preferred metadata source: `CITATION.cff`
+- Repository: [https://github.com/josefberman/FluxSwarm](https://github.com/josefberman/FluxSwarm)
+
+Example BibTeX:
+
+```bibtex
+@software{berman_2026_fluxswarm,
+  author = {Berman, Josef},
+  title = {FluxSwarm},
+  year = {2026},
+  version = {0.1.0},
+  url = {https://github.com/josefberman/FluxSwarm},
+  license = {Apache-2.0}
+}
+```
+
 ## License
 
 This project is licensed under the Apache License 2.0. See the `LICENSE` file for details.

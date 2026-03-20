@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+title: "FluxSwarm"
+type: software
+version: "0.1.0"
+license: Apache-2.0
+abstract: "This work introduces a hybrid Computational Fluid Dynamics-Multi-Objective Multi-Agent Rein-forcement Learning (CFD-MO-MARL) framework for micro-robotic swarm locomotion in unsteady flow environments. The system directly couples a high-fidelity Navier-Stokes solver with decentralized reinforcement learning, enabling agents to learn physically consistent control strategies within dynamically evolving fluid fields rather than idealized or steady flows. Each micro-robot optimizes three concurrent objectives – upstream progression, swarm cohesion, and motion smoothness – whose competing gradients are reconciled using the Projected Conflicting Gradient (PCGrad) algorithm. By projecting conflicting policy-gradient components into orthogonal subspaces, PCGrad prevents destructive interference among objectives and accelerates convergence toward balanced, Pareto-optimal policies. The learned swarm behavior exhibits two dynamic regimes: an exploratory phase with high propulsion variance and a synchronized regime characterized by cohesive, low-variance motion. Structural correlations among cohesion, compactness, and inter-agent spacing (r ≥ 0.97) reveal that the swarm behaves as a quasi-elastic structure, adapting coherently to oscillatory shear without fragmentation. This CFD integrated, conflict-aware learning paradigm demonstrates that realistic, time-dependent fluid-agents interactions can be captured directly within reinforcement learning loops, offering a scalable route toward physically grounded swarm control for biomedical and environmental applications."
+keywords: "Multi-Objective Multi-Agent Reinforcement Learning, Computational Fluid Dynamics, Swarm Locomotion"
+authors:
+  - family-names: "Berman"
+    given-names: "Josef"
+repository-code: "https://github.com/josefberman/FluxSwarm"
+url: "https://github.com/josefberman/FluxSwarm"
+date-released: 2026-03-13

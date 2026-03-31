@@ -117,7 +117,9 @@ def consolidate_episodes(base_folder):
     
     # Determine the maximum number of episodes across all environments
     max_episodes = max(len(df) for df in env_dataframes)
+    num_envs = len(env_dataframes)
     print(f"Maximum episodes: {max_episodes}")
+    print(f"Number of environments: {num_envs}")
     
     # Create plots for each reward type with publication-quality formatting
     # Set matplotlib parameters for publication quality
@@ -136,6 +138,7 @@ def consolidate_episodes(base_folder):
     plt.rcParams['grid.linewidth'] = 0.5
     plt.rcParams['lines.linewidth'] = 1.5
     
+    reward_plot_data = {}
     for reward_col in reward_columns:
         # Create a matrix to store rolling means: rows=episodes, cols=environments
         window_size = 5
@@ -153,8 +156,14 @@ def consolidate_episodes(base_folder):
         mean_rewards = np.nanmean(reward_matrix, axis=1)
         std_rewards = np.nanstd(reward_matrix, axis=1)
         
-        # Create episode numbers
-        episodes = np.arange(1, max_episodes + 1)
+        # Create global episode index so x-axis reflects parallel environment count.
+        # Example: 70 episodes per env with 8 envs -> x-axis reaches 560.
+        episodes = np.arange(1, max_episodes + 1) * num_envs
+        reward_plot_data[reward_col] = {
+            'episodes': episodes,
+            'mean': mean_rewards,
+            'std': std_rewards,
+        }
         
         # Create the plot with single-column figure size (3.5 inches width for most journals)
         fig, ax = plt.subplots(figsize=(7, 4))
@@ -180,7 +189,7 @@ def consolidate_episodes(base_folder):
                 solid_capstyle='round')
         
         # Format axes
-        ax.set_xlabel('Episode', fontsize=11)
+        ax.set_xlabel('Episode (all environments)', fontsize=11)
         # Expand "cum" to "cumulative" for better readability
         ylabel = reward_col.replace('cum_', 'cumulative_').replace('_', ' ').title()
         ax.set_ylabel(ylabel, fontsize=11)
@@ -214,6 +223,77 @@ def consolidate_episodes(base_folder):
         plt.savefig(pdf_path, bbox_inches='tight', format='pdf')
         print(f"Saved PDF plot: {pdf_path}")
         
+        plt.close()
+
+    # Combined multi-panel plot with same consolidated logic (rolling mean across envs)
+    if len(reward_plot_data) > 0:
+        def _pretty_name(col_name: str) -> str:
+            return col_name.replace('cum_', 'cumulative_').replace('_', ' ').title()
+
+        color_map = {
+            'location_progress': 'tab:purple',
+            'cohesion': 'tab:green',
+            'smoothness': 'tab:orange',
+        }
+        # ref_lines = {
+        #     'location_progress': [400.0, 0.0],
+        #     'cohesion': [-3.0, -200.0],  # -0.75 is the best packing of 16 swarm members in a 4x4 grid, normalized by sqrt(100^2+4^2), times 20 seconds times 20 steps per second
+        #     'smoothness': [400.0, -400.0],
+        # }
+
+        combined_reward_columns = [
+            col for col in reward_columns
+            if col.lower() not in {'cum_total_reward', 'total_reward', 'reward'}
+        ]
+        if len(combined_reward_columns) == 0:
+            combined_reward_columns = reward_columns
+
+        fig, axes = plt.subplots(
+            nrows=len(combined_reward_columns),
+            ncols=1,
+            figsize=(11, 3.2 * len(combined_reward_columns))
+        )
+        if len(combined_reward_columns) == 1:
+            axes = [axes]
+
+        for idx, reward_col in enumerate(combined_reward_columns):
+            ax = axes[idx]
+            plot_data = reward_plot_data[reward_col]
+            episodes = plot_data['episodes']
+            mean_rewards = plot_data['mean']
+            std_rewards = plot_data['std']
+
+            key = reward_col.lower().replace('cum_', '')
+            line_color = color_map.get(key, 'black')
+
+            ax.plot(episodes, mean_rewards, color=line_color, linewidth=0.8)
+            ax.fill_between(
+                episodes,
+                mean_rewards - std_rewards,
+                mean_rewards + std_rewards,
+                alpha=0.18,
+                color=line_color,
+                edgecolor='none'
+            )
+
+            # for y in ref_lines.get(key, []):
+            #     ax.axhline(y, linestyle='dashed', color=line_color, linewidth=0.8, alpha=0.35)
+
+            ax.set_title(f'{_pretty_name(reward_col)} over episodes', fontweight='bold')
+            ax.set_xlabel('Episode')
+            ax.set_ylabel(_pretty_name(reward_col))
+            ax.grid(True, alpha=0.25, linewidth=0.5, linestyle='--')
+            ax.set_axisbelow(True)
+
+        plt.tight_layout()
+
+        combined_png = base_path / "rewards_combined_mean_std.png"
+        plt.savefig(combined_png, dpi=300, bbox_inches='tight', format='png')
+        print(f"Saved combined PNG plot: {combined_png}")
+
+        combined_pdf = base_path / "rewards_combined_mean_std.pdf"
+        plt.savefig(combined_pdf, bbox_inches='tight', format='pdf')
+        print(f"Saved combined PDF plot: {combined_pdf}")
         plt.close()
     
     # Also create consolidated Excel file with all data (for reference)

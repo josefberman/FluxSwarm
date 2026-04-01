@@ -5,7 +5,7 @@ from phi.field import write
 from phi.flow import *
 import phi.field as field
 from data_structures import Simulation, Swarm, Fluid, Inflow
-from simulation import step, sample_field_around_obstacle
+from simulation import step, sample_field_around_obstacles
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
 from plotting import plot_save_locations, plot_save_velocities, plot_save_rewards, plot_save_actions, plot_save_fields, plot_save_rewards_objectives
@@ -283,11 +283,12 @@ class SwarmEnv(gym.Env):
         :rtype: numpy.ndarray
         """
         obs = []
-        for member in self.swarm.members:
-            if self.p is not None:
-                pressure_profile = sample_field_around_obstacle(f=self.p, member=member, sim=self.sim, n=4)
-            else:
-                pressure_profile = np.zeros(4, dtype=np.float32)
+        if self.p is not None:
+            pressure_profiles = sample_field_around_obstacles(f=self.p, swarm=self.swarm, sim=self.sim, n=4)
+        else:
+            pressure_profiles = np.zeros((len(self.swarm.members), 4), dtype=np.float32)
+        for i, member in enumerate(self.swarm.members):
+            pressure_profile = pressure_profiles[i]
             obs.append([
                 member.location['x'], member.location['y'],
                 member.velocity['x'], member.velocity['y'],

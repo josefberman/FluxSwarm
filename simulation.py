@@ -146,10 +146,10 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
             solver = Solve(
                 method='CG',
                 x0=p,
-                max_iterations=10_000,
+                max_iterations=500,
                 rel_tol=1e-2,
                 abs_tol=1e-3,
-                supress=[NotConverged]
+                suppress=[NotConverged]
             )
             with SolveTape() as solves:
                 v, p = fluid.make_incompressible(
@@ -157,11 +157,11 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
                     obstacles=(),
                     solve=solver
                 )
-            info = solves[solver]
-            print(
-                f"[make_incompressible] t_sub={t_sub:.4f} "
-                f"iterations={info.iterations} residual={info.residual}"
-            )
+            # info = solves[solver]
+            # print(
+            #     f"[make_incompressible] t_sub={t_sub:.4f} "
+            #     f"iterations={info.iterations} residual={info.residual}"
+            # )
         except Diverged as e:
             print(f'Time sub-step {t_sub} diverged: {e}')
             pass

@@ -20,12 +20,46 @@ import phi.math
 from auxiliary import trapezoidal_waveform, beat_waveform
 from scipy.spatial import distance
 
-RECORDING_TIME = 0
-
 PADDING = 2
 
 # Number of angular samples around each member used for pressure sampling
 NUM_PRESSURE_ANGLES = 4
+_ANGLE_TRIG_CACHE: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+
+
+def _get_angle_trig(n: int) -> tuple[np.ndarray, np.ndarray]:
+    """Get cached cosine/sine vectors for n angular samples."""
+    cached = _ANGLE_TRIG_CACHE.get(n)
+    if cached is not None:
+        return cached
+    angles = np.arange(0, 2 * np.pi, 2 * np.pi / n, dtype=np.float64)
+    cos_a = np.cos(angles)
+    sin_a = np.sin(angles)
+    _ANGLE_TRIG_CACHE[n] = (cos_a, sin_a)
+    return cos_a, sin_a
+
+
+def build_sampling_coords_tensor(swarm: Swarm, sim: Simulation, n: int, offset=2):
+    """Build sampling coordinates around all members once for reuse across fields."""
+    cos_a, sin_a = _get_angle_trig(n)
+
+    member_x = np.array([m.location['x'] for m in swarm.members], dtype=np.float64)[:, None]
+    member_y = np.array([m.location['y'] for m in swarm.members], dtype=np.float64)[:, None]
+    member_r = np.array([m.radius for m in swarm.members], dtype=np.float64)[:, None]
+
+    x_world = member_x + member_r * cos_a
+    y_world = member_y + member_r * sin_a
+
+    # Adjust offsets exactly as before
+    x_world += np.sign(cos_a) * offset * (sim.length_x / sim.resolution[0])
+    y_world += np.sign(sin_a) * offset * (sim.length_y / sim.resolution[1])
+
+    # Clip coordinates to domain
+    x_world = np.clip(x_world, 0, sim.length_x)
+    y_world = np.clip(y_world, 0, sim.length_y)
+
+    coords = np.stack([x_world, y_world], axis=-1)  # shape (num_members, n, 2)
+    return tensor(coords, instance('members'), spatial('n'), channel(vector='x,y'))
 
 
 def generate_parabolic_profile_mask(v: Field, sim: Simulation, inflow: Inflow, t: float):
@@ -79,10 +113,17 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     :param force_actions: External force actions applied to the swarm.
     :return: Updated velocity and pressure fields, and the swarm state.
     """
+    from phiml.math import SolveTape
     from phiml.math._tensors import TensorStack
     from phiml.math._optimize import Diverged, NotConverged
 
     dt_sub = sim.dt / sim.substeps
+    # Swarm geometry is unchanged within a major step; build mask once.
+    obstacles = swarm.as_obstacle_list()
+    swarm_shapes = [obs.geometry for obs in obstacles]
+    swarm_geo = union(swarm_shapes)
+    swarm_mask = StaggeredGrid(swarm_geo, boundary=v.boundary, bounds=v.bounds,
+                               x=sim.resolution[0], y=sim.resolution[1])
     for step_idx in range(sim.substeps):
         t_sub = t + step_idx * dt_sub
         mask_next, v_u, v_v = generate_parabolic_profile_mask(v, sim, inflow, t_sub + dt_sub)
@@ -99,122 +140,97 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         reynolds = inflow.amplitude * sim.length_y / fluid_obj.viscosity
         v = diffuse.explicit(v, 1 / reynolds, dt_sub)
         v = advect.semi_lagrangian(v, v, dt_sub)
-        obstacles = swarm.as_obstacle_list()
-        swarm_shapes = [obs.geometry for obs in obstacles]
-        swarm_geo = union(swarm_shapes)
-        swarm_mask = StaggeredGrid(swarm_geo, boundary=v.boundary, bounds=v.bounds,
-                                   x=sim.resolution[0], y=sim.resolution[1])
         v = v * (1.0 - swarm_mask)
         
         try:
-            v, p = fluid.make_incompressible(
-                velocity=v,
-                obstacles=(),
-                solve=Solve(method='CG', x0=p, max_iterations=10_000, rel_tol=1e-2, abs_tol=1e-3)
+            solver = Solve(
+                method='CG',
+                x0=p,
+                max_iterations=10_000,
+                rel_tol=1e-2,
+                abs_tol=1e-3,
+                supress=[NotConverged]
             )
-        except (Diverged, NotConverged) as e:
-            print(f'Time sub-step {t_sub} diverged or did not converge: {e}')
-            return None, None, swarm
-    if t >= RECORDING_TIME:
-        # Vectorized sampling for all members to reduce Python overhead
-        pressure_profiles_all = sample_field_around_obstacles(
-            f=p, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
-        )  # shape: (num_members, n)
-        velocity_profiles = sample_field_around_obstacles(
-            f=v, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
-        )
-        velocity_u_profiles_all = velocity_profiles[..., 0] # shape: (num_members, n)
-        velocity_v_profiles_all = velocity_profiles[..., 1] # shape: (num_members, n)
-        for i in range(len(swarm.members)):
-            member = swarm.members[i]
-            velocity_u_profile = velocity_u_profiles_all[i]
-            velocity_v_profile = velocity_v_profiles_all[i]
-            advance_by_viscous_drag(member=member, sim=sim, fluid=fluid_obj, velocity_profile=(velocity_u_profile, velocity_v_profile))
-            pressure_profile = pressure_profiles_all[i]
-            advance_by_pressure_gradient(member=member, sim=sim, pressure_profile=pressure_profile)
-            advance_by_forces(member=member, sim=sim, fluid=fluid_obj, internal_forces=force_actions,
-                              swarm_members=swarm.members)
-            member.previous_locations.append(member.location.copy())
-            member.previous_velocities.append(member.velocity.copy())
-            member.previous_actions.append({'x': force_actions[i][0], 'y': force_actions[i][1]})
-        # Enforce collision constraints between members
-        resolve_collisions(swarm=swarm, sim=sim, restitution=0.2)
+            with SolveTape() as solves:
+                v, p = fluid.make_incompressible(
+                    velocity=v,
+                    obstacles=(),
+                    solve=solver
+                )
+            info = solves[solver]
+            print(
+                f"[make_incompressible] t_sub={t_sub:.4f} "
+                f"iterations={info.iterations} residual={info.residual}"
+            )
+        except Diverged as e:
+            print(f'Time sub-step {t_sub} diverged: {e}')
+            pass
+    # Vectorized sampling for all members to reduce Python overhead
+    coords_tensor = build_sampling_coords_tensor(
+        swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
+    )
+    pressure_profiles_all = sample_field_around_obstacles(
+        f=p, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2, coords_tensor=coords_tensor
+    )  # shape: (num_members, n)
+    velocity_profiles = sample_field_around_obstacles(
+        f=v, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2, coords_tensor=coords_tensor
+    )
+    pos, vel, radii, masses, max_forces = _extract_swarm_state_arrays(swarm)
+
+    pos, vel = vectorized_advance_by_viscous_drag(
+        pos=pos,
+        vel=vel,
+        radii=radii,
+        masses=masses,
+        sim=sim,
+        fluid=fluid_obj,
+        velocity_profiles=velocity_profiles,
+    )
+    pos, vel = vectorized_advance_by_pressure_gradient(
+        pos=pos,
+        vel=vel,
+        radii=radii,
+        masses=masses,
+        sim=sim,
+        pressure_profiles=pressure_profiles_all,
+    )
+    pos, vel = vectorized_advance_by_forces(
+        pos=pos,
+        vel=vel,
+        radii=radii,
+        masses=masses,
+        max_forces=max_forces,
+        sim=sim,
+        internal_forces=np.asarray(force_actions, dtype=np.float64),
+    )
+
+    _writeback_swarm_state_arrays(swarm, pos, vel)
+    # Enforce collision constraints between members
+    resolve_collisions(swarm=swarm, sim=sim, restitution=0.2)
+
+    # Capture post-collision state for trajectory histories
+    for i in range(len(swarm.members)):
+        member = swarm.members[i]
+        member.previous_locations.append(member.location.copy())
+        member.previous_velocities.append(member.velocity.copy())
+        member.previous_actions.append({'x': force_actions[i][0], 'y': force_actions[i][1]})
     return v, p, swarm
 
 
-def sample_field_around_obstacle(f: Field, member: Member, sim: Simulation, n: int, offset=2) -> np.array:
-    """
-    Samples the field values around a given obstacle in a simulation environment. The function generates
-    sampling points along the boundary of the obstacle, computes their respective offsets based on
-    the given distance, and then extracts the field values at the adjusted sample points.
-
-    :param f: The field containing the values to be sampled.
-    :type f: Field
-    :param member: The obstacle or object whose surrounding field values are to be sampled.
-    :type member: Member
-    :param sim: The simulation in which the field and the obstacle are defined.
-    :type sim: Simulation
-    :param n: The number of equally spaced angles used for sampling around the obstacle.
-    :type n: int
-    :param offset: The distance by which the sample points are offset along the direction of the sampled angles
-        around the obstacle. Default value is 2.
-    :type offset: int
-    :return: An array containing the sampled field values around the obstacle, where each entry corresponds
-        to a single sample point.
-    :rtype: np.array
-    """
-    angles = np.arange(0, 2 * np.pi, 2 * np.pi / n)
-    cos_a = np.cos(angles)
-    sin_a = np.sin(angles)
-
-    x_world = member.location['x'] + member.radius * cos_a
-    y_world = member.location['y'] + member.radius * sin_a
-
-    x_world += np.sign(cos_a) * offset * (sim.length_x / sim.resolution[0])
-    y_world += np.sign(sin_a) * offset * (sim.length_y / sim.resolution[1])
-    
-    x_world = np.clip(x_world, 0, sim.length_x)
-    y_world = np.clip(y_world, 0, sim.length_y)
-
-    coords = np.stack([x_world, y_world], axis=-1)
-    coords_tensor = tensor(coords, spatial('n'), channel(vector='x,y'))
-    
-    samples = phi.field.sample(f, coords_tensor)
-    if 'vector' in samples.shape:
-        return samples.numpy('n,vector').astype(np.float64)
-    return samples.numpy('n').astype(np.float64)
-
-
-def sample_field_around_obstacles(f: Field, swarm: Swarm, sim: Simulation, n: int, offset=2) -> np.array:
+def sample_field_around_obstacles(
+    f: Field,
+    swarm: Swarm,
+    sim: Simulation,
+    n: int,
+    offset=2,
+    coords_tensor=None
+) -> np.array:
     """
     Vectorized sampling of field around all members. Returns array of shape (num_members, n).
     """
-    num_members = len(swarm.members)
-    angles = np.arange(0, 2 * np.pi, 2 * np.pi / n)
-    cos_a = np.cos(angles)
-    sin_a = np.sin(angles)
+    if coords_tensor is None:
+        coords_tensor = build_sampling_coords_tensor(swarm=swarm, sim=sim, n=n, offset=offset)
 
-    member_x = np.array([m.location['x'] for m in swarm.members], dtype=np.float64)[:, None]
-    member_y = np.array([m.location['y'] for m in swarm.members], dtype=np.float64)[:, None]
-    member_r = np.array([m.radius for m in swarm.members], dtype=np.float64)[:, None]
-
-    x_world = member_x + member_r * cos_a
-    y_world = member_y + member_r * sin_a
-
-    # Adjust offsets exactly as before
-    x_world += np.sign(cos_a) * offset * (sim.length_x / sim.resolution[0])
-    y_world += np.sign(sin_a) * offset * (sim.length_y / sim.resolution[1])
-    
-    # Clip coordinates to domain
-    x_world = np.clip(x_world, 0, sim.length_x)
-    y_world = np.clip(y_world, 0, sim.length_y)
-    
-    # We want to use natively phi.field.Sample or similar.
-    # A PointCloud can resample the field directly at those coordinates!
-    coords = np.stack([x_world, y_world], axis=-1)  # shape (num_members, n, 2)
-    # create generic Phiflow tensor from these coordinates
-    coords_tensor = tensor(coords, instance('members'), spatial('n'), channel(vector='x,y'))
-    
     samples = phi.field.sample(f, coords_tensor)
     if 'vector' in samples.shape:
         return samples.numpy('members,n,vector').astype(np.float64)
@@ -236,6 +252,184 @@ def _field_values_to_numpy(f: Field):
         return f.numpy('x,y')
     except TypeError:
         return f.numpy()
+
+
+def _extract_swarm_state_arrays(swarm: Swarm):
+    """Extract member state into contiguous numpy arrays."""
+    pos = np.array([[m.location['x'], m.location['y']] for m in swarm.members], dtype=np.float64)
+    vel = np.array([[m.velocity['x'], m.velocity['y']] for m in swarm.members], dtype=np.float64)
+    radii = np.array([m.radius for m in swarm.members], dtype=np.float64)
+    masses = np.array([m.mass for m in swarm.members], dtype=np.float64)
+    max_forces = np.array([m.max_force for m in swarm.members], dtype=np.float64)
+    return pos, vel, radii, masses, max_forces
+
+
+def _writeback_swarm_state_arrays(swarm: Swarm, pos: np.ndarray, vel: np.ndarray) -> None:
+    """Write numpy array state back to member objects."""
+    for i, m in enumerate(swarm.members):
+        m.location['x'] = float(pos[i, 0])
+        m.location['y'] = float(pos[i, 1])
+        m.velocity['x'] = float(vel[i, 0])
+        m.velocity['y'] = float(vel[i, 1])
+
+
+def _apply_force_with_bounds(
+    pos: np.ndarray,
+    vel: np.ndarray,
+    force: np.ndarray,
+    radii: np.ndarray,
+    masses: np.ndarray,
+    sim: Simulation,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Integrate one force contribution with the same predictor/boundary logic as before."""
+    pos = pos.copy()
+    vel = vel.copy()
+    inv_masses = np.where(masses > 0, 1.0 / masses, 0.0)
+
+    dt = sim.dt
+    dt2 = dt * dt
+    x_lower = radii
+    x_upper = sim.length_x - radii
+    y_lower = radii
+    y_upper = sim.length_y - radii
+
+    # X component
+    x_acc = force[:, 0] * inv_masses
+    x_pred_minus = pos[:, 0] + vel[:, 0] * dt + 0.5 * x_acc * dt2 - radii
+    x_pred_plus = pos[:, 0] + vel[:, 0] * dt + 0.5 * x_acc * dt2 + radii
+    x_ok = (x_pred_minus > x_lower) & (x_pred_plus < x_upper)
+    prev_vx = vel[:, 0].copy()
+    vel[:, 0] = np.where(x_ok, vel[:, 0] + x_acc * dt, 0.0)
+    pos[:, 0] += 0.5 * (vel[:, 0] + prev_vx) * dt
+    clamped_x = (pos[:, 0] < x_lower) | (pos[:, 0] > x_upper)
+    pos[:, 0] = np.clip(pos[:, 0], x_lower, x_upper)
+    vel[:, 0] = np.where(clamped_x, 0.0, vel[:, 0])
+
+    # Y component
+    y_acc = force[:, 1] * inv_masses
+    y_pred_minus = pos[:, 1] + vel[:, 1] * dt + 0.5 * y_acc * dt2 - radii
+    y_pred_plus = pos[:, 1] + vel[:, 1] * dt + 0.5 * y_acc * dt2 + radii
+    y_ok = (y_pred_minus > y_lower) & (y_pred_plus < y_upper)
+    prev_vy = vel[:, 1].copy()
+    vel[:, 1] = np.where(y_ok, vel[:, 1] + y_acc * dt, 0.0)
+    pos[:, 1] += 0.5 * (vel[:, 1] + prev_vy) * dt
+    clamped_y = (pos[:, 1] < y_lower) | (pos[:, 1] > y_upper)
+    pos[:, 1] = np.clip(pos[:, 1], y_lower, y_upper)
+    vel[:, 1] = np.where(clamped_y, 0.0, vel[:, 1])
+
+    return pos, vel
+
+
+def vectorized_advance_by_viscous_drag(
+    pos: np.ndarray,
+    vel: np.ndarray,
+    radii: np.ndarray,
+    masses: np.ndarray,
+    sim: Simulation,
+    fluid: Fluid,
+    velocity_profiles: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorized viscous drag update for all members."""
+    velocity_u = velocity_profiles[..., 0]
+    velocity_v = velocity_profiles[..., 1]
+
+    v_rel_u = np.mean(velocity_u, axis=1) + vel[:, 0]
+    v_rel_v = np.mean(velocity_v, axis=1) + vel[:, 1]
+    v_mag = np.sqrt(v_rel_u**2 + v_rel_v**2) + 1e-9
+
+    rho = 1.06
+    Re = rho * v_mag * 2.0 * radii / fluid.viscosity
+    cd = np.where(
+        Re < 0.1,
+        24.0 / np.maximum(Re, 1e-12),
+        24.0 / np.maximum(Re, 1e-12) * (1.0 + 0.15 * Re**0.687)
+    )
+    area = np.pi * radii**2
+    f_mag = 0.5 * rho * v_mag**2 * area * cd
+    force_u = -f_mag * v_rel_u / v_mag
+    force_v = -f_mag * v_rel_v / v_mag
+    force = np.stack([force_u, force_v], axis=1)
+
+    bad = ~np.isfinite(force).all(axis=1)
+    if np.any(bad):
+        print("[WARNING: simulation.py] NaN/Inf detected in viscous drag force. Clamping to 0.")
+        force[bad] = 0.0
+
+    return _apply_force_with_bounds(pos, vel, force, radii, masses, sim)
+
+
+def vectorized_advance_by_pressure_gradient(
+    pos: np.ndarray,
+    vel: np.ndarray,
+    radii: np.ndarray,
+    masses: np.ndarray,
+    sim: Simulation,
+    pressure_profiles: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorized pressure-gradient update for all members."""
+    pressure_profiles = np.asarray(pressure_profiles, dtype=np.float64)
+    num_angles = pressure_profiles.shape[1] if pressure_profiles.ndim == 2 and pressure_profiles.shape[1] > 0 else 1
+    cos_angles, sin_angles = _get_angle_trig(num_angles)
+
+    lin_force_x = -np.sum(pressure_profiles * cos_angles[None, :], axis=1) * radii**2
+    lin_force_y = -np.sum(pressure_profiles * sin_angles[None, :], axis=1) * radii**2
+    force = np.stack([lin_force_x, lin_force_y], axis=1)
+
+    bad = ~np.isfinite(force).all(axis=1)
+    if np.any(bad):
+        print("[WARNING: simulation.py] NaN/Inf detected in pressure gradient force. Clamping to 0.")
+        force[bad] = 0.0
+
+    return _apply_force_with_bounds(pos, vel, force, radii, masses, sim)
+
+
+def vectorized_advance_by_forces(
+    pos: np.ndarray,
+    vel: np.ndarray,
+    radii: np.ndarray,
+    masses: np.ndarray,
+    max_forces: np.ndarray,
+    sim: Simulation,
+    internal_forces: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorized internal/contact-force update for all members."""
+    n_members = pos.shape[0]
+    if n_members == 0:
+        return pos, vel
+
+    forces = np.asarray(internal_forces, dtype=np.float64)
+    if forces.shape[0] != n_members:
+        raise ValueError("internal_forces length does not match swarm member count")
+
+    # Self internal force term (equivalent to member == other_member branch).
+    self_force = forces * max_forces[:, None]
+
+    # Pairwise geometry from i to j: r_ij = pos_j - pos_i
+    r_ij = pos[None, :, :] - pos[:, None, :]
+    dist = np.linalg.norm(r_ij, axis=2)
+    safe_dist = np.where(dist > 1e-12, dist, 1.0)
+    n_ij = r_ij / safe_dist[:, :, None]
+
+    # Contact mask equivalent to the original condition:
+    # 0 < dist < (2 * radius_j + 2 * max(dx,dy))
+    contact_thresh = 2.0 * radii[None, :] + 2.0 * max(sim.dx, sim.dy)
+    contact_mask = (dist > 0.0) & (dist < contact_thresh)
+    np.fill_diagonal(contact_mask, False)
+
+    # Original implementation adds scalar dot(...) to both components.
+    # Preserve that behavior exactly.
+    other_force = forces[None, :, :] * max_forces[None, :, None]
+    contact_scalar = np.sum(other_force * n_ij, axis=2)  # (i, j)
+    contact_scalar = np.where(contact_mask, contact_scalar, 0.0)
+    contact_sum = np.sum(contact_scalar, axis=1)  # (i,)
+    total_force = self_force + contact_sum[:, None]
+
+    bad = ~np.isfinite(total_force).all(axis=1)
+    if np.any(bad):
+        print("[WARNING: simulation.py] NaN/Inf detected in internal/contact forces. Clamping to 0.")
+        total_force[bad] = 0.0
+
+    return _apply_force_with_bounds(pos, vel, total_force, radii, masses, sim)
 
 
 def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profile: np.array):
@@ -441,28 +635,49 @@ def resolve_collisions(swarm: Swarm, sim: Simulation, restitution: float = 0.0) 
     masses = np.array([m.mass for m in swarm.members], dtype=np.float64)
     inv_masses = np.where(masses > 0, 1.0 / masses, 0.0)
 
-    # Calculate pairwise distances vector-style
-    diff = pos[:, np.newaxis, :] - pos[np.newaxis, :, :] # (num, num, 2)
-    dist_sq = np.sum(diff**2, axis=-1)
-    np.fill_diagonal(dist_sq, np.inf) # Ignore self-collision
+    # Broad phase via spatial hash to avoid full O(n^2) candidate set.
+    max_interaction = 2.0 * np.max(radii) + 2.0 * max(sim.dx, sim.dy)
+    cell_size = max(max_interaction, 1e-9)
+    cell_coords = np.floor(pos / cell_size).astype(np.int64)
 
-    dist = np.sqrt(dist_sq)
-    min_dist = radii[:, np.newaxis] + radii[np.newaxis, :]
+    buckets: dict[tuple[int, int], list[int]] = {}
+    for idx, c in enumerate(cell_coords):
+        key = (int(c[0]), int(c[1]))
+        if key not in buckets:
+            buckets[key] = []
+        buckets[key].append(idx)
 
-    # Find collisions (upper triangle only to avoid double-processing)
-    colliding = (dist < min_dist) & np.triu(np.ones((num, num), dtype=bool), k=1)
-    pairs = np.argwhere(colliding)
+    neighbor_offsets = [
+        (-1, -1), (-1, 0), (-1, 1),
+        (0, -1), (0, 0), (0, 1),
+        (1, -1), (1, 0), (1, 1),
+    ]
+    candidate_pairs: set[tuple[int, int]] = set()
+    for key, indices in buckets.items():
+        for i in indices:
+            for dx, dy in neighbor_offsets:
+                nkey = (key[0] + dx, key[1] + dy)
+                if nkey not in buckets:
+                    continue
+                for j in buckets[nkey]:
+                    if j <= i:
+                        continue
+                    candidate_pairs.add((i, j))
 
-    for i, j in pairs:
-        d = dist[i, j]
+    for i, j in sorted(candidate_pairs):
+        diff_ij = pos[i] - pos[j]
+        d = float(np.linalg.norm(diff_ij))
+        min_dist_ij = radii[i] + radii[j]
+        if not (d < min_dist_ij):
+            continue
         if d == 0.0:
             n = np.array([1.0, 0.0], dtype=np.float64)
             d = 1e-6
         else:
-            n = diff[i, j] / d
+            n = diff_ij / d
 
         # Positional correction
-        overlap = min_dist[i, j] - d
+        overlap = min_dist_ij - d
         correction = 0.5 * overlap * n
         pos[i] += correction
         pos[j] -= correction
@@ -487,8 +702,4 @@ def resolve_collisions(swarm: Swarm, sim: Simulation, restitution: float = 0.0) 
     pos[:, 1] = np.clip(pos[:, 1], y_lower, y_upper)
 
     # Write back to objects
-    for i, m in enumerate(swarm.members):
-        m.location['x'] = float(pos[i, 0])
-        m.location['y'] = float(pos[i, 1])
-        m.velocity['x'] = float(vel[i, 0])
-        m.velocity['y'] = float(vel[i, 1])
+    _writeback_swarm_state_arrays(swarm, pos, vel)

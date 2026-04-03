@@ -93,18 +93,22 @@ Run `python main.py --help` for the full command reference.
 
 ## Training and Rewards
 
-The environment computes three objective components:
+The environment computes **per-member** weighted rewards for three objectives, stacked as `info['reward_matrix']` with shape `(N, 3)` — columns: progress, energy efficiency, smoothness. Each row uses the same physics as before, but **not** averaged across the swarm before learning; MOMAPPO consumes this matrix for credit assignment.
 
-- `progress` — unweighted `clip(mean_i(u_fluid_x - v_member_x) / v_ref, -1, 1)`, with ring-mean fluid u_x (same sampling as in `simulation.step`) and `v_ref = max(|inflow.amplitude|, small constant)`.
-- `energy_efficiency`
-- `smoothness`
+- **Progress** — per member: `clip((u_fluid_x - v_x) / v_ref, -1, 1)` with ring-mean fluid u_x (see `simulation.step` sampling) and `v_ref = max(|inflow.amplitude|, small constant)`.
+- **Energy efficiency** — per member: `1 - ||F||/||F||_max` on the action-scaled force.
+- **Smoothness** — per member: cosine similarity between consecutive actions.
 
-The scalar reward used for environment reward accumulation is weighted by objective weights in `SwarmEnv` (for example `w_progress`, `w_energy`, `w_smooth`).
+**CTDE (MOMAPPO):** a shared **decentralized** actor maps each member’s local observation `(8,)` to actions `(2,)`. **Centralized** critics take the joint observation `(N·8,)` and output per-member values `(N,)` for each objective. The Gym `step` return `reward` is the mean over members of total weighted reward (for logging); training uses `reward_matrix`.
+
+**Checkpoints** from before the CTDE refactor are **not** compatible with the new `ActorCriticMO` (different architecture); retrain or rename old `model_latest.pt`.
+
+The scalar episode CSV / `last_objectives` summaries are **means over members** for readability.
 
 Current workflow in this repo:
 
-- **Optimization** (PPO updates) uses weighted reward components.
-- **Objective plotting** can use unweighted objective values for easier interpretation.
+- **Optimization** (PPO updates) uses per-agent weighted columns from `reward_matrix` with factorized policy log-probs.
+- **Objective plotting** uses mean objectives over agents from `last_objectives`.
 
 ## Outputs and Artifacts
 

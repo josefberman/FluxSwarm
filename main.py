@@ -25,7 +25,6 @@ assert backend.default_backend().set_default_device('GPU')
 
 
 def main(args):
-    print('Max force:', args.swarm_max_force)
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
     sim = Simulation(
@@ -162,8 +161,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--dt-substeps',
         type=int,
-        default=80,
-        help='Number of substeps per dt used in the simulator (default: 80)',
+        default=25,
+        help='Number of substeps per dt used in the simulator (default: 25)',
     )
 
     # Swarm layout controls
@@ -182,16 +181,16 @@ if __name__ == '__main__':
     parser.add_argument(
         '--swarm-max-force',
         type=float,
-        default=3700.0,
-        help='Maximum propulsion force per swarm member in mg*mm/s^2 (default: 3700.0)',
+        default=850.0,
+        help='Maximum propulsion force per swarm member in mg*mm/s^2 (default: 850.0)',
     )
 
     # Inflow controls
     parser.add_argument(
         '--inflow-velocity',
         type=float,
-        default=162.0,
-        help='Peak inflow centerline velocity in mm/s (default: 162.0)',
+        default=50.0,
+        help='Peak inflow centerline velocity in mm/s (default: 50.0)',
     )
 
     # RL controls

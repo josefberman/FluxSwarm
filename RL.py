@@ -5,7 +5,7 @@ from phi.field import write
 from phi.flow import *
 import phi.field as field
 from data_structures import Simulation, Swarm, Fluid, Inflow
-from simulation import step, sample_field_around_obstacles
+from simulation import step, sample_field_around_obstacles, NUM_PRESSURE_ANGLES
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
 from plotting import plot_save_locations, plot_save_velocities, plot_save_rewards, plot_save_actions, plot_save_fields, plot_save_rewards_objectives
@@ -90,11 +90,11 @@ class SwarmEnv(gym.Env):
         self.folder = folder
         self.rewards = []
         # Multi-objective reward weights (can be tuned externally after init)
-        self.w_loc_prog = 16.0     # center-of-mass location progress (leftward)
-        self.w_cohesion = 1.0     # minimize average distance to COM
+        self.w_progress = 16.0     # relative x vs fluid: mean(u_fluid_x - v_member_x), normalized
+        self.w_energy = 1.0       # energy efficiency: mean(1 - ||F_i||/||F_max||)
         self.w_smooth = 1.0       # maximize action smoothness (cosine similarity)
         # Tracking for logging
-        self.last_reward_components = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        self.last_reward_components = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
         self.reward_components_history = []
         self.objectives_history = []
         box = Box['x,y', 0:sim.length_x, 0:sim.length_y]
@@ -106,12 +106,9 @@ class SwarmEnv(gym.Env):
         # Per-episode tracking
         self.episode_index = 0
         self.episode_cum_reward = 0.0
-        self.episode_cum_objectives = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        self.episode_cum_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
         self.episodes_csv_path = f"run/{self.folder}/episodes_summary_{self.pid}.csv"
-        # Initial x_COM for centering reward
-        xs_initial = np.array([m.location['x'] for m in self.swarm.members], dtype=float)
-        self.x_com_initial = float(np.mean(xs_initial))
-        
+
         # Field saving for animations
         self.save_fields = save_fields
         self.field_step_counter = 0  # Counter for unique field file names
@@ -170,11 +167,8 @@ class SwarmEnv(gym.Env):
         self.episode_time = 0.0
         # Reset per-episode accumulators
         self.episode_cum_reward = 0.0
-        self.episode_cum_objectives = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
-        # Reset initial x_COM for this episode
-        xs_initial = np.array([m.location['x'] for m in self.swarm.members], dtype=float)
-        self.x_com_initial = float(np.mean(xs_initial))
-        
+        self.episode_cum_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
+
         return self._get_observation(), {}
 
     def step(self, action):
@@ -216,8 +210,8 @@ class SwarmEnv(gym.Env):
         self.rewards.append(reward)
         # Update per-episode accumulators
         self.episode_cum_reward += float(reward)
-        self.episode_cum_objectives['location_progress'] += float(self.last_objectives.get('location_progress', 0.0))
-        self.episode_cum_objectives['cohesion'] += float(self.last_objectives.get('cohesion', 0.0))
+        self.episode_cum_objectives['progress'] += float(self.last_objectives.get('progress', 0.0))
+        self.episode_cum_objectives['energy_efficiency'] += float(self.last_objectives.get('energy_efficiency', 0.0))
         self.episode_cum_objectives['smoothness'] += float(self.last_objectives.get('smoothness', 0.0))
 
         # Save fields every step, only for first environment (env_id=0) to reduce I/O
@@ -314,11 +308,11 @@ class SwarmEnv(gym.Env):
         with open(self.episodes_csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(['episode', 'cum_location_progress', 'cum_cohesion', 'cum_smoothness', 'cum_total_reward', 'status'])
+                writer.writerow(['episode', 'cum_progress', 'cum_energy_efficiency', 'cum_smoothness', 'cum_total_reward', 'status'])
             writer.writerow([
                 self.episode_index,
-                f"{self.episode_cum_objectives['location_progress']:.6f}",
-                f"{self.episode_cum_objectives['cohesion']:.6f}",
+                f"{self.episode_cum_objectives['progress']:.6f}",
+                f"{self.episode_cum_objectives['energy_efficiency']:.6f}",
                 f"{self.episode_cum_objectives['smoothness']:.6f}",
                 f"{self.episode_cum_reward:.6f}",
                 status
@@ -328,38 +322,53 @@ class SwarmEnv(gym.Env):
     def _compute_reward(self):
         # Warmup first step: no previous history to compare
         if self.episode_time <= self.sim.dt:
-            self.last_reward_components = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
-            self.last_objectives = {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+            self.last_reward_components = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
+            self.last_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
             self.reward_components_history.append(self.last_reward_components.copy())
             self.objectives_history.append(self.last_objectives.copy())
             return 0.0
 
-        # 1) Location progress: centered reward (0 at initial position)
-        xs = np.array([m.location['x'] for m in self.swarm.members], dtype=float)
-        x_com = float(np.mean(xs))
-        
-        # Linear interpolation: r=1 at x_goal, r=0 at x_fail
-        # Centered by subtracting the value at initial position
-        r_base = self.w_loc_prog * (self.sim.length_x - x_com) / (self.sim.length_x - 0)
-        r_initial = self.w_loc_prog * (self.sim.length_x - self.x_com_initial) / (self.sim.length_x - 0)
-        r_location_progress = r_base - r_initial
-        if x_com <= self.x_com_initial:
-            # x_com=0 -> R=W, x_com=x_0 -> R=0
-            r_location_progress = -1 * self.w_loc_prog * (x_com - self.x_com_initial) / self.x_com_initial
+        # 1) Relative fluid-x progress: r_i = mean_j(u_x) - v_member_x (ring samples); loc = clip(mean(r_i)/v_ref, -1, 1)
+        if self.v is None:
+            self.last_reward_components = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
+            self.last_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
+            self.reward_components_history.append(self.last_reward_components.copy())
+            self.objectives_history.append(self.last_objectives.copy())
+            return 0.0
+        velocity_profiles = sample_field_around_obstacles(
+            f=self.v, swarm=self.swarm, sim=self.sim, n=NUM_PRESSURE_ANGLES, offset=2
+        )
+        if torch.is_tensor(velocity_profiles):
+            vp = velocity_profiles.detach().cpu().numpy()
         else:
-            # x_com=x_0 -> R=0, x_com=L -> R=-W
-            r_location_progress = -1 * self.w_loc_prog * (x_com - self.x_com_initial) / (self.sim.length_x - self.x_com_initial)
+            vp = np.asarray(velocity_profiles)
+        ux_mean = np.mean(vp[:, :, 0], axis=1).astype(np.float64)
+        vx_mem = np.array([m.velocity['x'] for m in self.swarm.members], dtype=np.float64)
+        r_per_member = ux_mean - vx_mem
+        mean_r = float(np.mean(r_per_member))
+        v_ref = max(abs(float(self.inflow.amplitude)), 1e-9)
+        progress_unweighted = float(np.clip(mean_r / v_ref, -1.0, 1.0))
+        r_progress = self.w_progress * progress_unweighted
 
-        # 2) Cohesion: average 2D distance to center of mass, normalized
-        ys = np.array([m.location['y'] for m in self.swarm.members], dtype=float)
-        y_com = float(np.mean(ys))
-        dists = np.sqrt((xs - x_com) ** 2 + (ys - y_com) ** 2)
-        avg_dist = float(np.mean(dists))
-        # Normalize by half-diagonal of domain to keep within ~[0,1]
-        norm_scale = float(np.sqrt((self.sim.length_x / 2) ** 2 + (self.sim.length_y / 2) ** 2))
-        avg_dist_norm = avg_dist / norm_scale if norm_scale > 0 else 0.0
-        avg_dist_norm = float(np.clip(avg_dist_norm, 0.0, 1.0))
-        r_cohesion = -1.0 * self.w_cohesion * avg_dist_norm
+        # 2) Energy efficiency: R_energy = mean_i (1 - ||F_i|| / ||F_max||)
+        #    Applied force F_i = (a_x, a_y) * max_force per axis; max ||F|| = max_force * sqrt(2) for |a|_inf <= 1
+        energy_terms = []
+        for member in self.swarm.members:
+            if len(member.previous_actions) < 1:
+                energy_terms.append(1.0)
+                continue
+            a = member.previous_actions[-1]
+            ax, ay = float(a['x']), float(a['y'])
+            fmax = float(member.max_force)
+            f_mag = fmax * math.sqrt(ax * ax + ay * ay)
+            f_max_mag = fmax * math.sqrt(2.0)
+            if f_max_mag <= 0.0:
+                eff = 1.0
+            else:
+                eff = float(np.clip(1.0 - f_mag / f_max_mag, 0.0, 1.0))
+            energy_terms.append(eff)
+        r_energy_unweighted = float(np.mean(energy_terms)) if energy_terms else 0.0
+        r_energy = self.w_energy * r_energy_unweighted
 
         # 3) Smoothness: cosine similarity between actions at t and t-1, averaged over members
         smooth_vals = []
@@ -386,19 +395,19 @@ class SwarmEnv(gym.Env):
         smoothness = float(np.mean(smooth_vals)) if len(smooth_vals) > 0 else 0.0
         r_smooth = self.w_smooth * smoothness
 
-        total_reward = r_location_progress + r_cohesion + r_smooth
+        total_reward = r_progress + r_energy + r_smooth
         self.last_reward_components = {
-            'location_progress': float(r_location_progress),
-            'cohesion': float(r_cohesion),
+            'progress': float(r_progress),
+            'energy_efficiency': float(r_energy),
             'smoothness': float(r_smooth)
         }
         # Unweighted objective vector for MOMARL (all to be maximized)
         self.last_objectives = {
-            'location_progress': float(r_location_progress/self.w_loc_prog),
-            'cohesion': float(r_cohesion/self.w_cohesion),
+            'progress': float(progress_unweighted),
+            'energy_efficiency': float(r_energy_unweighted),
             'smoothness': float(r_smooth/self.w_smooth)
         }
-        # Per-member normalized velocity progress (unweighted), for per-member critic head
+        # Per-step reward components for logging
         self.reward_components_history.append(self.last_reward_components.copy())
         self.objectives_history.append(self.last_objectives.copy())
         return float(total_reward)
@@ -449,17 +458,17 @@ class RewardLoggerCallback(BaseCallback):
         try:
             comps = self.training_env.get_attr('last_reward_components')
             # VecEnv returns list over envs; single env returns list with one element
-            loc_prog_vals = []
-            coh_vals = []
+            progress_vals = []
+            energy_vals = []
             smooth_vals = []
             for c in comps:
                 if isinstance(c, dict):
-                    loc_prog_vals.append(c.get('location_progress', 0.0))
-                    coh_vals.append(c.get('cohesion', 0.0))
+                    progress_vals.append(c.get('progress', 0.0))
+                    energy_vals.append(c.get('energy_efficiency', 0.0))
                     smooth_vals.append(c.get('smoothness', 0.0))
-            if len(loc_prog_vals) > 0:
-                self.logger.record('custom/r_location_progress', float(np.mean(loc_prog_vals)))
-                self.logger.record('custom/r_cohesion', float(np.mean(coh_vals)))
+            if len(progress_vals) > 0:
+                self.logger.record('custom/r_progress', float(np.mean(progress_vals)))
+                self.logger.record('custom/r_energy_efficiency', float(np.mean(energy_vals)))
                 self.logger.record('custom/r_smooth', float(np.mean(smooth_vals)))
         except Exception:
             pass
@@ -497,9 +506,9 @@ class ActorCriticMO(nn.Module):
         self.mu = nn.Linear(hidden_sizes[1], act_dim)
         # EXPLORATION: Initialize with moderate action noise (log_std=-1.0 → std≈0.37)
         self.log_std = nn.Parameter(torch.ones(act_dim) * -1.0)
-        # Three critic heads: location_progress, cohesion, smoothness
-        self.v_loc_prog = nn.Linear(hidden_sizes[1], 1)
-        self.v_coh = nn.Linear(hidden_sizes[1], 1)
+        # Three critic heads: progress, energy_efficiency, smoothness
+        self.v_progress = nn.Linear(hidden_sizes[1], 1)
+        self.v_energy = nn.Linear(hidden_sizes[1], 1)
         self.v_smooth = nn.Linear(hidden_sizes[1], 1)
     def forward(self, obs: torch.Tensor):
         x = self.torso(obs)
@@ -512,10 +521,10 @@ class ActorCriticMO(nn.Module):
 
     def values(self, obs: torch.Tensor):
         x = self.torso(obs)
-        v_lp = self.v_loc_prog(x).squeeze(-1)
-        v_c = self.v_coh(x).squeeze(-1)
+        v_pr = self.v_progress(x).squeeze(-1)
+        v_e = self.v_energy(x).squeeze(-1)
         v_s = self.v_smooth(x).squeeze(-1)
-        return v_lp, v_c, v_s
+        return v_pr, v_e, v_s
 
 
 class RolloutBufferMO:
@@ -526,70 +535,70 @@ class RolloutBufferMO:
         self.logprobs = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.dones = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         # Per-objective rewards and values (3 objectives)
-        self.rew_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
-        self.rew_coh = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.rew_progress = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.rew_energy = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.rew_smooth = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
-        self.val_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
-        self.val_coh = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.val_progress = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.val_energy = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.val_smooth = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         # Advantages and returns per objective
-        self.adv_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
-        self.adv_coh = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.adv_progress = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.adv_energy = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.adv_smooth = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
-        self.ret_loc_prog = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
-        self.ret_coh = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.ret_progress = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
+        self.ret_energy = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.ret_smooth = torch.zeros((buffer_size,), dtype=torch.float32, device=device)
         self.ptr = 0
         self.device = device
 
-    def add(self, obs, action, logprob, done, rew_loc_prog, rew_coh, rew_smooth,
-            val_loc_prog, val_coh, val_smooth):
+    def add(self, obs, action, logprob, done, rew_progress, rew_energy, rew_smooth,
+            val_progress, val_energy, val_smooth):
         i = self.ptr
         self.obs[i] = obs
         self.actions[i] = action
         self.logprobs[i] = logprob
         self.dones[i] = float(done)
-        self.rew_loc_prog[i] = rew_loc_prog
-        self.rew_coh[i] = rew_coh
+        self.rew_progress[i] = rew_progress
+        self.rew_energy[i] = rew_energy
         self.rew_smooth[i] = rew_smooth
-        self.val_loc_prog[i] = val_loc_prog
-        self.val_coh[i] = val_coh
+        self.val_progress[i] = val_progress
+        self.val_energy[i] = val_energy
         self.val_smooth[i] = val_smooth
         self.ptr += 1
 
     def compute_gae(self, last_values: tuple, last_done: float,
                     gamma: float = 0.99, lam: float = 0.95):
-        # last_values: (v_loc_prog, v_coh, v_smooth)
-        last_v_loc_prog, last_v_coh, last_v_smooth = last_values[:3]
-        adv_lp, adv_c, adv_s = 0.0, 0.0, 0.0
+        # last_values: (v_progress, v_energy, v_smooth)
+        last_v_progress, last_v_energy, last_v_smooth = last_values[:3]
+        adv_pr, adv_e, adv_s = 0.0, 0.0, 0.0
         for t in reversed(range(self.ptr)):
             next_nonterminal = 1.0 - (self.dones[t+1] if t < self.ptr - 1 else last_done)
-            next_v_loc_prog = self.val_loc_prog[t+1] if t < self.ptr - 1 else last_v_loc_prog
-            next_v_coh = self.val_coh[t+1] if t < self.ptr - 1 else last_v_coh
+            next_v_progress = self.val_progress[t+1] if t < self.ptr - 1 else last_v_progress
+            next_v_energy = self.val_energy[t+1] if t < self.ptr - 1 else last_v_energy
             next_v_smooth = self.val_smooth[t+1] if t < self.ptr - 1 else last_v_smooth
 
-            delta_lp = self.rew_loc_prog[t] + gamma * next_v_loc_prog * next_nonterminal - self.val_loc_prog[t]
-            delta_c = self.rew_coh[t] + gamma * next_v_coh * next_nonterminal - self.val_coh[t]
+            delta_pr = self.rew_progress[t] + gamma * next_v_progress * next_nonterminal - self.val_progress[t]
+            delta_e = self.rew_energy[t] + gamma * next_v_energy * next_nonterminal - self.val_energy[t]
             delta_s = self.rew_smooth[t] + gamma * next_v_smooth * next_nonterminal - self.val_smooth[t]
 
-            adv_lp = float(delta_lp) + gamma * lam * next_nonterminal * adv_lp
-            adv_c = float(delta_c) + gamma * lam * next_nonterminal * adv_c
+            adv_pr = float(delta_pr) + gamma * lam * next_nonterminal * adv_pr
+            adv_e = float(delta_e) + gamma * lam * next_nonterminal * adv_e
             adv_s = float(delta_s) + gamma * lam * next_nonterminal * adv_s
 
-            self.adv_loc_prog[t] = adv_lp
-            self.adv_coh[t] = adv_c
+            self.adv_progress[t] = adv_pr
+            self.adv_energy[t] = adv_e
             self.adv_smooth[t] = adv_s
 
-        self.ret_loc_prog = self.adv_loc_prog + self.val_loc_prog
-        self.ret_coh = self.adv_coh + self.val_coh
+        self.ret_progress = self.adv_progress + self.val_progress
+        self.ret_energy = self.adv_energy + self.val_energy
         self.ret_smooth = self.adv_smooth + self.val_smooth
         # Normalize advantages per objective
         def norm(x: torch.Tensor):
             if x.std() > 1e-8:
                 return (x - x.mean()) / (x.std() + 1e-8)
             return x - x.mean()
-        self.adv_loc_prog = norm(self.adv_loc_prog)
-        self.adv_coh = norm(self.adv_coh)
+        self.adv_progress = norm(self.adv_progress)
+        self.adv_energy = norm(self.adv_energy)
         self.adv_smooth = norm(self.adv_smooth)
 
     def get(self, batch_size: int):
@@ -599,10 +608,10 @@ class RolloutBufferMO:
             batch_idx = idxs[start:end]
             yield (
                 self.obs[batch_idx], self.actions[batch_idx], self.logprobs[batch_idx], self.dones[batch_idx],
-                self.rew_loc_prog[batch_idx], self.rew_coh[batch_idx], self.rew_smooth[batch_idx],
-                self.val_loc_prog[batch_idx], self.val_coh[batch_idx], self.val_smooth[batch_idx],
-                self.adv_loc_prog[batch_idx], self.adv_coh[batch_idx], self.adv_smooth[batch_idx],
-                self.ret_loc_prog[batch_idx], self.ret_coh[batch_idx], self.ret_smooth[batch_idx],
+                self.rew_progress[batch_idx], self.rew_energy[batch_idx], self.rew_smooth[batch_idx],
+                self.val_progress[batch_idx], self.val_energy[batch_idx], self.val_smooth[batch_idx],
+                self.adv_progress[batch_idx], self.adv_energy[batch_idx], self.adv_smooth[batch_idx],
+                self.ret_progress[batch_idx], self.ret_energy[batch_idx], self.ret_smooth[batch_idx],
             )
 
 
@@ -743,7 +752,7 @@ def run_MOMAPPO(env, total_timesteps: int,
                 resume: bool = True):
     """
     Multi-objective MAPPO training with PCGrad on the actor across three objectives
-    (location_progress, cohesion, smoothness). Supports multiple parallel environments.
+    (progress, energy_efficiency, smoothness). Supports multiple parallel environments.
     """
     dev = torch.device(device)
     is_vec = isinstance(env, VecEnv)
@@ -824,21 +833,21 @@ def run_MOMAPPO(env, total_timesteps: int,
     for update in range(num_updates):
         # Create buffer sized for all environments
         buffer = RolloutBufferMO(n_steps * num_envs, obs_dim, act_dim, dev)
-        rollout_obj_loc_prog = []
-        rollout_obj_coh = []
+        rollout_obj_progress = []
+        rollout_obj_energy = []
         rollout_obj_smooth = []
 
         for t in range(n_steps):
             # Sample actions for ALL environments in parallel
             actions_all = []
             logprobs_all = []
-            vals_loc_prog_all = []
-            vals_coh_all = []
+            vals_progress_all = []
+            vals_energy_all = []
             vals_smooth_all = []
             obs_tensors = []
             step_reward_env0 = None
-            step_obj_env0_loc = 0.0
-            step_obj_env0_coh = 0.0
+            step_obj_env0_progress = 0.0
+            step_obj_env0_energy = 0.0
             step_obj_env0_smooth = 0.0
             
             for env_idx in range(num_envs):
@@ -851,12 +860,12 @@ def run_MOMAPPO(env, total_timesteps: int,
                     dist = Normal(mu, std)
                     action = dist.sample()[0]
                     logprob = dist.log_prob(action).sum()
-                    val_loc_prog, val_coh, val_smooth = model.values(obs_t.unsqueeze(0))
+                    val_progress, val_energy, val_smooth = model.values(obs_t.unsqueeze(0))
                 
                 actions_all.append(action.cpu().numpy())
                 logprobs_all.append(float(logprob.cpu()))
-                vals_loc_prog_all.append(float(val_loc_prog[0].cpu()))
-                vals_coh_all.append(float(val_coh[0].cpu()))
+                vals_progress_all.append(float(val_progress[0].cpu()))
+                vals_energy_all.append(float(val_energy[0].cpu()))
                 vals_smooth_all.append(float(val_smooth[0].cpu()))
             
             # Format actions for VecEnv (shape: (num_envs, num_members, 2))
@@ -880,29 +889,29 @@ def run_MOMAPPO(env, total_timesteps: int,
                 
                 info = infos_batch[env_idx]
                 # Train PPO on weighted reward components (reflecting env self.w_*).
-                comps = info.get('reward_components', {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0})
-                rew_loc_prog = float(comps.get('location_progress', 0.0))
-                rew_coh = float(comps.get('cohesion', 0.0))
+                comps = info.get('reward_components', {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0})
+                rew_progress = float(comps.get('progress', 0.0))
+                rew_energy = float(comps.get('energy_efficiency', 0.0))
                 rew_smooth = float(comps.get('smoothness', 0.0))
-                reward_total = rew_loc_prog + rew_coh + rew_smooth
+                reward_total = rew_progress + rew_energy + rew_smooth
                 # Keep objective logging/plots in unweighted space.
-                obj = info.get('objectives', {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0})
-                obj_loc = float(obj.get('location_progress', 0.0))
-                obj_coh = float(obj.get('cohesion', 0.0))
+                obj = info.get('objectives', {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0})
+                obj_progress = float(obj.get('progress', 0.0))
+                obj_energy = float(obj.get('energy_efficiency', 0.0))
                 obj_smooth = float(obj.get('smoothness', 0.0))
-                rollout_obj_loc_prog.append(obj_loc)
-                rollout_obj_coh.append(obj_coh)
+                rollout_obj_progress.append(obj_progress)
+                rollout_obj_energy.append(obj_energy)
                 rollout_obj_smooth.append(obj_smooth)
                 if env_idx == 0:
                     step_reward_env0 = reward_total
-                    step_obj_env0_loc = obj_loc
-                    step_obj_env0_coh = obj_coh
+                    step_obj_env0_progress = obj_progress
+                    step_obj_env0_energy = obj_energy
                     step_obj_env0_smooth = obj_smooth
                 buffer.add(
                     obs_t.cpu(), action_t, logprobs_all[env_idx],
                     bool(dones_batch[env_idx]),
-                    rew_loc_prog, rew_coh, rew_smooth,
-                    vals_loc_prog_all[env_idx], vals_coh_all[env_idx], vals_smooth_all[env_idx]
+                    rew_progress, rew_energy, rew_smooth,
+                    vals_progress_all[env_idx], vals_energy_all[env_idx], vals_smooth_all[env_idx]
                 )
                 step_count += 1
 
@@ -911,8 +920,8 @@ def run_MOMAPPO(env, total_timesteps: int,
                 env0_cum_reward += float(step_reward_env0)
                 writer.add_scalar('rewards/step_total_env0', float(step_reward_env0), step_count)
                 writer.add_scalar('rewards/cumulative_total_env0', float(env0_cum_reward), step_count)
-                writer.add_scalar('objectives/env0/location_progress', float(step_obj_env0_loc), step_count)
-                writer.add_scalar('objectives/env0/cohesion', float(step_obj_env0_coh), step_count)
+                writer.add_scalar('objectives/env0/progress', float(step_obj_env0_progress), step_count)
+                writer.add_scalar('objectives/env0/energy_efficiency', float(step_obj_env0_energy), step_count)
                 writer.add_scalar('objectives/env0/smoothness', float(step_obj_env0_smooth), step_count)
             
             # Update observations for next iteration
@@ -926,19 +935,19 @@ def run_MOMAPPO(env, total_timesteps: int,
         last_obs_t = torch.tensor(obs_all[0].reshape(-1), dtype=torch.float32, device=dev)
         with torch.no_grad():
             last_vals = model.values(last_obs_t.unsqueeze(0))
-            lv_lp = last_vals[0][0]
-            lvc = last_vals[1][0]
+            lv_pr = last_vals[0][0]
+            lve = last_vals[1][0]
             lvs = last_vals[2][0]
-            last_vals = (lv_lp, lvc, lvs)
+            last_vals = (lv_pr, lve, lvs)
         buffer.compute_gae(last_vals, float(last_dones[0]), gamma=gamma, lam=gae_lambda)
 
         # Log unweighted per-objective means from this rollout
         with torch.no_grad():
-            r_lp_mean = float(np.mean(rollout_obj_loc_prog)) if len(rollout_obj_loc_prog) > 0 else 0.0
-            rc_mean = float(np.mean(rollout_obj_coh)) if len(rollout_obj_coh) > 0 else 0.0
+            r_progress_mean = float(np.mean(rollout_obj_progress)) if len(rollout_obj_progress) > 0 else 0.0
+            rc_mean = float(np.mean(rollout_obj_energy)) if len(rollout_obj_energy) > 0 else 0.0
             rs_mean = float(np.mean(rollout_obj_smooth)) if len(rollout_obj_smooth) > 0 else 0.0
-        writer.add_scalar('objectives/location_progress', r_lp_mean, step_count)
-        writer.add_scalar('objectives/cohesion', rc_mean, step_count)
+        writer.add_scalar('objectives/progress', r_progress_mean, step_count)
+        writer.add_scalar('objectives/energy_efficiency', rc_mean, step_count)
         writer.add_scalar('objectives/smoothness', rs_mean, step_count)
 
         # PPO updates
@@ -947,17 +956,17 @@ def run_MOMAPPO(env, total_timesteps: int,
         for epoch in range(update_epochs):
             for batch in buffer.get(batch_size):
                 (b_obs, b_actions, b_logp_old, _b_dones,
-                 _rlp, _rc, _rs, b_vlp, b_vc, b_vs,
-                 b_advlp, b_advc, b_advs, b_retlp, b_retc, b_rets) = batch
+                 _rp, _re, _rs, b_vp, b_ve, b_vs,
+                 b_adv_pr, b_adve, b_advs, b_ret_pr, b_rete, b_rets) = batch
 
                 b_obs = b_obs.to(dev)
                 b_actions = b_actions.to(dev)
                 b_logp_old = b_logp_old.to(dev)
-                b_advlp = b_advlp.to(dev)
-                b_advc = b_advc.to(dev)
+                b_adv_pr = b_adv_pr.to(dev)
+                b_adve = b_adve.to(dev)
                 b_advs = b_advs.to(dev)
-                b_retlp = b_retlp.to(dev)
-                b_retc = b_retc.to(dev)
+                b_ret_pr = b_ret_pr.to(dev)
+                b_rete = b_rete.to(dev)
                 b_rets = b_rets.to(dev)
 
                 # Skip batch if observations or old log-probs contain NaN
@@ -983,24 +992,24 @@ def run_MOMAPPO(env, total_timesteps: int,
                     return -torch.mean(torch.min(unclipped, clipped))
 
                 # Per-objective policy losses (3 objectives)
-                loss_pi_loc_prog = ppo_obj(b_advlp)
-                loss_pi_coh = ppo_obj(b_advc)
+                loss_pi_progress = ppo_obj(b_adv_pr)
+                loss_pi_energy = ppo_obj(b_adve)
                 loss_pi_smooth = ppo_obj(b_advs)
 
                 # Entropy (encourage exploration)
                 entropy = dist.entropy().sum(-1).mean()
 
                 # Critic loss (sum across 3 objectives)
-                v_loc_prog, v_coh, v_smooth = model.values(b_obs)
+                v_progress, v_energy, v_smooth = model.values(b_obs)
                 loss_v = 0.5 * (
-                    torch.mean((v_loc_prog - b_retlp) ** 2) +
-                    torch.mean((v_coh - b_retc) ** 2) +
+                    torch.mean((v_progress - b_ret_pr) ** 2) +
+                    torch.mean((v_energy - b_rete) ** 2) +
                     torch.mean((v_smooth - b_rets) ** 2)
                 )
 
                 # Combine actor gradients via PCGrad (3 objectives), then add critic and entropy
                 optimizer.zero_grad(set_to_none=True)
-                pcgrad_merge(model, [loss_pi_loc_prog, loss_pi_coh, loss_pi_smooth])
+                pcgrad_merge(model, [loss_pi_progress, loss_pi_energy, loss_pi_smooth])
                 # Add critic and entropy losses on top of actor grads
                 total_aux = vf_coef * loss_v - ent_coef * entropy
                 total_aux.backward()
@@ -1029,12 +1038,12 @@ def run_MOMAPPO(env, total_timesteps: int,
         if pbar is not None:
             pbar.set_postfix({
                 'steps': step_count,
-                'loc_p': f"{r_lp_mean:.3f}",
-                'coh': f"{rc_mean:.3f}",
+                'prog': f"{r_progress_mean:.3f}",
+                'energy': f"{rc_mean:.3f}",
                 'sm': f"{rs_mean:.3f}"
             })
         elif tqdm is None:
-            print(f"MOMAPPO update {update+1}/{num_updates}, steps so far {step_count}, loc_p {r_lp_mean:.3f}, coh {rc_mean:.3f}, sm {rs_mean:.3f}")
+            print(f"MOMAPPO update {update+1}/{num_updates}, steps so far {step_count}, prog {r_progress_mean:.3f}, energy {rc_mean:.3f}, sm {rs_mean:.3f}")
 
     # Fields are saved incrementally after each step, so no need to save here
     # (SubprocVecEnv doesn't expose envs attribute, and fields are already saved)

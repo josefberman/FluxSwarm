@@ -230,56 +230,57 @@ def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_hi
 
     :param folder_name: output subfolder under ../runs
     :param sim: Simulation to get dt and total_time
-    :param objective_history: list of dicts with keys 'location_progress', 'cohesion', 'smoothness'
+    :param objective_history: list of dicts with keys 'progress' (normalized relative u_x), 'energy_efficiency', 'smoothness'
     :param title_suffix: optional string appended to plot titles
-    :param objective_weights: (w_loc_prog, w_cohesion, w_smooth) used to convert weighted
+    :param objective_weights: (w_progress, w_energy, w_smooth) used to convert weighted
         rewards back to unweighted objectives if needed.
     :return: None
     """
     if len(objective_history) == 0:
         return
     timesteps = np.linspace(start=sim.dt, stop=sim.dt * len(objective_history), num=len(objective_history))
-    loc_prog = [d.get('location_progress', 0.0) for d in objective_history]
-    coh = [d.get('cohesion', 0.0) for d in objective_history]
+    prog = [d.get('progress', d.get('location_progress', 0.0)) for d in objective_history]
+    energy = [d.get('energy_efficiency', d.get('cohesion', 0.0)) for d in objective_history]
     sm = [d.get('smoothness', 0.0) for d in objective_history]
 
-    w_loc_prog, w_cohesion, w_smooth = objective_weights
+    w_progress, w_energy, w_smooth = objective_weights
 
     # Ensure plotted objectives are unweighted. If history already looks unweighted,
     # keep it as-is; otherwise divide by the configured objective weight.
-    if w_loc_prog > 0 and any(abs(v) > 1.5 for v in loc_prog):
-        loc_prog = [float(v) / float(w_loc_prog) for v in loc_prog]
-    if w_cohesion > 0 and any(abs(v) > 1.5 for v in coh):
-        coh = [float(v) / float(w_cohesion) for v in coh]
+    if w_progress > 0 and any(abs(v) > 1.5 for v in prog):
+        prog = [float(v) / float(w_progress) for v in prog]
+    if w_energy > 0 and any(abs(v) > 1.5 for v in energy):
+        energy = [float(v) / float(w_energy) for v in energy]
     if w_smooth > 0 and any(abs(v) > 1.5 for v in sm):
         sm = [float(v) / float(w_smooth) for v in sm]
 
     os.makedirs(f'run/{folder_name}', exist_ok=True)
     pd.DataFrame({
         'timestep': timesteps,
-        'location_progress': loc_prog,
-        'cohesion': coh,
+        'progress': prog,
+        'energy_efficiency': energy,
         'smoothness': sm,
     }).to_csv(f'run/{folder_name}/rewards_objectives.csv', index=False)
 
     fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(20, 12))
     
-    # Location Progress (first)
-    axes[0].plot(timesteps, loc_prog, c='tab:purple', linewidth=1.0, label='location_progress')
-    axes[0].axhline(1.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5) # Max possible reward
-    axes[0].axhline(0.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5) # Min possible reward
-    axes[0].set_title(f'Location Progress reward over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
+    # Relative fluid-x progress (first): unweighted mean(u_fluid_x - v_member_x) / v_ref in [-1, 1]
+    axes[0].plot(timesteps, prog, c='tab:purple', linewidth=1.0, label='progress')
+    axes[0].axhline(1.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
+    axes[0].axhline(0.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
+    axes[0].axhline(-1.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
+    axes[0].set_title(f'Relative fluid-x progress (normalized){(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
-    axes[0].set_ylabel('Location Progress')
+    axes[0].set_ylabel('Rel. u_x objective')
     # axes[0].legend(loc='best')
 
-    # Cohesion (second)
-    axes[1].plot(timesteps, coh, c='tab:green', linewidth=1.0, label='cohesion')
-    axes[1].axhline(0.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5) # Max possible reward
-    axes[1].axhline(-1.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5) # Min possible reward
-    axes[1].set_title(f'Cohesion reward over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
+    # Energy efficiency (second): mean(1 - ||F||/||F_max||)
+    axes[1].plot(timesteps, energy, c='tab:green', linewidth=1.0, label='energy_efficiency')
+    axes[1].axhline(1.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5)
+    axes[1].axhline(0.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5)
+    axes[1].set_title(f'Energy efficiency over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
-    axes[1].set_ylabel('Cohesion')
+    axes[1].set_ylabel('Energy efficiency')
     # axes[1].legend(loc='best')
 
     # Smoothness (third)

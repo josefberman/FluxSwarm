@@ -231,13 +231,15 @@ def consolidate_episodes(base_folder):
             return col_name.replace('cum_', 'cumulative_').replace('_', ' ').title()
 
         color_map = {
-            'location_progress': 'tab:purple',
-            'cohesion': 'tab:green',
+            'progress': 'tab:purple',
+            'location_progress': 'tab:purple',  # legacy column name
+            'energy_efficiency': 'tab:green',
+            'cohesion': 'tab:green',  # legacy column name
             'smoothness': 'tab:orange',
         }
         # ref_lines = {
-        #     'location_progress': [400.0, 0.0],
-        #     'cohesion': [-3.0, -200.0],  # -0.75 is the best packing of 16 swarm members in a 4x4 grid, normalized by sqrt(100^2+4^2), times 20 seconds times 20 steps per second
+        #     'progress': [400.0, 0.0],
+        #     'energy_efficiency': [400.0, 0.0],
         #     'smoothness': [400.0, -400.0],
         # }
 

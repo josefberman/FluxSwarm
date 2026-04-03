@@ -9,8 +9,8 @@ It combines:
 
 The project is geared toward experiments where swarm behavior is optimized under multiple objectives such as:
 
-- center-of-mass location progress,
-- cohesion,
+- relative fluid-x progress (ring-mean fluid u_x minus member v_x, normalized),
+- energy efficiency (unused thrust budget),
 - and action smoothness.
 
 ## Features
@@ -95,11 +95,11 @@ Run `python main.py --help` for the full command reference.
 
 The environment computes three objective components:
 
-- `location_progress`
-- `cohesion`
+- `progress` — unweighted `clip(mean_i(u_fluid_x - v_member_x) / v_ref, -1, 1)`, with ring-mean fluid u_x (same sampling as in `simulation.step`) and `v_ref = max(|inflow.amplitude|, small constant)`.
+- `energy_efficiency`
 - `smoothness`
 
-The scalar reward used for environment reward accumulation is weighted by objective weights in `SwarmEnv` (for example `w_loc_prog`, `w_cohesion`, `w_smooth`).
+The scalar reward used for environment reward accumulation is weighted by objective weights in `SwarmEnv` (for example `w_progress`, `w_energy`, `w_smooth`).
 
 Current workflow in this repo:
 

@@ -46,12 +46,12 @@ class SwarmEnv(gym.Env):
         
         # Multi-objective reward weights
         self.w_prog = 1.0
-        self.w_cohesion = 1.0
+        self.w_energy = 1.0
         self.w_smooth = 1.0
         
         # Tracking
-        self.last_reward_components = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
-        self.last_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        self.last_reward_components = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
+        self.last_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
         self.reward_components_history = []
         self.objectives_history = []
         
@@ -70,7 +70,7 @@ class SwarmEnv(gym.Env):
         self.current_timestep = 0
         self.episode_index = 0
         self.episode_cum_reward = 0.0
-        self.episode_cum_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        self.episode_cum_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
         self.episodes_csv_path = f"run/{self.folder}/episodes_summary.csv"
         # run_dir will be set by run_MOMAPPO after initialization for incremental CSV saving
         self.run_dir = None
@@ -129,7 +129,7 @@ class SwarmEnv(gym.Env):
         self.episode_time = 0.0
         self.current_timestep = 0
         self.episode_cum_reward = 0.0
-        self.episode_cum_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+        self.episode_cum_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
         
         # Initialize CSV files with headers if needed
         locations_csv_path, velocities_csv_path = self._get_csv_paths()
@@ -190,7 +190,7 @@ class SwarmEnv(gym.Env):
         self.rewards.append(reward)
         self.episode_cum_reward += float(reward)
         self.episode_cum_objectives['progress'] += float(self.last_objectives.get('progress', 0.0))
-        self.episode_cum_objectives['cohesion'] += float(self.last_objectives.get('cohesion', 0.0))
+        self.episode_cum_objectives['energy_efficiency'] += float(self.last_objectives.get('energy_efficiency', 0.0))
         self.episode_cum_objectives['smoothness'] += float(self.last_objectives.get('smoothness', 0.0))
         
         # Save locations and velocities to CSV incrementally
@@ -269,36 +269,40 @@ class SwarmEnv(gym.Env):
         """Compute multi-objective reward."""
         # Warmup first step
         if self.episode_time <= self.sim_params.dt:
-            self.last_reward_components = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
-            self.last_objectives = {'progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0}
+            self.last_reward_components = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
+            self.last_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
             self.reward_components_history.append(self.last_reward_components.copy())
             self.objectives_history.append(self.last_objectives.copy())
             return 0.0
         
-        # 1) Progress of COM along x
-        v_ref = float(self.inflow_params.amplitude) if self.inflow_params.amplitude != 0 else 1.0
-        dv_members = []
-        for member in self.swarm.members:
-            if len(member.previous_locations) >= 2:
-                dv_members.append(
-                    -(member.location['x'] - member.previous_locations[-2]['x']) / self.sim_params.dt
-                )
-            else:
-                dv_members.append(0.0)
-        dv_com = float(np.mean(dv_members)) / v_ref
-        r_progress = self.w_prog * dv_com
+        # 1) Progress: same sign convention as RL.SwarmEnv (u_fluid_x - v_member_x), normalized.
+        # Main repo uses ring-mean fluid u_x from sample_field_around_obstacles; this env uses bulk
+        # inflow amplitude as a scalar u_x proxy when not sharing the main simulation stack.
+        v_ref = max(abs(float(self.inflow_params.amplitude)), 1e-9)
+        ux_bulk = float(self.inflow_params.amplitude)
+        vx_mem = np.array([m.velocity['x'] for m in self.swarm.members], dtype=float)
+        r_per_member = ux_bulk - vx_mem
+        loc_unweighted = float(np.clip(float(np.mean(r_per_member)) / v_ref, -1.0, 1.0))
+        r_progress = self.w_prog * loc_unweighted
         
-        # 2) Cohesion: average distance to center of mass
-        xs = np.array([m.location['x'] for m in self.swarm.members], dtype=float)
-        ys = np.array([m.location['y'] for m in self.swarm.members], dtype=float)
-        x_com = float(np.mean(xs))
-        y_com = float(np.mean(ys))
-        dists = np.sqrt((xs - x_com) ** 2 + (ys - y_com) ** 2)
-        avg_dist = float(np.mean(dists))
-        norm_scale = float(np.sqrt((self.sim_params.length_x / 2) ** 2 + (self.sim_params.length_y / 2) ** 2))
-        avg_dist_norm = avg_dist / norm_scale if norm_scale > 0 else 0.0
-        avg_dist_norm = float(np.clip(avg_dist_norm, 0.0, 1.0))
-        r_cohesion = -1.0 * self.w_cohesion * avg_dist_norm
+        # 2) Energy efficiency: mean_i (1 - ||F_i|| / ||F_max||)
+        energy_terms = []
+        for member in self.swarm.members:
+            if len(member.previous_actions) < 1:
+                energy_terms.append(1.0)
+                continue
+            a = member.previous_actions[-1]
+            ax, ay = float(a['x']), float(a['y'])
+            fmax = float(member.max_force)
+            f_mag = fmax * np.sqrt(ax * ax + ay * ay)
+            f_max_mag = fmax * np.sqrt(2.0)
+            if f_max_mag <= 0.0:
+                eff = 1.0
+            else:
+                eff = float(np.clip(1.0 - f_mag / f_max_mag, 0.0, 1.0))
+            energy_terms.append(eff)
+        r_energy_unweighted = float(np.mean(energy_terms)) if energy_terms else 0.0
+        r_energy = self.w_energy * r_energy_unweighted
         
         # 3) Smoothness: cosine similarity between actions
         smooth_vals = []
@@ -320,17 +324,17 @@ class SwarmEnv(gym.Env):
         smoothness = float(np.mean(smooth_vals))
         r_smooth = self.w_smooth * smoothness
         
-        total_reward = r_progress + r_cohesion + r_smooth
+        total_reward = r_progress + r_energy + r_smooth
         
         self.last_reward_components = {
             'progress': float(r_progress),
-            'cohesion': float(r_cohesion),
+            'energy_efficiency': float(r_energy),
             'smoothness': float(r_smooth)
         }
         
         self.last_objectives = {
-            'progress': float(r_progress / self.w_prog) if self.w_prog > 0 else 0.0,
-            'cohesion': float(r_cohesion / self.w_cohesion) if self.w_cohesion > 0 else 0.0,
+            'progress': float(loc_unweighted),
+            'energy_efficiency': float(r_energy_unweighted),
             'smoothness': float(r_smooth / self.w_smooth) if self.w_smooth > 0 else 0.0
         }
         
@@ -348,11 +352,11 @@ class SwarmEnv(gym.Env):
         with open(self.episodes_csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(['episode', 'cum_progress', 'cum_cohesion', 'cum_smoothness', 'cum_total_reward', 'status'])
+                writer.writerow(['episode', 'cum_progress', 'cum_energy_efficiency', 'cum_smoothness', 'cum_total_reward', 'status'])
             writer.writerow([
                 self.episode_index,
                 f"{self.episode_cum_objectives['progress']:.6f}",
-                f"{self.episode_cum_objectives['cohesion']:.6f}",
+                f"{self.episode_cum_objectives['energy_efficiency']:.6f}",
                 f"{self.episode_cum_objectives['smoothness']:.6f}",
                 f"{self.episode_cum_reward:.6f}",
                 status

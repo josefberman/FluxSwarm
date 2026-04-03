@@ -162,8 +162,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--dt-substeps',
         type=int,
-        default=10,
-        help='Number of substeps per dt used in the simulator (default: 10)',
+        default=80,
+        help='Number of substeps per dt used in the simulator (default: 80)',
     )
 
     # Swarm layout controls
@@ -204,14 +204,14 @@ if __name__ == '__main__':
     parser.add_argument(
         '--n-steps',
         type=int,
-        default=256,
-        help='Number of steps per environment (default: 256)',
+        default=128,
+        help='Number of steps per environment (default: 128)',
     )
     parser.add_argument(
         '--batch-size',
         type=int,
-        default=32,
-        help='Batch size (default: 32)',
+        default=16,
+        help='Batch size (default: 16)',
     )
     parser.add_argument(
         '--update-epochs',

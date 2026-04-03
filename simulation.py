@@ -19,12 +19,14 @@ import phi.field as field
 import phi.math
 from auxiliary import trapezoidal_waveform, beat_waveform
 from scipy.spatial import distance
+from time import perf_counter
 
 PADDING = 2
 
 # Number of angular samples around each member used for pressure sampling
 NUM_PRESSURE_ANGLES = 4
 _ANGLE_TRIG_CACHE: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+PROFILE_SYNC_POINTS = False
 
 
 def _get_angle_trig(n: int) -> tuple[np.ndarray, np.ndarray]:
@@ -43,22 +45,25 @@ def build_sampling_coords_tensor(swarm: Swarm, sim: Simulation, n: int, offset=2
     """Build sampling coordinates around all members once for reuse across fields."""
     cos_a, sin_a = _get_angle_trig(n)
 
-    member_x = np.array([m.location['x'] for m in swarm.members], dtype=np.float64)[:, None]
-    member_y = np.array([m.location['y'] for m in swarm.members], dtype=np.float64)[:, None]
-    member_r = np.array([m.radius for m in swarm.members], dtype=np.float64)[:, None]
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    member_x = torch.tensor([m.location['x'] for m in swarm.members], dtype=torch.float64, device=device).unsqueeze(1)
+    member_y = torch.tensor([m.location['y'] for m in swarm.members], dtype=torch.float64, device=device).unsqueeze(1)
+    member_r = torch.tensor([m.radius for m in swarm.members], dtype=torch.float64, device=device).unsqueeze(1)
+    cos_t = torch.tensor(cos_a, dtype=torch.float64, device=device).unsqueeze(0)
+    sin_t = torch.tensor(sin_a, dtype=torch.float64, device=device).unsqueeze(0)
 
-    x_world = member_x + member_r * cos_a
-    y_world = member_y + member_r * sin_a
+    x_world = member_x + member_r * cos_t
+    y_world = member_y + member_r * sin_t
 
     # Adjust offsets exactly as before
-    x_world += np.sign(cos_a) * offset * (sim.length_x / sim.resolution[0])
-    y_world += np.sign(sin_a) * offset * (sim.length_y / sim.resolution[1])
+    x_world += torch.sign(cos_t) * offset * (sim.length_x / sim.resolution[0])
+    y_world += torch.sign(sin_t) * offset * (sim.length_y / sim.resolution[1])
 
     # Clip coordinates to domain
-    x_world = np.clip(x_world, 0, sim.length_x)
-    y_world = np.clip(y_world, 0, sim.length_y)
+    x_world = torch.clamp(x_world, 0, sim.length_x)
+    y_world = torch.clamp(y_world, 0, sim.length_y)
 
-    coords = np.stack([x_world, y_world], axis=-1)  # shape (num_members, n, 2)
+    coords = torch.stack([x_world, y_world], dim=-1)  # shape (num_members, n, 2)
     return tensor(coords, instance('members'), spatial('n'), channel(vector='x,y'))
 
 
@@ -117,6 +122,8 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     from phiml.math._tensors import TensorStack
     from phiml.math._optimize import Diverged, NotConverged
 
+    timings = {}
+    t0 = perf_counter()
     dt_sub = sim.dt / sim.substeps
     # Swarm geometry is unchanged within a major step; build mask once.
     obstacles = swarm.as_obstacle_list()
@@ -143,10 +150,11 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         v = v * (1.0 - swarm_mask)
         
         try:
+            t_solver = perf_counter()
             solver = Solve(
                 method='CG',
                 x0=p,
-                max_iterations=500,
+                max_iterations=50,
                 rel_tol=1e-2,
                 abs_tol=1e-3,
                 suppress=[NotConverged]
@@ -157,6 +165,7 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
                     obstacles=(),
                     solve=solver
                 )
+            timings['solver'] = timings.get('solver', 0.0) + (perf_counter() - t_solver)
             # info = solves[solver]
             # print(
             #     f"[make_incompressible] t_sub={t_sub:.4f} "
@@ -166,6 +175,7 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
             print(f'Time sub-step {t_sub} diverged: {e}')
             pass
     # Vectorized sampling for all members to reduce Python overhead
+    t_sampling = perf_counter()
     coords_tensor = build_sampling_coords_tensor(
         swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
     )
@@ -175,6 +185,8 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     velocity_profiles = sample_field_around_obstacles(
         f=v, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2, coords_tensor=coords_tensor
     )
+    timings['sampling'] = perf_counter() - t_sampling
+    t_updates = perf_counter()
     pos, vel, radii, masses, max_forces = _extract_swarm_state_arrays(swarm)
 
     pos, vel = vectorized_advance_by_viscous_drag(
@@ -201,12 +213,14 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         masses=masses,
         max_forces=max_forces,
         sim=sim,
-        internal_forces=np.asarray(force_actions, dtype=np.float64),
+        internal_forces=torch.as_tensor(force_actions, dtype=torch.float64, device=pos.device),
     )
 
+    pos, vel = resolve_collisions_tensor(pos, vel, radii, masses, sim, restitution=0.2)
+    timings['updates'] = perf_counter() - t_updates
+
+    t_writeback = perf_counter()
     _writeback_swarm_state_arrays(swarm, pos, vel)
-    # Enforce collision constraints between members
-    resolve_collisions(swarm=swarm, sim=sim, restitution=0.2)
 
     # Capture post-collision state for trajectory histories
     for i in range(len(swarm.members)):
@@ -214,6 +228,14 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         member.previous_locations.append(member.location.copy())
         member.previous_velocities.append(member.velocity.copy())
         member.previous_actions.append({'x': force_actions[i][0], 'y': force_actions[i][1]})
+    timings['writeback_logging'] = perf_counter() - t_writeback
+    timings['total'] = perf_counter() - t0
+    if PROFILE_SYNC_POINTS:
+        print(
+            f"[step_timing] total={timings['total']:.4f}s "
+            f"solver={timings.get('solver', 0.0):.4f}s sampling={timings.get('sampling', 0.0):.4f}s "
+            f"updates={timings.get('updates', 0.0):.4f}s writeback={timings.get('writeback_logging', 0.0):.4f}s"
+        )
     return v, p, swarm
 
 
@@ -224,7 +246,7 @@ def sample_field_around_obstacles(
     n: int,
     offset=2,
     coords_tensor=None
-) -> np.array:
+) -> torch.Tensor:
     """
     Vectorized sampling of field around all members. Returns array of shape (num_members, n).
     """
@@ -232,9 +254,15 @@ def sample_field_around_obstacles(
         coords_tensor = build_sampling_coords_tensor(swarm=swarm, sim=sim, n=n, offset=offset)
 
     samples = phi.field.sample(f, coords_tensor)
-    if 'vector' in samples.shape:
-        return samples.numpy('members,n,vector').astype(np.float64)
-    return samples.numpy('members,n').astype(np.float64)
+    try:
+        if 'vector' in samples.shape:
+            return samples.native(('members', 'n', 'vector'))
+        return samples.native(('members', 'n'))
+    except Exception:
+        # Fallback for backends where native extraction with names is unavailable.
+        if 'vector' in samples.shape:
+            return torch.as_tensor(samples.numpy('members,n,vector').astype(np.float64))
+        return torch.as_tensor(samples.numpy('members,n').astype(np.float64))
 
 
 def _field_values_to_numpy(f: Field):
@@ -255,36 +283,39 @@ def _field_values_to_numpy(f: Field):
 
 
 def _extract_swarm_state_arrays(swarm: Swarm):
-    """Extract member state into contiguous numpy arrays."""
-    pos = np.array([[m.location['x'], m.location['y']] for m in swarm.members], dtype=np.float64)
-    vel = np.array([[m.velocity['x'], m.velocity['y']] for m in swarm.members], dtype=np.float64)
-    radii = np.array([m.radius for m in swarm.members], dtype=np.float64)
-    masses = np.array([m.mass for m in swarm.members], dtype=np.float64)
-    max_forces = np.array([m.max_force for m in swarm.members], dtype=np.float64)
+    """Extract member state into contiguous torch tensors."""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    pos = torch.tensor([[m.location['x'], m.location['y']] for m in swarm.members], dtype=torch.float64, device=device)
+    vel = torch.tensor([[m.velocity['x'], m.velocity['y']] for m in swarm.members], dtype=torch.float64, device=device)
+    radii = torch.tensor([m.radius for m in swarm.members], dtype=torch.float64, device=device)
+    masses = torch.tensor([m.mass for m in swarm.members], dtype=torch.float64, device=device)
+    max_forces = torch.tensor([m.max_force for m in swarm.members], dtype=torch.float64, device=device)
     return pos, vel, radii, masses, max_forces
 
 
-def _writeback_swarm_state_arrays(swarm: Swarm, pos: np.ndarray, vel: np.ndarray) -> None:
+def _writeback_swarm_state_arrays(swarm: Swarm, pos: torch.Tensor, vel: torch.Tensor) -> None:
     """Write numpy array state back to member objects."""
+    pos_cpu = pos.detach().cpu().numpy()
+    vel_cpu = vel.detach().cpu().numpy()
     for i, m in enumerate(swarm.members):
-        m.location['x'] = float(pos[i, 0])
-        m.location['y'] = float(pos[i, 1])
-        m.velocity['x'] = float(vel[i, 0])
-        m.velocity['y'] = float(vel[i, 1])
+        m.location['x'] = float(pos_cpu[i, 0])
+        m.location['y'] = float(pos_cpu[i, 1])
+        m.velocity['x'] = float(vel_cpu[i, 0])
+        m.velocity['y'] = float(vel_cpu[i, 1])
 
 
 def _apply_force_with_bounds(
-    pos: np.ndarray,
-    vel: np.ndarray,
-    force: np.ndarray,
-    radii: np.ndarray,
-    masses: np.ndarray,
+    pos: torch.Tensor,
+    vel: torch.Tensor,
+    force: torch.Tensor,
+    radii: torch.Tensor,
+    masses: torch.Tensor,
     sim: Simulation,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Integrate one force contribution with the same predictor/boundary logic as before."""
-    pos = pos.copy()
-    vel = vel.copy()
-    inv_masses = np.where(masses > 0, 1.0 / masses, 0.0)
+    pos = pos.clone()
+    vel = vel.clone()
+    inv_masses = torch.where(masses > 0, 1.0 / masses, torch.zeros_like(masses))
 
     dt = sim.dt
     dt2 = dt * dt
@@ -298,60 +329,60 @@ def _apply_force_with_bounds(
     x_pred_minus = pos[:, 0] + vel[:, 0] * dt + 0.5 * x_acc * dt2 - radii
     x_pred_plus = pos[:, 0] + vel[:, 0] * dt + 0.5 * x_acc * dt2 + radii
     x_ok = (x_pred_minus > x_lower) & (x_pred_plus < x_upper)
-    prev_vx = vel[:, 0].copy()
-    vel[:, 0] = np.where(x_ok, vel[:, 0] + x_acc * dt, 0.0)
+    prev_vx = vel[:, 0].clone()
+    vel[:, 0] = torch.where(x_ok, vel[:, 0] + x_acc * dt, torch.zeros_like(vel[:, 0]))
     pos[:, 0] += 0.5 * (vel[:, 0] + prev_vx) * dt
     clamped_x = (pos[:, 0] < x_lower) | (pos[:, 0] > x_upper)
-    pos[:, 0] = np.clip(pos[:, 0], x_lower, x_upper)
-    vel[:, 0] = np.where(clamped_x, 0.0, vel[:, 0])
+    pos[:, 0] = torch.minimum(torch.maximum(pos[:, 0], x_lower), x_upper)
+    vel[:, 0] = torch.where(clamped_x, torch.zeros_like(vel[:, 0]), vel[:, 0])
 
     # Y component
     y_acc = force[:, 1] * inv_masses
     y_pred_minus = pos[:, 1] + vel[:, 1] * dt + 0.5 * y_acc * dt2 - radii
     y_pred_plus = pos[:, 1] + vel[:, 1] * dt + 0.5 * y_acc * dt2 + radii
     y_ok = (y_pred_minus > y_lower) & (y_pred_plus < y_upper)
-    prev_vy = vel[:, 1].copy()
-    vel[:, 1] = np.where(y_ok, vel[:, 1] + y_acc * dt, 0.0)
+    prev_vy = vel[:, 1].clone()
+    vel[:, 1] = torch.where(y_ok, vel[:, 1] + y_acc * dt, torch.zeros_like(vel[:, 1]))
     pos[:, 1] += 0.5 * (vel[:, 1] + prev_vy) * dt
     clamped_y = (pos[:, 1] < y_lower) | (pos[:, 1] > y_upper)
-    pos[:, 1] = np.clip(pos[:, 1], y_lower, y_upper)
-    vel[:, 1] = np.where(clamped_y, 0.0, vel[:, 1])
+    pos[:, 1] = torch.minimum(torch.maximum(pos[:, 1], y_lower), y_upper)
+    vel[:, 1] = torch.where(clamped_y, torch.zeros_like(vel[:, 1]), vel[:, 1])
 
     return pos, vel
 
 
 def vectorized_advance_by_viscous_drag(
-    pos: np.ndarray,
-    vel: np.ndarray,
-    radii: np.ndarray,
-    masses: np.ndarray,
+    pos: torch.Tensor,
+    vel: torch.Tensor,
+    radii: torch.Tensor,
+    masses: torch.Tensor,
     sim: Simulation,
     fluid: Fluid,
-    velocity_profiles: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+    velocity_profiles: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Vectorized viscous drag update for all members."""
     velocity_u = velocity_profiles[..., 0]
     velocity_v = velocity_profiles[..., 1]
 
-    v_rel_u = np.mean(velocity_u, axis=1) + vel[:, 0]
-    v_rel_v = np.mean(velocity_v, axis=1) + vel[:, 1]
-    v_mag = np.sqrt(v_rel_u**2 + v_rel_v**2) + 1e-9
+    v_rel_u = torch.mean(velocity_u, dim=1) + vel[:, 0]
+    v_rel_v = torch.mean(velocity_v, dim=1) + vel[:, 1]
+    v_mag = torch.sqrt(v_rel_u**2 + v_rel_v**2) + 1e-9
 
     rho = 1.06
     Re = rho * v_mag * 2.0 * radii / fluid.viscosity
-    cd = np.where(
+    cd = torch.where(
         Re < 0.1,
-        24.0 / np.maximum(Re, 1e-12),
-        24.0 / np.maximum(Re, 1e-12) * (1.0 + 0.15 * Re**0.687)
+        24.0 / torch.clamp(Re, min=1e-12),
+        24.0 / torch.clamp(Re, min=1e-12) * (1.0 + 0.15 * Re**0.687)
     )
     area = np.pi * radii**2
     f_mag = 0.5 * rho * v_mag**2 * area * cd
     force_u = -f_mag * v_rel_u / v_mag
     force_v = -f_mag * v_rel_v / v_mag
-    force = np.stack([force_u, force_v], axis=1)
+    force = torch.stack([force_u, force_v], dim=1)
 
-    bad = ~np.isfinite(force).all(axis=1)
-    if np.any(bad):
+    bad = ~torch.isfinite(force).all(dim=1)
+    if torch.any(bad):
         print("[WARNING: simulation.py] NaN/Inf detected in viscous drag force. Clamping to 0.")
         force[bad] = 0.0
 
@@ -359,24 +390,27 @@ def vectorized_advance_by_viscous_drag(
 
 
 def vectorized_advance_by_pressure_gradient(
-    pos: np.ndarray,
-    vel: np.ndarray,
-    radii: np.ndarray,
-    masses: np.ndarray,
+    pos: torch.Tensor,
+    vel: torch.Tensor,
+    radii: torch.Tensor,
+    masses: torch.Tensor,
     sim: Simulation,
-    pressure_profiles: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+    pressure_profiles: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Vectorized pressure-gradient update for all members."""
-    pressure_profiles = np.asarray(pressure_profiles, dtype=np.float64)
+    pressure_profiles = pressure_profiles.to(dtype=torch.float64)
     num_angles = pressure_profiles.shape[1] if pressure_profiles.ndim == 2 and pressure_profiles.shape[1] > 0 else 1
     cos_angles, sin_angles = _get_angle_trig(num_angles)
+    device = pressure_profiles.device
+    cos_t = torch.tensor(cos_angles, dtype=torch.float64, device=device)
+    sin_t = torch.tensor(sin_angles, dtype=torch.float64, device=device)
 
-    lin_force_x = -np.sum(pressure_profiles * cos_angles[None, :], axis=1) * radii**2
-    lin_force_y = -np.sum(pressure_profiles * sin_angles[None, :], axis=1) * radii**2
-    force = np.stack([lin_force_x, lin_force_y], axis=1)
+    lin_force_x = -torch.sum(pressure_profiles * cos_t.unsqueeze(0), dim=1) * radii**2
+    lin_force_y = -torch.sum(pressure_profiles * sin_t.unsqueeze(0), dim=1) * radii**2
+    force = torch.stack([lin_force_x, lin_force_y], dim=1)
 
-    bad = ~np.isfinite(force).all(axis=1)
-    if np.any(bad):
+    bad = ~torch.isfinite(force).all(dim=1)
+    if torch.any(bad):
         print("[WARNING: simulation.py] NaN/Inf detected in pressure gradient force. Clamping to 0.")
         force[bad] = 0.0
 
@@ -384,20 +418,20 @@ def vectorized_advance_by_pressure_gradient(
 
 
 def vectorized_advance_by_forces(
-    pos: np.ndarray,
-    vel: np.ndarray,
-    radii: np.ndarray,
-    masses: np.ndarray,
-    max_forces: np.ndarray,
+    pos: torch.Tensor,
+    vel: torch.Tensor,
+    radii: torch.Tensor,
+    masses: torch.Tensor,
+    max_forces: torch.Tensor,
     sim: Simulation,
-    internal_forces: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+    internal_forces: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Vectorized internal/contact-force update for all members."""
     n_members = pos.shape[0]
     if n_members == 0:
         return pos, vel
 
-    forces = np.asarray(internal_forces, dtype=np.float64)
+    forces = internal_forces.to(dtype=torch.float64, device=pos.device)
     if forces.shape[0] != n_members:
         raise ValueError("internal_forces length does not match swarm member count")
 
@@ -406,26 +440,26 @@ def vectorized_advance_by_forces(
 
     # Pairwise geometry from i to j: r_ij = pos_j - pos_i
     r_ij = pos[None, :, :] - pos[:, None, :]
-    dist = np.linalg.norm(r_ij, axis=2)
-    safe_dist = np.where(dist > 1e-12, dist, 1.0)
+    dist = torch.linalg.norm(r_ij, dim=2)
+    safe_dist = torch.where(dist > 1e-12, dist, torch.ones_like(dist))
     n_ij = r_ij / safe_dist[:, :, None]
 
     # Contact mask equivalent to the original condition:
     # 0 < dist < (2 * radius_j + 2 * max(dx,dy))
     contact_thresh = 2.0 * radii[None, :] + 2.0 * max(sim.dx, sim.dy)
     contact_mask = (dist > 0.0) & (dist < contact_thresh)
-    np.fill_diagonal(contact_mask, False)
+    contact_mask.fill_diagonal_(False)
 
     # Original implementation adds scalar dot(...) to both components.
     # Preserve that behavior exactly.
     other_force = forces[None, :, :] * max_forces[None, :, None]
-    contact_scalar = np.sum(other_force * n_ij, axis=2)  # (i, j)
-    contact_scalar = np.where(contact_mask, contact_scalar, 0.0)
-    contact_sum = np.sum(contact_scalar, axis=1)  # (i,)
+    contact_scalar = torch.sum(other_force * n_ij, dim=2)  # (i, j)
+    contact_scalar = torch.where(contact_mask, contact_scalar, torch.zeros_like(contact_scalar))
+    contact_sum = torch.sum(contact_scalar, dim=1)  # (i,)
     total_force = self_force + contact_sum[:, None]
 
-    bad = ~np.isfinite(total_force).all(axis=1)
-    if np.any(bad):
+    bad = ~torch.isfinite(total_force).all(dim=1)
+    if torch.any(bad):
         print("[WARNING: simulation.py] NaN/Inf detected in internal/contact forces. Clamping to 0.")
         total_force[bad] = 0.0
 
@@ -613,32 +647,29 @@ def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
         member.velocity['y'] = 0
 
 
-def resolve_collisions(swarm: Swarm, sim: Simulation, restitution: float = 0.0) -> None:
-    """
-    Resolve pairwise collisions between circular members by separating overlaps and
-    applying a simple impulse along the collision normal to reduce interpenetration.
-    Vectorized to eliminate slow nested Python loops.
-
-    :param swarm: Swarm containing members with location, velocity, radius, mass
-    :param sim: Simulation for boundary extents
-    :param restitution: Coefficient of restitution in [0,1], 0 = inelastic, 1 = elastic
-    :return: None
-    """
-    num = len(swarm.members)
+def resolve_collisions_tensor(
+    pos: torch.Tensor,
+    vel: torch.Tensor,
+    radii: torch.Tensor,
+    masses: torch.Tensor,
+    sim: Simulation,
+    restitution: float = 0.0
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Resolve collisions for tensor state using spatial-hash broad phase."""
+    num = pos.shape[0]
     if num < 2:
-        return
+        return pos, vel
 
-    # Extract properties into numpy arrays
-    pos = np.array([[m.location['x'], m.location['y']] for m in swarm.members], dtype=np.float64)
-    vel = np.array([[m.velocity['x'], m.velocity['y']] for m in swarm.members], dtype=np.float64)
-    radii = np.array([m.radius for m in swarm.members], dtype=np.float64)
-    masses = np.array([m.mass for m in swarm.members], dtype=np.float64)
-    inv_masses = np.where(masses > 0, 1.0 / masses, 0.0)
+    pos = pos.clone()
+    vel = vel.clone()
+    inv_masses = torch.where(masses > 0, 1.0 / masses, torch.zeros_like(masses))
 
-    # Broad phase via spatial hash to avoid full O(n^2) candidate set.
-    max_interaction = 2.0 * np.max(radii) + 2.0 * max(sim.dx, sim.dy)
+    # Spatial hash in Python space (candidate generation only).
+    pos_cpu = pos.detach().cpu().numpy()
+    radii_cpu = radii.detach().cpu().numpy()
+    max_interaction = 2.0 * float(np.max(radii_cpu)) + 2.0 * max(sim.dx, sim.dy)
     cell_size = max(max_interaction, 1e-9)
-    cell_coords = np.floor(pos / cell_size).astype(np.int64)
+    cell_coords = np.floor(pos_cpu / cell_size).astype(np.int64)
 
     buckets: dict[tuple[int, int], list[int]] = {}
     for idx, c in enumerate(cell_coords):
@@ -666,40 +697,41 @@ def resolve_collisions(swarm: Swarm, sim: Simulation, restitution: float = 0.0) 
 
     for i, j in sorted(candidate_pairs):
         diff_ij = pos[i] - pos[j]
-        d = float(np.linalg.norm(diff_ij))
+        d = torch.linalg.norm(diff_ij)
         min_dist_ij = radii[i] + radii[j]
         if not (d < min_dist_ij):
             continue
-        if d == 0.0:
-            n = np.array([1.0, 0.0], dtype=np.float64)
-            d = 1e-6
+
+        if d <= 1e-12:
+            n = torch.tensor([1.0, 0.0], dtype=pos.dtype, device=pos.device)
+            d = torch.tensor(1e-6, dtype=pos.dtype, device=pos.device)
         else:
             n = diff_ij / d
 
-        # Positional correction
         overlap = min_dist_ij - d
         correction = 0.5 * overlap * n
         pos[i] += correction
         pos[j] -= correction
 
-        # Velocity response
         v_rel = vel[i] - vel[j]
-        v_sep = np.dot(v_rel, n)
-        
+        v_sep = torch.dot(v_rel, n)
         if v_sep < 0:
             j_imp = -(1.0 + restitution) * v_sep / (inv_masses[i] + inv_masses[j] + 1e-12)
             impulse = j_imp * n
             vel[i] += impulse * inv_masses[i]
             vel[j] -= impulse * inv_masses[j]
 
-    # Batch damp and clamp to domain
     x_lower = radii
     x_upper = sim.length_x - radii
     y_lower = radii
     y_upper = sim.length_y - radii
+    pos[:, 0] = torch.minimum(torch.maximum(pos[:, 0], x_lower), x_upper)
+    pos[:, 1] = torch.minimum(torch.maximum(pos[:, 1], y_lower), y_upper)
+    return pos, vel
 
-    pos[:, 0] = np.clip(pos[:, 0], x_lower, x_upper)
-    pos[:, 1] = np.clip(pos[:, 1], y_lower, y_upper)
 
-    # Write back to objects
+def resolve_collisions(swarm: Swarm, sim: Simulation, restitution: float = 0.0) -> None:
+    """Compatibility wrapper that resolves collisions and writes back into swarm objects."""
+    pos, vel, radii, masses, _ = _extract_swarm_state_arrays(swarm)
+    pos, vel = resolve_collisions_tensor(pos, vel, radii, masses, sim, restitution=restitution)
     _writeback_swarm_state_arrays(swarm, pos, vel)

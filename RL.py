@@ -101,7 +101,7 @@ class SwarmEnv(gym.Env):
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=sim.resolution[0], y=sim.resolution[1])
         self.p = None
-        self.episode_duration = 20.0
+        self.episode_duration = 10.0
 
         # Per-episode tracking
         self.episode_index = 0
@@ -285,6 +285,8 @@ class SwarmEnv(gym.Env):
         obs = []
         if self.p is not None:
             pressure_profiles = sample_field_around_obstacles(f=self.p, swarm=self.swarm, sim=self.sim, n=4)
+            if torch.is_tensor(pressure_profiles):
+                pressure_profiles = pressure_profiles.detach().cpu().numpy()
         else:
             pressure_profiles = np.zeros((len(self.swarm.members), 4), dtype=np.float32)
         for i, member in enumerate(self.swarm.members):
@@ -765,19 +767,22 @@ def run_MOMAPPO(env, total_timesteps: int,
         folder = '/'.join(folder_parts[:-1]) if len(folder_parts) > 1 else env_folder
     else:
         folder = env.folder
-    tb_log_dir = f"run/{folder}/MOMAPPO_tb"
-    os.makedirs(os.path.dirname(tb_log_dir), exist_ok=True)
+    tb_run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tb_root_log_dir = f"run/{folder}/MOMAPPO_tb"
+    tb_log_dir = f"{tb_root_log_dir}/{tb_run_stamp}"
+    os.makedirs(tb_log_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=tb_log_dir)
+    tb_proc = None
 
     # Try to open TensorBoard server
     if open_tensorboard:
         try:
-            subprocess.Popen([
-                "tensorboard", "--logdir", tb_log_dir, "--port", "6006", "--host", "127.0.0.1"
+            tb_proc = subprocess.Popen([
+                "tensorboard", "--logdir", tb_root_log_dir, "--port", "6006", "--host", "127.0.0.1"
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"TensorBoard: http://127.0.0.1:6006 (logdir {tb_log_dir})")
+            print(f"TensorBoard: http://127.0.0.1:6006 (logdir {tb_root_log_dir})")
         except Exception as e:
-            print(f"Could not launch TensorBoard automatically: {e}. You can run: tensorboard --logdir {tb_log_dir}")
+            print(f"Could not launch TensorBoard automatically: {e}. You can run: tensorboard --logdir {tb_root_log_dir}")
     obs_dim = int(obs_flat.shape[0])
     act_dim = int(env.action_space.shape[0] * env.action_space.shape[1])
 
@@ -812,6 +817,9 @@ def run_MOMAPPO(env, total_timesteps: int,
     
     # Track last done state for all environments
     last_dones = np.zeros(num_envs, dtype=np.float32)
+    # For TensorBoard curves that can be compared directly to end-of-run plots
+    # (which use env.rewards and env.objectives_history from env_idx=0).
+    env0_cum_reward = 0.0
 
     for update in range(num_updates):
         # Create buffer sized for all environments
@@ -828,6 +836,10 @@ def run_MOMAPPO(env, total_timesteps: int,
             vals_coh_all = []
             vals_smooth_all = []
             obs_tensors = []
+            step_reward_env0 = None
+            step_obj_env0_loc = 0.0
+            step_obj_env0_coh = 0.0
+            step_obj_env0_smooth = 0.0
             
             for env_idx in range(num_envs):
                 obs = obs_all[env_idx]
@@ -872,11 +884,20 @@ def run_MOMAPPO(env, total_timesteps: int,
                 rew_loc_prog = float(comps.get('location_progress', 0.0))
                 rew_coh = float(comps.get('cohesion', 0.0))
                 rew_smooth = float(comps.get('smoothness', 0.0))
+                reward_total = rew_loc_prog + rew_coh + rew_smooth
                 # Keep objective logging/plots in unweighted space.
                 obj = info.get('objectives', {'location_progress': 0.0, 'cohesion': 0.0, 'smoothness': 0.0})
-                rollout_obj_loc_prog.append(float(obj.get('location_progress', 0.0)))
-                rollout_obj_coh.append(float(obj.get('cohesion', 0.0)))
-                rollout_obj_smooth.append(float(obj.get('smoothness', 0.0)))
+                obj_loc = float(obj.get('location_progress', 0.0))
+                obj_coh = float(obj.get('cohesion', 0.0))
+                obj_smooth = float(obj.get('smoothness', 0.0))
+                rollout_obj_loc_prog.append(obj_loc)
+                rollout_obj_coh.append(obj_coh)
+                rollout_obj_smooth.append(obj_smooth)
+                if env_idx == 0:
+                    step_reward_env0 = reward_total
+                    step_obj_env0_loc = obj_loc
+                    step_obj_env0_coh = obj_coh
+                    step_obj_env0_smooth = obj_smooth
                 buffer.add(
                     obs_t.cpu(), action_t, logprobs_all[env_idx],
                     bool(dones_batch[env_idx]),
@@ -884,6 +905,15 @@ def run_MOMAPPO(env, total_timesteps: int,
                     vals_loc_prog_all[env_idx], vals_coh_all[env_idx], vals_smooth_all[env_idx]
                 )
                 step_count += 1
+
+            # Step-level logging for env_idx=0 (to match end-of-run reward plots).
+            if step_reward_env0 is not None:
+                env0_cum_reward += float(step_reward_env0)
+                writer.add_scalar('rewards/step_total_env0', float(step_reward_env0), step_count)
+                writer.add_scalar('rewards/cumulative_total_env0', float(env0_cum_reward), step_count)
+                writer.add_scalar('objectives/env0/location_progress', float(step_obj_env0_loc), step_count)
+                writer.add_scalar('objectives/env0/cohesion', float(step_obj_env0_coh), step_count)
+                writer.add_scalar('objectives/env0/smoothness', float(step_obj_env0_smooth), step_count)
             
             # Update observations for next iteration
             obs_all = next_obs_all
@@ -1072,3 +1102,12 @@ def run_MOMAPPO(env, total_timesteps: int,
         pbar.close()
     
     writer.close()
+    if tb_proc is not None:
+        try:
+            tb_proc.terminate()
+            tb_proc.wait(timeout=5)
+        except Exception:
+            try:
+                tb_proc.kill()
+            except Exception:
+                pass

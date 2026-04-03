@@ -27,16 +27,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--length_y", type=float, default=4.0, help="Simulation domain length in y-direction (default: 4.0)")
     parser.add_argument("--fields", type=str, default=None, help="Path to fields npz file for background visualization")
     parser.add_argument("--field_type", type=str, default=None, choices=['vx', 'vy', 'p'], help="Field type to display (vx, vy, or p)")
-    parser.add_argument("--subsample", type=int, default=1, help="Only render every Nth timestep to save time/memory (default: 1)")
     return parser.parse_args()
 
 
-def read_locations(csv_path: str, subsample: int = 1) -> pd.DataFrame:
+def read_locations(csv_path: str) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
     if "timestep" in df.columns:
         df = df.sort_values("timestep").reset_index(drop=True)
-    if subsample > 1:
-        df = df.iloc[::subsample].reset_index(drop=True)
     return df
 
 
@@ -68,10 +65,9 @@ def compute_axis_limits(df: pd.DataFrame, member_ids: List[int]) -> Tuple[Tuple[
     return (x_min - x_pad, x_max + x_pad), (y_min - y_pad, y_max + y_pad)
 
 
-def load_fields(fields_path: str, subsample: int = 1) -> dict:
+def load_fields(fields_path: str) -> dict:
     """
     Load fields from a single combined .npz file (shape: (timesteps, x, y)).
-    Subsamples by keeping every Nth timestep.
     """
     data = np.load(fields_path)
     
@@ -83,10 +79,10 @@ def load_fields(fields_path: str, subsample: int = 1) -> dict:
         raise ValueError("Single step file provided. Use a directory of step_*.npz files instead.")
     
     return {
-        'vx': data['vx'][::subsample],
-        'vy': data['vy'][::subsample],
-        'p':  data['p'][::subsample],
-        'timestep': data[key][::subsample],
+        'vx': data['vx'],
+        'vy': data['vy'],
+        'p':  data['p'],
+        'timestep': data[key],
         'length_x': float(data['length_x']),
         'length_y': float(data['length_y'])
     }
@@ -113,7 +109,7 @@ def scan_fields_directory(fields_dir: str) -> Tuple[np.ndarray, List[str]]:
 
 def load_fields_for_frames(fields_dir: str, frame_times: np.ndarray) -> dict:
     """
-    For each timestamp in `frame_times` (the subsampled CSV timesteps),
+    For each timestamp in `frame_times` (the CSV timesteps),
     find the nearest field file and load it. Returns a dict of stacked arrays
     perfectly aligned to `frame_times`.
     """
@@ -293,16 +289,9 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
         
         return [*artists, *circles, com_circle, time_text]
 
-    # Compute FPS from actual timestep gap in the (possibly subsampled) df
-    # so the video always plays at real-time speed regardless of subsampling.
-    if "timestep" in df.columns and len(df) > 1:
-        dt_frame = float(df["timestep"].iloc[1] - df["timestep"].iloc[0])
-        fps_used = max(1, round(1.0 / dt_frame))
-    else:
-        fps_used = fps  # fall back to user-supplied fps
+    fps_used = max(1, int(fps))
     frame_interval_ms = max(1, int(1000 / fps_used))
-    print(f"  Animation: {num_frames} frames at {fps_used} fps "
-          f"(real-time dt per frame = {frame_interval_ms / 1000:.3f} s)")
+    print(f"  Animation: {num_frames} frames at {fps_used} fps (interval {frame_interval_ms} ms)")
     fig.tight_layout()
     ani = animation.FuncAnimation(fig, update, frames=num_frames, interval=frame_interval_ms, blit=True)
 
@@ -321,7 +310,7 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
 
 def main() -> None:
     args = parse_args()
-    df = read_locations(args.csv, args.subsample)
+    df = read_locations(args.csv)
     
     # Gather the actual simulation timestamps we'll be animating
     if "timestep" in df.columns:
@@ -342,7 +331,7 @@ def main() -> None:
                 fields_data = load_fields_for_frames(args.fields,
                     np.linspace(0, 1, len(df)))  # dummy; index-based fallback
         else:
-            fields_data = load_fields(args.fields, args.subsample)
+            fields_data = load_fields(args.fields)
         
         print(f"  Loaded {len(fields_data['timestep'])} field snapshots")
         print(f"  VX range: [{fields_data['vx'].min():.2e}, {fields_data['vx'].max():.2e}]")

@@ -189,8 +189,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--inflow-velocity',
         type=float,
-        default=50.0,
-        help='Peak inflow centerline velocity in mm/s (default: 50.0)',
+        default=162.0,
+        help='Peak inflow centerline velocity in mm/s (default: 162.0)',
     )
 
     # RL controls

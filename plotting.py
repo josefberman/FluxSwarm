@@ -68,30 +68,31 @@ def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
         including their historical positions.
     :return: None
     """
-    data_dict = {'timestep': np.array([t + sim.dt for t in range(len(swarm.members[0].previous_locations))])}
+    # Index i is the snapshot at simulation time i * dt (i=0 is initial state before any step).
+    data_dict = {
+        'timestep': np.arange(len(swarm.members[0].previous_locations), dtype=np.float64) * sim.dt,
+    }
     for i, member in enumerate(swarm.members):
         data_dict[f'location_{i}_x'] = [item['x'] for item in member.previous_locations]
         data_dict[f'location_{i}_y'] = [item['y'] for item in member.previous_locations]
     pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/locations.csv')
+    n_loc = len(swarm.members[0].previous_locations)
+    time_axis = np.arange(n_loc, dtype=np.float64) * sim.dt
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     list_of_member_locations = []
     for member in swarm.members:
-        axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
-                     [item['x'] for item in member.previous_locations], c='#bbbbbb', linewidth=0.5)
+        axes[0].plot(time_axis, [item['x'] for item in member.previous_locations], c='#bbbbbb', linewidth=0.5)
         list_of_member_locations.append(member.previous_locations)
     average_dict = [{'x': sum(d['x'] for d in g) / len(g), 'y': sum(d['y'] for d in g) / len(g)} for g in
                     zip(*list_of_member_locations)]
-    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
-                 [item['x'] for item in average_dict], c='k', linewidth=1)
+    axes[0].plot(time_axis, [item['x'] for item in average_dict], c='k', linewidth=1)
     axes[0].set_title('x locations', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Location [mm]')
     axes[0].set_ylim(0, sim.length_x)
     for member in swarm.members:
-        axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
-                     [item['y'] for item in member.previous_locations], c='#bbbbbb', linewidth=0.5)
-    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
-                 [item['y'] for item in average_dict], c='k', linewidth=1)
+        axes[1].plot(time_axis, [item['y'] for item in member.previous_locations], c='#bbbbbb', linewidth=0.5)
+    axes[1].plot(time_axis, [item['y'] for item in average_dict], c='k', linewidth=1)
     axes[1].set_title('y locations', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Location [mm]')
@@ -266,18 +267,18 @@ def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_hi
     
     # Relative fluid-x progress (first): unweighted mean(u_fluid_x - v_member_x) / v_ref in [-1, 1]
     axes[0].plot(timesteps, prog, c='tab:purple', linewidth=1.0, label='progress')
-    axes[0].axhline(1.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
-    axes[0].axhline(0.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
-    axes[0].axhline(-1.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
-    axes[0].set_title(f'Relative fluid-x progress (normalized){(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
+    # axes[0].axhline(1.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
+    # axes[0].axhline(0.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
+    # axes[0].axhline(-1.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
+    axes[0].set_title(f'Normalized velocity over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Rel. u_x objective')
     # axes[0].legend(loc='best')
 
     # Energy efficiency (second): mean(1 - ||F||/||F_max||)
     axes[1].plot(timesteps, energy, c='tab:green', linewidth=1.0, label='energy_efficiency')
-    axes[1].axhline(1.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5)
-    axes[1].axhline(0.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5)
+    # axes[1].axhline(1.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5)
+    # axes[1].axhline(0.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5)
     axes[1].set_title(f'Energy efficiency over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Energy efficiency')
@@ -285,8 +286,8 @@ def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_hi
 
     # Smoothness (third)
     axes[2].plot(timesteps, sm, c='tab:orange', linewidth=1.0, label='smoothness')
-    axes[2].axhline(1.0, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Max possible reward
-    axes[2].axhline(-1.0, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Min possible reward
+    # axes[2].axhline(1.0, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Max possible reward
+    # axes[2].axhline(-1.0, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Min possible reward
     axes[2].set_title(f'Smoothness reward over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[2].set_xlabel('Time [s]')
     axes[2].set_ylabel('Smoothness')

@@ -1,7 +1,7 @@
 import argparse
 import os
 import re
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -110,8 +110,9 @@ def scan_fields_directory(fields_dir: str) -> Tuple[np.ndarray, List[str]]:
 def load_fields_for_frames(fields_dir: str, frame_times: np.ndarray) -> dict:
     """
     For each timestamp in `frame_times` (the CSV timesteps),
-    find the nearest field file and load it. Returns a dict of stacked arrays
-    perfectly aligned to `frame_times`.
+    load the matching field snapshot. When there is one fewer field file than
+    CSV rows (initial location at t=0 with no pre-step field), row i>0 maps
+    to field file i-1; row 0 reuses the first snapshot as a stand-in for t≈0.
     """
     field_timesteps, field_files = scan_fields_directory(fields_dir)
     print(f"Field directory contains {len(field_files)} snapshots covering "
@@ -120,8 +121,15 @@ def load_fields_for_frames(fields_dir: str, frame_times: np.ndarray) -> dict:
     vx_list, vy_list, p_list = [], [], []
     length_x = length_y = None
 
-    for t in frame_times:
-        idx = int(np.argmin(np.abs(field_timesteps - t)))
+    n_csv = len(frame_times)
+    n_field = len(field_files)
+    for i, t in enumerate(frame_times):
+        if n_field == n_csv - 1:
+            # locations.csv from plot_save_locations: row 0 = t=0 (no fluid snapshot at t=0)
+            idx = 0 if i == 0 else i - 1
+        else:
+            idx = int(np.argmin(np.abs(field_timesteps - float(t))))
+        idx = max(0, min(idx, n_field - 1))
         data = np.load(field_files[idx])
         vx_list.append(data['vx'])
         vy_list.append(data['vy'])
@@ -140,6 +148,31 @@ def load_fields_for_frames(fields_dir: str, frame_times: np.ndarray) -> dict:
         'length_y': length_y,
     }
 
+
+
+def field_frame_index(
+    frame_idx: int,
+    n_frames: int,
+    field_ts: np.ndarray,
+    t_row: float,
+) -> int:
+    """
+    Map animation frame index to a field snapshot index.
+
+    Training saves one field per env step at times dt, 2dt, ... while
+    plot_save_locations stores one row per snapshot at times 0, dt, 2dt, ...
+    So len(fields) == len(locations) - 1 and row i>0 aligns with field i-1.
+    """
+    n_field = len(field_ts)
+    if n_field == n_frames - 1:
+        if frame_idx == 0:
+            return 0
+        return max(0, min(frame_idx - 1, n_field - 1))
+    if n_field == n_frames:
+        j = int(np.argmin(np.abs(field_ts - t_row)))
+        return max(0, min(j, n_field - 1))
+    j = int(np.argmin(np.abs(field_ts - t_row)))
+    return max(0, min(j, n_field - 1))
 
 
 def build_colors(n: int) -> List[str]:
@@ -201,14 +234,22 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
     # Setup field background if provided
     field_img = None
     colorbar = None
+    field_ts_arr: Optional[np.ndarray] = None
     if fields_data and field_type:
         field_array = fields_data[field_type]  # Shape: (timesteps, x, y)
+        raw_ts = fields_data.get("timestep")
+        if raw_ts is not None:
+            field_ts_arr = np.asarray(raw_ts, dtype=np.float64).reshape(-1)
         # Compute global min/max for constant colorbar
         vmin, vmax = float(field_array.min()), float(field_array.max())
         
-        # Display first frame as background
+        fi0 = 0
+        if field_ts_arr is not None and len(field_ts_arr) == len(field_array):
+            t0 = float(df["timestep"].iloc[0]) if "timestep" in df.columns else 0.0
+            fi0 = field_frame_index(0, len(df), field_ts_arr, t0)
+        # Display first frame as background (index matches update(0))
         field_img = ax.imshow(
-            field_array[0].T,  # Transpose to match (x,y) -> (row, col) convention
+            field_array[fi0].T,  # Transpose to match (x,y) -> (row, col) convention
             origin='lower',
             extent=[x_min, x_max, y_min, y_max],
             cmap='viridis',
@@ -263,9 +304,14 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
         artists = []
         if field_img is not None and fields_data is not None:
             field_array = fields_data[field_type]
-            # fields_data was built exactly matching df rows, so direct index is correct
-            if frame_idx < len(field_array):
-                field_img.set_data(field_array[frame_idx].T)
+            n_f = len(field_array)
+            if field_ts_arr is not None and len(field_ts_arr) == n_f:
+                t_here = float(df["timestep"].iloc[frame_idx]) if "timestep" in df.columns else float(frame_idx)
+                fi = field_frame_index(frame_idx, num_frames, field_ts_arr, t_here)
+            else:
+                fi = max(0, min(frame_idx, n_f - 1))
+            if fi < n_f:
+                field_img.set_data(field_array[fi].T)
                 artists.append(field_img)
         
         xs = []

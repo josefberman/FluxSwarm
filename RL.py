@@ -90,7 +90,7 @@ class SwarmEnv(gym.Env):
         self.folder = folder
         self.rewards = []
         # Multi-objective reward weights (can be tuned externally after init)
-        self.w_progress = 16.0     # relative x vs fluid: mean(u_fluid_x - v_member_x), normalized
+        self.w_progress = 1.0     # relative x vs fluid: mean(u_fluid_x - v_member_x), normalized
         self.w_energy = 1.0       # energy efficiency: mean(1 - ||F_i||/||F_max||)
         self.w_smooth = 1.0       # maximize action smoothness (cosine similarity)
         # Tracking for logging
@@ -283,7 +283,7 @@ class SwarmEnv(gym.Env):
         """
         obs = []
         if self.p is not None:
-            pressure_profiles = sample_field_around_obstacles(f=self.p, swarm=self.swarm, sim=self.sim, n=4)
+            pressure_profiles = sample_field_around_obstacles(f=self.p, swarm=self.swarm, sim=self.sim, n=4, offset=1)
             if torch.is_tensor(pressure_profiles):
                 pressure_profiles = pressure_profiles.detach().cpu().numpy()
         else:
@@ -348,17 +348,19 @@ class SwarmEnv(gym.Env):
             return 0.0
 
         velocity_profiles = sample_field_around_obstacles(
-            f=self.v, swarm=self.swarm, sim=self.sim, n=NUM_PRESSURE_ANGLES, offset=2
+            f=self.v, swarm=self.swarm, sim=self.sim, n=NUM_PRESSURE_ANGLES, offset=1
         )
-        if torch.is_tensor(velocity_profiles):
-            vp = velocity_profiles.detach().cpu().numpy()
-        else:
-            vp = np.asarray(velocity_profiles)
-        ux_mean = np.mean(vp[:, :, 0], axis=1).astype(np.float64)
-        vx_mem = np.array([m.velocity['x'] for m in self.swarm.members], dtype=np.float64)
-        r_per_member = ux_mean - vx_mem
-        v_ref = max(abs(float(self.inflow.amplitude)), 1e-9)
-        progress_unw = np.clip(r_per_member / v_ref, -1.0, 1.0)
+        # if torch.is_tensor(velocity_profiles):
+        #     vp = velocity_profiles.detach().cpu().numpy()
+        # else:
+        #     vp = np.asarray(velocity_profiles)
+        # ux_mean = np.mean(vp[:, :, 0], axis=1).astype(np.float64)
+        # vx_mem = np.array([m.velocity['x'] for m in self.swarm.members], dtype=np.float64)
+        # r_per_member = ux_mean - vx_mem
+        # v_ref = max(abs(float(self.inflow.amplitude)), 1e-9)
+        # progress_unw = np.clip(r_per_member / v_ref, -1.0, 1.0)
+        r_prog_w = self.w_progress * progress_unw
+        progress_unw = np.clip(-1.0 * vx_mem / v_ref, -1.0, 1.0) 
         r_prog_w = self.w_progress * progress_unw
 
         energy_unw = np.zeros(n, dtype=np.float64)

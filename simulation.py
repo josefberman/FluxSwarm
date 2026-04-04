@@ -180,10 +180,10 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
     )
     pressure_profiles_all = sample_field_around_obstacles(
-        f=p, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2, coords_tensor=coords_tensor
+        f=p, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=1, coords_tensor=coords_tensor
     )  # shape: (num_members, n)
     velocity_profiles = sample_field_around_obstacles(
-        f=v, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2, coords_tensor=coords_tensor
+        f=v, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=1, coords_tensor=coords_tensor
     )
     timings['sampling'] = perf_counter() - t_sampling
     t_updates = perf_counter()
@@ -311,11 +311,13 @@ def _apply_force_with_bounds(
     radii: torch.Tensor,
     masses: torch.Tensor,
     sim: Simulation,
+    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Integrate one force contribution with the same predictor/boundary logic as before."""
     pos = pos.clone()
     vel = vel.clone()
     inv_masses = torch.where(masses > 0, 1.0 / masses, torch.zeros_like(masses))
+    radii = torch.tensor([1*sim.dx]*pos.shape[0], dtype=torch.float64, device=device)
 
     dt = sim.dt
     dt2 = dt * dt

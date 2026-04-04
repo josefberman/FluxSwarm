@@ -25,6 +25,8 @@ PADDING = 2
 
 # Number of angular samples around each member used for pressure sampling
 NUM_PRESSURE_ANGLES = 4
+# Radial distance (in world units) for v/p samples: factor × member.radius along each sample ray
+FIELD_SAMPLE_RADIUS_FACTOR = 1.5
 _ANGLE_TRIG_CACHE: dict[int, tuple[np.ndarray, np.ndarray]] = {}
 PROFILE_SYNC_POINTS = False
 
@@ -41,8 +43,31 @@ def _get_angle_trig(n: int) -> tuple[np.ndarray, np.ndarray]:
     return cos_a, sin_a
 
 
-def build_sampling_coords_tensor(swarm: Swarm, sim: Simulation, n: int, offset=2):
-    """Build sampling coordinates around all members once for reuse across fields."""
+def _ray_max_param_in_box(
+    cx: torch.Tensor,
+    cy: torch.Tensor,
+    ux: torch.Tensor,
+    uy: torch.Tensor,
+    lx: float,
+    ly: float,
+    eps: float = 1e-14,
+) -> torch.Tensor:
+    """Smallest positive ray parameter t such that (cx, cy) + t * (ux, uy) hits an axis-aligned box edge [0,lx]×[0,ly]."""
+    t_ray = torch.full_like(cx, float("inf"))
+    t_ray = torch.where(ux > eps, torch.minimum(t_ray, (lx - cx) / ux), t_ray)
+    t_ray = torch.where(ux < -eps, torch.minimum(t_ray, -cx / ux), t_ray)
+    t_ray = torch.where(uy > eps, torch.minimum(t_ray, (ly - cy) / uy), t_ray)
+    t_ray = torch.where(uy < -eps, torch.minimum(t_ray, -cy / uy), t_ray)
+    return t_ray
+
+
+def build_sampling_coords_tensor(
+    swarm: Swarm,
+    sim: Simulation,
+    n: int,
+    radius_factor: float = FIELD_SAMPLE_RADIUS_FACTOR,
+):
+    """Build sampling coordinates on a ring at ``radius_factor`` × member radius, ray-clipped to the domain."""
     cos_a, sin_a = _get_angle_trig(n)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -52,16 +77,13 @@ def build_sampling_coords_tensor(swarm: Swarm, sim: Simulation, n: int, offset=2
     cos_t = torch.tensor(cos_a, dtype=torch.float64, device=device).unsqueeze(0)
     sin_t = torch.tensor(sin_a, dtype=torch.float64, device=device).unsqueeze(0)
 
-    x_world = member_x + member_r * cos_t
-    y_world = member_y + member_r * sin_t
+    t_u = radius_factor * member_r
+    t_ray = _ray_max_param_in_box(member_x, member_y, cos_t, sin_t, sim.length_x, sim.length_y)
+    t_ray = torch.nan_to_num(t_ray, nan=float("inf"), posinf=float("inf"), neginf=float("inf"))
+    t = torch.minimum(t_u, t_ray)
 
-    # Adjust offsets exactly as before
-    x_world += torch.sign(cos_t) * offset * (sim.length_x / sim.resolution[0])
-    y_world += torch.sign(sin_t) * offset * (sim.length_y / sim.resolution[1])
-
-    # Clip coordinates to domain
-    x_world = torch.clamp(x_world, 0, sim.length_x)
-    y_world = torch.clamp(y_world, 0, sim.length_y)
+    x_world = member_x + t * cos_t
+    y_world = member_y + t * sin_t
 
     coords = torch.stack([x_world, y_world], dim=-1)  # shape (num_members, n, 2)
     return tensor(coords, instance('members'), spatial('n'), channel(vector='x,y'))
@@ -177,13 +199,13 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     # Vectorized sampling for all members to reduce Python overhead
     t_sampling = perf_counter()
     coords_tensor = build_sampling_coords_tensor(
-        swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=2
+        swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES
     )
     pressure_profiles_all = sample_field_around_obstacles(
-        f=p, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=1, coords_tensor=coords_tensor
+        f=p, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, coords_tensor=coords_tensor
     )  # shape: (num_members, n)
     velocity_profiles = sample_field_around_obstacles(
-        f=v, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, offset=1, coords_tensor=coords_tensor
+        f=v, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, coords_tensor=coords_tensor
     )
     timings['sampling'] = perf_counter() - t_sampling
     t_updates = perf_counter()
@@ -244,14 +266,20 @@ def sample_field_around_obstacles(
     swarm: Swarm,
     sim: Simulation,
     n: int,
-    offset=2,
-    coords_tensor=None
+    *,
+    radius_factor: float = FIELD_SAMPLE_RADIUS_FACTOR,
+    coords_tensor=None,
 ) -> torch.Tensor:
     """
-    Vectorized sampling of field around all members. Returns array of shape (num_members, n).
+    Vectorized sampling of field around all members at ``radius_factor`` × member radius (ray-clipped).
+    Returns array of shape (num_members, n), or (num_members, n, 2) for vector fields.
+
+    When ``coords_tensor`` is provided, ``radius_factor`` is ignored (coords were built elsewhere).
     """
     if coords_tensor is None:
-        coords_tensor = build_sampling_coords_tensor(swarm=swarm, sim=sim, n=n, offset=offset)
+        coords_tensor = build_sampling_coords_tensor(
+            swarm=swarm, sim=sim, n=n, radius_factor=radius_factor
+        )
 
     samples = phi.field.sample(f, coords_tensor)
     try:
@@ -483,7 +511,7 @@ def advance_by_pressure_gradient(member: Member, sim: Simulation, pressure_profi
     :param sim: The simulation context, containing environmental properties and grid
         characteristics such as domain size and timestep.
     :param pressure_profile: A numpy array representing pressure values distributed
-        around the member at 8 equidistant angles.
+        around the member at ``num_angles`` equidistant angles.
     :return: None
     """
     # Compute resultant forces from pressure samples for arbitrary number of angles

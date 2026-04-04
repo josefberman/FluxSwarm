@@ -191,6 +191,62 @@ def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
     plt.savefig(f'run/{folder_name}/velocities.jpg', dpi=300)
 
 
+def plot_save_forces(folder_name: str, sim: Simulation, swarm: Swarm):
+    """
+    Save and plot applied propulsion force components (action × max_force per member) over time.
+
+    Forces use the same scaling as the simulation: ``F_x = a_x * max_force``, ``F_y = a_y * max_force``
+    where actions are the normalized controls stored in ``previous_actions``.
+    """
+    os.makedirs(f'run/{folder_name}', exist_ok=True)
+    n_steps = len(swarm.members[0].previous_actions)
+    data_dict = {'timestep': np.array([t + sim.dt for t in range(n_steps)], dtype=np.float64)}
+    for i, member in enumerate(swarm.members):
+        fmax = float(member.max_force)
+        data_dict[f'force_{i}_x'] = [float(item['x']) * fmax for item in member.previous_actions]
+        data_dict[f'force_{i}_y'] = [float(item['y']) * fmax for item in member.previous_actions]
+    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/forces.csv', index=False)
+
+    fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
+    list_of_member_forces = []
+    time_axis = np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=n_steps)
+    for member in swarm.members:
+        fmax = float(member.max_force)
+        axes[0].plot(
+            time_axis,
+            [float(item['x']) * fmax for item in member.previous_actions],
+            c='#bbbbbb',
+            linewidth=0.5,
+        )
+        axes[1].plot(
+            time_axis,
+            [float(item['y']) * fmax for item in member.previous_actions],
+            c='#bbbbbb',
+            linewidth=0.5,
+        )
+        list_of_member_forces.append(
+            [{'x': float(a['x']) * fmax, 'y': float(a['y']) * fmax} for a in member.previous_actions]
+        )
+    average_dict = [
+        {
+            'x': sum(d['x'] for d in g) / len(g),
+            'y': sum(d['y'] for d in g) / len(g),
+        }
+        for g in zip(*list_of_member_forces)
+    ]
+    axes[0].plot(time_axis, [item['x'] for item in average_dict], c='k', linewidth=1)
+    axes[0].set_title('x forces', fontweight='bold')
+    axes[0].set_xlabel('Time [s]')
+    axes[0].set_ylabel('Force [mg*mm/s^2]')
+    axes[1].plot(time_axis, [item['y'] for item in average_dict], c='k', linewidth=1)
+    axes[1].set_title('y forces', fontweight='bold')
+    axes[1].set_xlabel('Time [s]')
+    axes[1].set_ylabel('Force [mg*mm/s^2]')
+    plt.tight_layout()
+    plt.savefig(f'run/{folder_name}/forces.jpg', dpi=300)
+    plt.close(fig)
+
+
 def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
     """
     Generates and saves reward data and plots for a simulation.

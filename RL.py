@@ -8,7 +8,7 @@ from data_structures import Simulation, Swarm, Fluid, Inflow
 from simulation import step, sample_field_around_obstacles, NUM_PRESSURE_ANGLES
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
-from plotting import plot_save_locations, plot_save_velocities, plot_save_rewards, plot_save_actions, plot_save_fields, plot_save_rewards_objectives
+from plotting import plot_save_locations, plot_save_velocities, plot_save_forces, plot_save_rewards, plot_save_actions, plot_save_fields, plot_save_rewards_objectives
 from stable_baselines3 import PPO, SAC
 import torch
 from datetime import datetime
@@ -283,7 +283,7 @@ class SwarmEnv(gym.Env):
         """
         obs = []
         if self.p is not None:
-            pressure_profiles = sample_field_around_obstacles(f=self.p, swarm=self.swarm, sim=self.sim, n=4, offset=1)
+            pressure_profiles = sample_field_around_obstacles(f=self.p, swarm=self.swarm, sim=self.sim, n=4)
             if torch.is_tensor(pressure_profiles):
                 pressure_profiles = pressure_profiles.detach().cpu().numpy()
         else:
@@ -347,21 +347,31 @@ class SwarmEnv(gym.Env):
             self.objectives_history.append(self.last_objectives.copy())
             return 0.0
 
-        velocity_profiles = sample_field_around_obstacles(
-            f=self.v, swarm=self.swarm, sim=self.sim, n=NUM_PRESSURE_ANGLES, offset=1
+        velocity_profiles_far = sample_field_around_obstacles(
+            f=self.v, swarm=self.swarm, sim=self.sim, n=8, radius_factor=2.0
         )
-        # if torch.is_tensor(velocity_profiles):
-        #     vp = velocity_profiles.detach().cpu().numpy()
-        # else:
-        #     vp = np.asarray(velocity_profiles)
-        # ux_mean = np.mean(vp[:, :, 0], axis=1).astype(np.float64)
-        # vx_mem = np.array([m.velocity['x'] for m in self.swarm.members], dtype=np.float64)
-        # r_per_member = ux_mean - vx_mem
-        # v_ref = max(abs(float(self.inflow.amplitude)), 1e-9)
-        # progress_unw = np.clip(r_per_member / v_ref, -1.0, 1.0)
+        velocity_profiles_near = sample_field_around_obstacles(
+            f=self.v, swarm=self.swarm, sim=self.sim, n=8, radius_factor=1.0
+        )
+        if torch.is_tensor(velocity_profiles_far):
+            vp_far = velocity_profiles_far.detach().cpu().numpy()
+        else:
+            vp_far = np.asarray(velocity_profiles_far)
+        if torch.is_tensor(velocity_profiles_near):
+            vp_near = velocity_profiles_near.detach().cpu().numpy()
+        else:
+            vp_near = np.asarray(velocity_profiles_near)
+        # Average both near and far velocity profiles to estimate a more precise ux_mean
+        ux_far = np.mean(vp_far[:, :, 0], axis=1).astype(np.float64)
+        ux_near = np.mean(vp_near[:, :, 0], axis=1).astype(np.float64)
+        ux_mean = 0.5 * (ux_far + ux_near)
+        vx_mem = np.array([m.velocity['x'] for m in self.swarm.members], dtype=np.float64)
+        r_per_member = ux_mean - vx_mem
+        v_ref = max(abs(float(self.inflow.amplitude)), 1e-9)
+        progress_unw = np.clip(r_per_member / v_ref, -1.0, 1.0)
         r_prog_w = self.w_progress * progress_unw
-        progress_unw = np.clip(-1.0 * vx_mem / v_ref, -1.0, 1.0) 
-        r_prog_w = self.w_progress * progress_unw
+        # progress_unw = np.clip(-1.0 * vx_mem / v_ref, -1.0, 1.0) 
+        # r_prog_w = self.w_progress * progress_unw
 
         energy_unw = np.zeros(n, dtype=np.float64)
         for idx, member in enumerate(self.swarm.members):
@@ -1188,6 +1198,7 @@ def run_MOMAPPO(env, total_timesteps: int,
                 
                 plot_save_locations(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
                 plot_save_velocities(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
+                plot_save_forces(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
                 plot_save_rewards(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", rewards=rewards_attr, sim=sim_attr)
                 plot_save_rewards_objectives(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, objective_history=objectives_attr)
                 print(f"Saved plots for env {env_idx} (pid={pid_attr}) to {run_dir}")
@@ -1204,6 +1215,7 @@ def run_MOMAPPO(env, total_timesteps: int,
         os.makedirs(run_dir, exist_ok=True)
         plot_save_locations(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
         plot_save_velocities(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
+        plot_save_forces(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
         plot_save_rewards(folder_name=f"{folder}/MOMAPPO/{date_stamp}", rewards=rewards_attr, sim=sim_attr)
         plot_save_rewards_objectives(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, objective_history=objectives_attr)
 

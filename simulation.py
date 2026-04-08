@@ -144,6 +144,13 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     from phiml.math._tensors import TensorStack
     from phiml.math._optimize import Diverged, NotConverged
 
+    # --- IMPORTANT: REMOVE FOR GENERAL USE ---
+    force_actions = np.array([[-1.0, 0.0] for _ in range(len(swarm.members))], dtype=np.float64) # defaults to brute-force control, normalized to unit length
+
+    #-----------------------------------------------
+
+    force_actions = force_actions/np.linalg.norm(force_actions, axis=1, keepdims=True) # normalize to unit length
+
     timings = {}
     t0 = perf_counter()
     dt_sub = sim.dt / sim.substeps

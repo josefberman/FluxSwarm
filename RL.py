@@ -409,11 +409,7 @@ class SwarmEnv(gym.Env):
             ax, ay = float(a['x']), float(a['y'])
             fmax = float(member.max_force)
             f_mag = fmax * math.sqrt(ax * ax + ay * ay)
-            f_max_mag = fmax * math.sqrt(2.0)
-            if f_max_mag <= 0.0:
-                energy_unw[idx] = 1.0
-            else:
-                energy_unw[idx] = float(np.clip(1.0 - f_mag / f_max_mag, 0.0, 1.0))
+            energy_unw[idx] = float(np.clip(1.0 - f_mag / f_max, 0.0, 1.0))
         r_en_w = self.w_energy * energy_unw
 
         # --- Smoothness reward ---

@@ -178,8 +178,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--swarm-max-force',
         type=float,
-        default=2670/2, # 2670 mg*mm/s^2 is the equivalent force to overcome the drag
-        help='Maximum propulsion force per swarm member in mg*mm/s^2 (default: 2670/2)',
+        default=31400, # 31400 mg*mm/s^2 is the force exerted by 1T/m magnetic gradient field
+        help='Maximum propulsion force per swarm member in mg*mm/s^2 (default: 31400)',
     )
 
     # Inflow controls

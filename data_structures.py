@@ -43,7 +43,7 @@ class Member:
         self.velocity = velocity
         self.radius = radius
         self.density = density
-        self.mass = self.density * 4 / 3 * np.pi / radius ** 3
+        self.mass = self.density * 4 / 3 * np.pi * radius ** 3
         self.previous_locations = [self.location]
         self.previous_velocities = [self.velocity]
         self.previous_actions = [self.action]

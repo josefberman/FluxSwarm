@@ -347,31 +347,58 @@ class SwarmEnv(gym.Env):
             self.objectives_history.append(self.last_objectives.copy())
             return 0.0
 
-        velocity_profiles_far = sample_field_around_obstacles(
-            f=self.v, swarm=self.swarm, sim=self.sim, n=8, radius_factor=2.0
-        )
-        velocity_profiles_near = sample_field_around_obstacles(
-            f=self.v, swarm=self.swarm, sim=self.sim, n=8, radius_factor=1.0
-        )
-        if torch.is_tensor(velocity_profiles_far):
-            vp_far = velocity_profiles_far.detach().cpu().numpy()
-        else:
-            vp_far = np.asarray(velocity_profiles_far)
-        if torch.is_tensor(velocity_profiles_near):
-            vp_near = velocity_profiles_near.detach().cpu().numpy()
-        else:
-            vp_near = np.asarray(velocity_profiles_near)
-        # Average both near and far velocity profiles to estimate a more precise ux_mean
-        ux_far = np.mean(vp_far[:, :, 0], axis=1).astype(np.float64)
-        ux_near = np.mean(vp_near[:, :, 0], axis=1).astype(np.float64)
-        ux_mean = 0.5 * (ux_far + ux_near)
-        vx_mem = np.array([m.velocity['x'] for m in self.swarm.members], dtype=np.float64)
-        r_per_member = ux_mean - vx_mem
-        v_ref = max(abs(float(self.inflow.amplitude)), 1e-9)
-        progress_unw = np.clip(r_per_member / v_ref, -1.0, 1.0)
-        r_prog_w = self.w_progress * progress_unw
-        # progress_unw = np.clip(-1.0 * vx_mem / v_ref, -1.0, 1.0) 
+        # --- Progress reward ---
+
+        # --- Option 1: use relative velocity to progress reward ---
+
+        # velocity_profiles_far = sample_field_around_obstacles(
+        #     f=self.v, swarm=self.swarm, sim=self.sim, n=8, radius_factor=2.0
+        # )
+        # velocity_profiles_near = sample_field_around_obstacles(
+        #     f=self.v, swarm=self.swarm, sim=self.sim, n=8, radius_factor=1.0
+        # )
+        # if torch.is_tensor(velocity_profiles_far):
+        #     vp_far = velocity_profiles_far.detach().cpu().numpy()
+        # else:
+        #     vp_far = np.asarray(velocity_profiles_far)
+        # if torch.is_tensor(velocity_profiles_near):
+        #     vp_near = velocity_profiles_near.detach().cpu().numpy()
+        # else:
+        #     vp_near = np.asarray(velocity_profiles_near)
+        # # Average both near and far velocity profiles to estimate a more precise ux_mean
+        # ux_far = np.mean(vp_far[:, :, 0], axis=1).astype(np.float64)
+        # ux_near = np.mean(vp_near[:, :, 0], axis=1).astype(np.float64)
+        # ux_mean = 0.5 * (ux_far + ux_near)
+        # vx_mem = np.array([m.velocity['x'] for m in self.swarm.members], dtype=np.float64)
+        # r_per_member = ux_mean - vx_mem
+        # v_ref = max(abs(float(self.inflow.amplitude)), 1e-9)
+        # progress_unw = np.clip(r_per_member / v_ref, -1.0, 1.0)
         # r_prog_w = self.w_progress * progress_unw
+
+        # --- Option 2: use position to progress reward ---
+
+        # progress_unw = np.zeros(n, dtype=np.float64)
+        # x_inlet = 0.0
+        # x_outlet = self.sim.length_x
+        # for idx, member in enumerate(self.swarm.members):
+        #     x_mem_initial = member.previous_locations[0]['x']
+        #     x_mem_t = member.location['x']
+        #     if x_mem_t < x_mem_initial:
+        #         progress_unw[idx] = (x_mem_t - x_inlet) / (x_inlet - x_mem_initial) + 1.0  # r(x_inlet)=1.0, r(x_initial)=0.0
+        #     else:
+        #         progress_unw[idx] = (x_mem_t - x_outlet) / (x_mem_initial - x_outlet) - 1.0  # r(x_outlet)=-1.0, r(x_initial)=0.0
+        # r_prog_w = self.w_progress * progress_unw
+
+        # --- Option 3: use absolute velocity to progress reward ---
+
+        vx_mem = np.array([m.velocity['x'] for m in self.swarm.members], dtype=np.float64)
+        r_per_member = -1.0 * vx_mem
+        v_ref = max(abs(float(self.inflow.amplitude)), 1e-9)
+        # progress_unw = np.clip(r_per_member / v_ref, -1.0, 1.0)
+        progress_unw = np.clip(r_per_member, -1.0, 1.0)
+        r_prog_w = self.w_progress * progress_unw
+
+        # --- Energy efficiency reward ---
 
         energy_unw = np.zeros(n, dtype=np.float64)
         for idx, member in enumerate(self.swarm.members):
@@ -388,6 +415,8 @@ class SwarmEnv(gym.Env):
             else:
                 energy_unw[idx] = float(np.clip(1.0 - f_mag / f_max_mag, 0.0, 1.0))
         r_en_w = self.w_energy * energy_unw
+
+        # --- Smoothness reward ---
 
         smooth_unw = np.zeros(n, dtype=np.float64)
         for idx, member in enumerate(self.swarm.members):
@@ -1029,33 +1058,39 @@ def run_MOMAPPO(env, total_timesteps: int,
             # Step-level logging for env_idx=0 (to match end-of-run reward plots).
             if step_reward_env0 is not None:
                 env0_cum_reward += float(step_reward_env0)
-                writer.add_scalar('rewards/step_total_env0', float(step_reward_env0), step_count)
-                writer.add_scalar('rewards/cumulative_total_env0', float(env0_cum_reward), step_count)
+                # writer.add_scalar('rewards/step_total_env0', float(step_reward_env0), step_count)
+                # writer.add_scalar('rewards/cumulative_total_env0', float(env0_cum_reward), step_count)
                 writer.add_scalar('objectives/env0/progress', float(step_obj_env0_progress), step_count)
                 writer.add_scalar('objectives/env0/energy_efficiency', float(step_obj_env0_energy), step_count)
                 writer.add_scalar('objectives/env0/smoothness', float(step_obj_env0_smooth), step_count)
-                if rm_env0 is not None and rm_env0.shape[0] == num_members:
-                    for mi in range(num_members):
-                        writer.add_scalar(
-                            f'rewards/env0/member_{mi}/total_weighted',
-                            float(np.sum(rm_env0[mi])),
-                            step_count,
-                        )
-                        writer.add_scalar(
-                            f'rewards/env0/member_{mi}/progress',
-                            float(rm_env0[mi, 0]),
-                            step_count,
-                        )
-                        writer.add_scalar(
-                            f'rewards/env0/member_{mi}/energy_efficiency',
-                            float(rm_env0[mi, 1]),
-                            step_count,
-                        )
-                        writer.add_scalar(
-                            f'rewards/env0/member_{mi}/smoothness',
-                            float(rm_env0[mi, 2]),
-                            step_count,
-                        )
+                writer.add_scalar('physical/env0/location_x', float(env.get_attr('swarm')[0].members[0].previous_locations[-1]['x']), step_count)
+                writer.add_scalar('physical/env0/location_y', float(env.get_attr('swarm')[0].members[0].previous_locations[-1]['y']), step_count)
+                writer.add_scalar('physical/env0/velocity_x', float(env.get_attr('swarm')[0].members[0].previous_velocities[-1]['x']), step_count)
+                writer.add_scalar('physical/env0/velocity_y', float(env.get_attr('swarm')[0].members[0].previous_velocities[-1]['y']), step_count)
+                writer.add_scalar('physical/env0/action_x', float(env.get_attr('swarm')[0].members[0].previous_actions[-1]['x']), step_count)
+                writer.add_scalar('physical/env0/action_y', float(env.get_attr('swarm')[0].members[0].previous_actions[-1]['y']), step_count)
+                # if rm_env0 is not None and rm_env0.shape[0] == num_members:
+                #     for mi in range(num_members):
+                #         writer.add_scalar(
+                #             f'rewards/env0/member_{mi}/total_weighted',
+                #             float(np.sum(rm_env0[mi])),
+                #             step_count,
+                #         )
+                #         writer.add_scalar(
+                #             f'rewards/env0/member_{mi}/progress',
+                #             float(rm_env0[mi, 0]),
+                #             step_count,
+                #         )
+                #         writer.add_scalar(
+                #             f'rewards/env0/member_{mi}/energy_efficiency',
+                #             float(rm_env0[mi, 1]),
+                #             step_count,
+                #         )
+                #         writer.add_scalar(
+                #             f'rewards/env0/member_{mi}/smoothness',
+                #             float(rm_env0[mi, 2]),
+                #             step_count,
+                #         )
             
             # Update observations for next iteration
             obs_all = next_obs_all
@@ -1082,9 +1117,9 @@ def run_MOMAPPO(env, total_timesteps: int,
             r_progress_mean = float(np.mean(rollout_obj_progress)) if len(rollout_obj_progress) > 0 else 0.0
             rc_mean = float(np.mean(rollout_obj_energy)) if len(rollout_obj_energy) > 0 else 0.0
             rs_mean = float(np.mean(rollout_obj_smooth)) if len(rollout_obj_smooth) > 0 else 0.0
-        writer.add_scalar('objectives/progress', r_progress_mean, step_count)
-        writer.add_scalar('objectives/energy_efficiency', rc_mean, step_count)
-        writer.add_scalar('objectives/smoothness', rs_mean, step_count)
+        # writer.add_scalar('objectives/progress', r_progress_mean, step_count)
+        # writer.add_scalar('objectives/energy_efficiency', rc_mean, step_count)
+        # writer.add_scalar('objectives/smoothness', rs_mean, step_count)
 
         # PPO updates
         epoch_entropies = []
@@ -1161,9 +1196,9 @@ def run_MOMAPPO(env, total_timesteps: int,
                 epoch_value_losses.append(float(loss_v.detach()))
 
         # Log training stats per update
-        if len(epoch_entropies) > 0:
-            writer.add_scalar('loss/value', float(np.mean(epoch_value_losses)), step_count)
-            writer.add_scalar('stats/entropy', float(np.mean(epoch_entropies)), step_count)
+        # if len(epoch_entropies) > 0:
+        #     writer.add_scalar('loss/value', float(np.mean(epoch_value_losses)), step_count)
+        #     writer.add_scalar('stats/entropy', float(np.mean(epoch_entropies)), step_count)
 
         # Update progress bar with mean rewards from this rollout
         if pbar is not None:

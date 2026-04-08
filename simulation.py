@@ -345,7 +345,6 @@ def _apply_force_with_bounds(
     pos = pos.clone()
     vel = vel.clone()
     inv_masses = torch.where(masses > 0, 1.0 / masses, torch.zeros_like(masses))
-    radii = torch.tensor([1*sim.dx]*pos.shape[0], dtype=torch.float64, device=device)
 
     dt = sim.dt
     dt2 = dt * dt
@@ -356,9 +355,8 @@ def _apply_force_with_bounds(
 
     # X component
     x_acc = force[:, 0] * inv_masses
-    x_pred_minus = pos[:, 0] + vel[:, 0] * dt + 0.5 * x_acc * dt2 - radii
-    x_pred_plus = pos[:, 0] + vel[:, 0] * dt + 0.5 * x_acc * dt2 + radii
-    x_ok = (x_pred_minus > x_lower) & (x_pred_plus < x_upper)
+    x_pred = pos[:, 0] + vel[:, 0] * dt + 0.5 * x_acc * dt2
+    x_ok = (x_pred > x_lower) & (x_pred < x_upper)
     prev_vx = vel[:, 0].clone()
     vel[:, 0] = torch.where(x_ok, vel[:, 0] + x_acc * dt, torch.zeros_like(vel[:, 0]))
     pos[:, 0] += 0.5 * (vel[:, 0] + prev_vx) * dt
@@ -368,9 +366,8 @@ def _apply_force_with_bounds(
 
     # Y component
     y_acc = force[:, 1] * inv_masses
-    y_pred_minus = pos[:, 1] + vel[:, 1] * dt + 0.5 * y_acc * dt2 - radii
-    y_pred_plus = pos[:, 1] + vel[:, 1] * dt + 0.5 * y_acc * dt2 + radii
-    y_ok = (y_pred_minus > y_lower) & (y_pred_plus < y_upper)
+    y_pred = pos[:, 1] + vel[:, 1] * dt + 0.5 * y_acc * dt2
+    y_ok = (y_pred > y_lower) & (y_pred < y_upper)
     prev_vy = vel[:, 1].clone()
     vel[:, 1] = torch.where(y_ok, vel[:, 1] + y_acc * dt, torch.zeros_like(vel[:, 1]))
     pos[:, 1] += 0.5 * (vel[:, 1] + prev_vy) * dt
@@ -394,8 +391,10 @@ def vectorized_advance_by_viscous_drag(
     velocity_u = velocity_profiles[..., 0]
     velocity_v = velocity_profiles[..., 1]
 
-    v_rel_u = torch.mean(velocity_u, dim=1) + vel[:, 0]
-    v_rel_v = torch.mean(velocity_v, dim=1) + vel[:, 1]
+    # v_rel_u = torch.mean(velocity_u, dim=1) + vel[:, 0]
+    # v_rel_v = torch.mean(velocity_v, dim=1) + vel[:, 1]
+    v_rel_u = torch.mean(velocity_u, dim=1) - vel[:, 0]
+    v_rel_v = torch.mean(velocity_v, dim=1) - vel[:, 1]
     v_mag = torch.sqrt(v_rel_u**2 + v_rel_v**2) + 1e-9
 
     rho = 1.06
@@ -405,10 +404,11 @@ def vectorized_advance_by_viscous_drag(
         24.0 / torch.clamp(Re, min=1e-12),
         24.0 / torch.clamp(Re, min=1e-12) * (1.0 + 0.15 * Re**0.687)
     )
-    area = np.pi * radii**2
+    # area = np.pi * radii**2
+    area = 2 * radii  # 2D version of area
     f_mag = 0.5 * rho * v_mag**2 * area * cd
-    force_u = -f_mag * v_rel_u / v_mag
-    force_v = -f_mag * v_rel_v / v_mag
+    force_u = f_mag * v_rel_u / v_mag
+    force_v = f_mag * v_rel_v / v_mag
     force = torch.stack([force_u, force_v], dim=1)
 
     bad = ~torch.isfinite(force).all(dim=1)
@@ -435,8 +435,10 @@ def vectorized_advance_by_pressure_gradient(
     cos_t = torch.tensor(cos_angles, dtype=torch.float64, device=device)
     sin_t = torch.tensor(sin_angles, dtype=torch.float64, device=device)
 
-    lin_force_x = -torch.sum(pressure_profiles * cos_t.unsqueeze(0), dim=1) * radii**2
-    lin_force_y = -torch.sum(pressure_profiles * sin_t.unsqueeze(0), dim=1) * radii**2
+    # lin_force_x = -torch.sum(pressure_profiles * cos_t.unsqueeze(0), dim=1) * radii**2
+    # lin_force_y = -torch.sum(pressure_profiles * sin_t.unsqueeze(0), dim=1) * radii**2
+    lin_force_x = -torch.sum(pressure_profiles * cos_t.unsqueeze(0), dim=1) * radii * 2 * np.pi / num_angles  # 2D version of force
+    lin_force_y = -torch.sum(pressure_profiles * sin_t.unsqueeze(0), dim=1) * radii * 2 * np.pi / num_angles  # 2D version of force
     force = torch.stack([lin_force_x, lin_force_y], dim=1)
 
     bad = ~torch.isfinite(force).all(dim=1)

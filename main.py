@@ -103,6 +103,8 @@ def main(args):
     # - clip_coef=0.2: Standard PPO clip range
     # - gamma=0.95: Standard discount factor for longer-horizon planning
     # - lr=3e-4: Standard learning rate
+    print(f'Maximum propulsion force per swarm member: {swarm.members[0].max_force} mg*mm/s^2')
+    print(f'Fluid velocity: {inflow.amplitude} mm/s')
     run_MOMAPPO(env, sim.time_steps, n_steps=args.n_steps, batch_size=args.batch_size, update_epochs=args.update_epochs, 
                 ent_coef=args.ent_coef, clip_coef=args.clip_coef, gamma=args.gamma, lr=args.lr)
     
@@ -113,11 +115,6 @@ def main(args):
                        gae_lambda=0.95, vf_coef=0.5, total_timesteps=sim.time_steps,
                        num_envs=args.num_envs, log_std_init=-1.0)
 
-    
-
-    
-
-    # ----------------- Animation --------------------
 
 
 if __name__ == '__main__':
@@ -181,24 +178,24 @@ if __name__ == '__main__':
     parser.add_argument(
         '--swarm-max-force',
         type=float,
-        default=850.0,
-        help='Maximum propulsion force per swarm member in mg*mm/s^2 (default: 850.0)',
+        default=2670/2, # 2670 mg*mm/s^2 is the equivalent force to overcome the drag
+        help='Maximum propulsion force per swarm member in mg*mm/s^2 (default: 2670/2)',
     )
 
     # Inflow controls
     parser.add_argument(
         '--inflow-velocity',
         type=float,
-        default=162.0,
-        help='Peak inflow centerline velocity in mm/s (default: 162.0)',
+        default=55,
+        help='Peak inflow centerline velocity in mm/s (default: 55)',
     )
 
     # RL controls
     parser.add_argument(
         '--num-envs',
         type=int,
-        default=8,
-        help='Number of parallel environments (default: 8)',
+        default=16,
+        help='Number of parallel environments (default: 16)',
     )
     parser.add_argument(
         '--n-steps',

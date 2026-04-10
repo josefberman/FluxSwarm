@@ -3,6 +3,8 @@ import os
 import re
 from typing import List, Tuple
 
+from train_cli import MEMBER_RADIUS, SIM_LENGTH_X, SIM_LENGTH_Y
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -16,15 +18,34 @@ if ffmpeg_path:
 
 
 def parse_args() -> argparse.Namespace:
+    """
+    Defaults for domain size and member circle radius match ``train_cli`` / ``main.py``.
+    Other training CLI defaults are in ``train_cli.training_cli_defaults()`` if needed.
+    """
     parser = argparse.ArgumentParser(
         description="Create an MP4 animation of swarm member trajectories from a locations CSV."
     )
     parser.add_argument("--csv", required=True, help="Path to locations.csv (with columns timestep, location_i_x, location_i_y)")
     parser.add_argument("--output", required=True, help="Output MP4 file path")
     parser.add_argument("--fps", type=int, default=24, help="Frames per second for the animation (default: 24)")
-    parser.add_argument("--radius", type=float, default=0.25, help="Circle radius in axis units (default: 0.25)")
-    parser.add_argument("--length_x", type=float, default=100.0, help="Simulation domain length in x-direction (default: 100.0)")
-    parser.add_argument("--length_y", type=float, default=4.0, help="Simulation domain length in y-direction (default: 4.0)")
+    parser.add_argument(
+        "--radius",
+        type=float,
+        default=MEMBER_RADIUS,
+        help=f"Circle radius in axis units (default: {MEMBER_RADIUS}, same as main.py swarm)",
+    )
+    parser.add_argument(
+        "--length_x",
+        type=float,
+        default=SIM_LENGTH_X,
+        help=f"Simulation domain length in x-direction (default: {SIM_LENGTH_X}, same as main.py)",
+    )
+    parser.add_argument(
+        "--length_y",
+        type=float,
+        default=SIM_LENGTH_Y,
+        help=f"Simulation domain length in y-direction (default: {SIM_LENGTH_Y}, same as main.py)",
+    )
     parser.add_argument("--fields", type=str, default=None, help="Path to fields npz file for background visualization")
     parser.add_argument("--field_type", type=str, default=None, choices=['vx', 'vy', 'p'], help="Field type to display (vx, vy, or p)")
     return parser.parse_args()

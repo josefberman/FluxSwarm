@@ -407,8 +407,8 @@ class SwarmEnv(gym.Env):
                 continue
             a = member.previous_actions[-1]
             ax, ay = float(a['x']), float(a['y'])
-            fmax = float(member.max_force)
-            f_mag = fmax * math.sqrt(ax * ax + ay * ay)
+            f_max = float(member.max_force)
+            f_mag = f_max * math.sqrt(ax * ax + ay * ay)
             energy_unw[idx] = float(np.clip(1.0 - f_mag / f_max, 0.0, 1.0))
         r_en_w = self.w_energy * energy_unw
 

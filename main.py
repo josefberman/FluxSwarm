@@ -6,8 +6,6 @@ os.environ["OMP_NUM_THREADS"] = str(os.cpu_count() or 4)
 os.environ["MKL_NUM_THREADS"] = str(os.cpu_count() or 4)
 os.environ["OPENBLAS_NUM_THREADS"] = str(os.cpu_count() or 4)
 
-import argparse
-
 from phi.torch.flow import *
 import numpy as np
 from stable_baselines3.common.env_util import make_vec_env
@@ -17,6 +15,7 @@ from plotting import animate_save_simulation, plot_save_locations, plot_save_rew
 from logs import create_run_name, create_folders_for_run, log_parameters, log_hyperparameters
 from data_structures import Simulation, Swarm, Inflow, Fluid
 from RL import SwarmEnv, run_PPO, run_MOMAPPO
+from train_cli import build_training_argparser
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -28,8 +27,8 @@ def main(args):
     # -------------- Parameter Definition -------------
     # Simulation dimensions are length=mm and time=second, mass=mg
     sim = Simulation(
-        length_x=100,
-        length_y=4,
+        length_x=args.sim_length_x,
+        length_y=args.sim_length_y,
         resolution=(1000, 40),
         dt=args.dt,
         total_time=args.total_time,
@@ -38,11 +37,11 @@ def main(args):
     swarm = Swarm(
         num_x=args.swarm_num_x,
         num_y=args.swarm_num_y,
-        left_location=49,
-        bottom_location=0.5,
-        member_interval_x=1,
-        member_interval_y=1,
-        member_radius=0.25,
+        left_location=47.5,
+        bottom_location=0.75,
+        member_interval_x=1.25,
+        member_interval_y=1.25,
+        member_radius=args.member_radius,
         member_density=5.150,
         member_max_force=args.swarm_max_force,
     )  # density in mg/mm^3, force in mg*mm/s^2
@@ -122,123 +121,5 @@ if __name__ == '__main__':
 
     freeze_support()
 
-    parser = argparse.ArgumentParser(
-        description=(
-            "Run the FluxSwarm reinforcement learning training loop.\n\n"
-            "This script sets up the fluid simulation, swarm layout, and inflow profile, "
-            "then trains a MOMAPPO agent using multiple parallel environments. "
-            "Use the flags below to override key simulation, swarm, and inflow parameters."
-        )
-    )
-    parser.add_argument(
-        '--save-fields',
-        dest='save_fields',
-        action='store_true',
-        default=False,
-                        help='Save velocity and pressure fields to npz files (default: False)')
-    parser.add_argument(
-        '--no-save-fields',
-        dest='save_fields',
-        action='store_false',
-                        help='Disable saving fields to npz files')
-
-    # Simulation controls
-    parser.add_argument(
-        '--total-time',
-        type=float,
-        default=100.0,
-        help='Total simulation time in seconds for each episode (default: 100.0)',
-    )
-    parser.add_argument(
-        '--dt',
-        type=float,
-        default=0.05,
-        help='Base simulation timestep dt in seconds (default: 0.05)',
-    )
-    parser.add_argument(
-        '--dt-substeps',
-        type=int,
-        default=25,
-        help='Number of substeps per dt used in the simulator (default: 25)',
-    )
-
-    # Swarm layout controls
-    parser.add_argument(
-        '--swarm-num-x',
-        type=int,
-        default=4,
-        help='Number of swarm members along the x-direction (default: 4)',
-    )
-    parser.add_argument(
-        '--swarm-num-y',
-        type=int,
-        default=4,
-        help='Number of swarm members along the y-direction (default: 4)',
-    )
-    parser.add_argument(
-        '--swarm-max-force',
-        type=float,
-        default=31400, # 31400 mg*mm/s^2 is the force exerted by 1T/m magnetic gradient field
-        help='Maximum propulsion force per swarm member in mg*mm/s^2 (default: 31400)',
-    )
-
-    # Inflow controls
-    parser.add_argument(
-        '--inflow-velocity',
-        type=float,
-        default=55,
-        help='Peak inflow centerline velocity in mm/s (default: 55)',
-    )
-
-    # RL controls
-    parser.add_argument(
-        '--num-envs',
-        type=int,
-        default=16,
-        help='Number of parallel environments (default: 16)',
-    )
-    parser.add_argument(
-        '--n-steps',
-        type=int,
-        default=128,
-        help='Number of steps per environment (default: 128)',
-    )
-    parser.add_argument(
-        '--batch-size',
-        type=int,
-        default=16,
-        help='Batch size (default: 16)',
-    )
-    parser.add_argument(
-        '--update-epochs',
-        type=int,
-        default=10,
-        help='Number of update epochs (default: 10)',
-    )
-    parser.add_argument(
-        '--ent-coef',
-        type=float,
-        default=0.01,
-        help='Entropy coefficient (default: 0.01)',
-    )
-    parser.add_argument(
-        '--clip-coef',
-        type=float,
-        default=0.2,
-        help='Clip coefficient (default: 0.2)',
-    )
-    parser.add_argument(
-        '--gamma',
-        type=float,
-        default=0.95,
-        help='Discount factor (default: 0.95)',
-    )
-    parser.add_argument(
-        '--lr',
-        type=float,
-        default=3e-4,
-        help='Learning rate (default: 3e-4)',
-    )
-    
-    args = parser.parse_args()
+    args = build_training_argparser().parse_args()
     main(args)

@@ -52,7 +52,7 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--dt-substeps',
         type=int,
-        default=25,
+        default=5,
         help='Number of substeps per dt used in the simulator (default: 25)',
     )
 

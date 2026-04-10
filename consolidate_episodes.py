@@ -7,10 +7,33 @@ from pathlib import Path
 from datetime import datetime
 
 
+def _add_episode_end_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Derive booleans from RL ``status`` so truncated and terminated episodes are explicit."""
+    if "status" not in df.columns:
+        return df
+    out = df.copy()
+    s = out["status"].astype(str).str.strip().str.lower()
+    out["ended_terminated"] = s.isin(["terminated", "both"])
+    out["ended_truncated"] = s.isin(["truncated", "both"])
+    return out
+
+
+def _summarize_status_counts(dfs) -> dict:
+    counts = {}
+    for df in dfs:
+        if "status" not in df.columns:
+            continue
+        for k, v in df["status"].value_counts().items():
+            counts[k] = counts.get(k, 0) + int(v)
+    return counts
+
+
 def consolidate_episodes(base_folder):
     """
     Consolidate episode summary CSV files from multiple training session folders.
     Creates plots showing mean and standard deviation of rewards across environments.
+    Rows include every finished episode: RL writes 'status' as 'terminated',
+    'truncated', or 'both'; all are kept in rewards and in the Excel export.
     
     Args:
         base_folder (str): Path to the folder containing env_0_YYYYMMDD_{id} folders
@@ -90,6 +113,9 @@ def consolidate_episodes(base_folder):
             if 'episode' in env_combined.columns:
                 env_combined['episode'] = range(1, len(env_combined) + 1)
             print(f"  Total episodes for env_{env_num}: {len(env_combined)}")
+            if "status" in env_combined.columns:
+                vc = env_combined["status"].value_counts().to_dict()
+                print(f"    Outcomes (terminated / truncated / both): {vc}")
             env_dataframes.append(env_combined)
     
     if not env_dataframes:
@@ -120,6 +146,12 @@ def consolidate_episodes(base_folder):
     num_envs = len(env_dataframes)
     print(f"Maximum episodes: {max_episodes}")
     print(f"Number of environments: {num_envs}")
+    status_counts = _summarize_status_counts(env_dataframes)
+    if status_counts:
+        print(
+            "Episode outcomes across all envs (truncated and terminated rows all enter rewards): "
+            f"{status_counts}"
+        )
     
     # Create plots for each reward type with publication-quality formatting
     # Set matplotlib parameters for publication quality
@@ -308,6 +340,15 @@ def consolidate_episodes(base_folder):
         print("Renumbered 'episode' column with sequential natural numbers")
     else:
         print("Warning: 'episode' column not found in the data")
+
+    combined_df = _add_episode_end_columns(combined_df)
+    if "ended_terminated" in combined_df.columns:
+        nt = int(combined_df["ended_terminated"].sum())
+        nu = int(combined_df["ended_truncated"].sum())
+        print(
+            f"Episode ends: {nt} with terminated=True, {nu} with truncated=True "
+            "(episodes can be both if status is 'both')"
+        )
     
     # Create output Excel file
     output_filename = "consolidated_episodes.xlsx"

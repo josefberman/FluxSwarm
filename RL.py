@@ -5,7 +5,7 @@ from phi.field import write
 from phi.flow import *
 import phi.field as field
 from data_structures import Simulation, Swarm, Fluid, Inflow
-from simulation import step, sample_field_around_obstacles, NUM_PRESSURE_ANGLES
+from simulation import step, sample_field_around_obstacles, NUM_PRESSURE_ANGLES, _extract_swarm_state_arrays
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
 from plotting import plot_save_locations, plot_save_velocities, plot_save_forces, plot_save_rewards, plot_save_actions, plot_save_fields, plot_save_rewards_objectives
@@ -101,7 +101,10 @@ class SwarmEnv(gym.Env):
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=sim.resolution[0], y=sim.resolution[1])
         self.p = None
-        self.episode_duration = 10.0
+        self.episode_duration = float(episode_duration)
+        # Progress task: corridor reward and episode boundaries (mm, sim time in s)
+        self.progress_x_success = 20.0
+        self.progress_x_failure = 80.0
 
         # Per-episode tracking
         self.episode_index = 0
@@ -245,9 +248,10 @@ class SwarmEnv(gym.Env):
             
             self.field_step_counter += 1
 
-        # Compute termination signals
+        # Compute termination signals (spatial ends = terminated; time / diverged = truncated)
         terminated = self._compute_terminated()
         truncated = self._compute_truncated()
+        termination_reason = self._termination_reason()
 
         if terminated or truncated:
             self._finalize_episode(terminated=terminated, truncated=truncated)
@@ -263,6 +267,7 @@ class SwarmEnv(gym.Env):
             'objectives_matrix': np.asarray(self.last_objectives_matrix, dtype=np.float32),
             'terminated': terminated,
             'truncated': truncated,
+            'termination_reason': termination_reason,
         }
         return self._get_observation(), reward, terminated, truncated, info
 
@@ -281,29 +286,45 @@ class SwarmEnv(gym.Env):
                   observation of a single member in the swarm.
         :rtype: numpy.ndarray
         """
-        obs = []
+        pos, vel, _, _, _ = _extract_swarm_state_arrays(self.swarm)
+        pos = pos.float()
+        vel = vel.float()
         if self.p is not None:
             pressure_profiles = sample_field_around_obstacles(f=self.p, swarm=self.swarm, sim=self.sim, n=4)
-            if torch.is_tensor(pressure_profiles):
-                pressure_profiles = pressure_profiles.detach().cpu().numpy()
+            if not torch.is_tensor(pressure_profiles):
+                pressure_profiles = torch.tensor(pressure_profiles, dtype=torch.float32, device=pos.device)
+            pressure_profiles = pressure_profiles.float()
         else:
-            pressure_profiles = np.zeros((len(self.swarm.members), 4), dtype=np.float32)
-        for i, member in enumerate(self.swarm.members):
-            pressure_profile = pressure_profiles[i]
-            obs.append([
-                member.location['x'], member.location['y'],
-                member.velocity['x'], member.velocity['y'],
-                *pressure_profile
-            ])
-        return np.array(obs, dtype=np.float32)
+            pressure_profiles = torch.zeros((len(self.swarm.members), 4), dtype=torch.float32, device=pos.device)
+        obs = torch.cat([pos, vel, pressure_profiles], dim=1)  # (N, 8)
+        return obs.cpu().numpy()
 
     def _compute_truncated(self) -> bool:
-        # Truncate if simulation diverged / fields invalid
-        return self.v is None
+        # Time limit or diverged simulation (value bootstrap for timeouts)
+        return self.v is None or self.episode_time > self.episode_duration
 
     def _compute_terminated(self) -> bool:
-        # Terminate after episode_duration
-        return self.episode_time > self.episode_duration
+        # Success (reach left target) or failure (too far right)
+        if self.v is None:
+            return False
+        xs = [m.location['x'] for m in self.swarm.members]
+        if any(x > self.progress_x_failure for x in xs):
+            return True
+        if float(np.mean(xs)) <= self.progress_x_success:
+            return True
+        return False
+
+    def _termination_reason(self) -> str | None:
+        if self.v is None:
+            return 'diverged'
+        xs = [m.location['x'] for m in self.swarm.members]
+        if any(x > self.progress_x_failure for x in xs):
+            return 'failure'
+        if float(np.mean(xs)) <= self.progress_x_success:
+            return 'success'
+        if self.episode_time > self.episode_duration:
+            return 'timeout'
+        return None
 
     def _finalize_episode(self, terminated: bool, truncated: bool) -> None:
         """Append a row to episodes CSV with cumulative per-objective rewards and status."""
@@ -347,55 +368,24 @@ class SwarmEnv(gym.Env):
             self.objectives_history.append(self.last_objectives.copy())
             return 0.0
 
-        # --- Progress reward ---
-
-        # --- Option 1: use relative velocity to progress reward ---
-
-        # velocity_profiles_far = sample_field_around_obstacles(
-        #     f=self.v, swarm=self.swarm, sim=self.sim, n=8, radius_factor=2.0
-        # )
-        # velocity_profiles_near = sample_field_around_obstacles(
-        #     f=self.v, swarm=self.swarm, sim=self.sim, n=8, radius_factor=1.0
-        # )
-        # if torch.is_tensor(velocity_profiles_far):
-        #     vp_far = velocity_profiles_far.detach().cpu().numpy()
-        # else:
-        #     vp_far = np.asarray(velocity_profiles_far)
-        # if torch.is_tensor(velocity_profiles_near):
-        #     vp_near = velocity_profiles_near.detach().cpu().numpy()
-        # else:
-        #     vp_near = np.asarray(velocity_profiles_near)
-        # # Average both near and far velocity profiles to estimate a more precise ux_mean
-        # ux_far = np.mean(vp_far[:, :, 0], axis=1).astype(np.float64)
-        # ux_near = np.mean(vp_near[:, :, 0], axis=1).astype(np.float64)
-        # ux_mean = 0.5 * (ux_far + ux_near)
-        # vx_mem = np.array([m.velocity['x'] for m in self.swarm.members], dtype=np.float64)
-        # r_per_member = ux_mean - vx_mem
-        # v_ref = max(abs(float(self.inflow.amplitude)), 1e-9)
-        # progress_unw = np.clip(r_per_member / v_ref, -1.0, 1.0)
-        # r_prog_w = self.w_progress * progress_unw
-
-        # --- Option 2: use position to progress reward ---
-
-        # progress_unw = np.zeros(n, dtype=np.float64)
-        # x_inlet = 0.0
-        # x_outlet = self.sim.length_x
-        # for idx, member in enumerate(self.swarm.members):
-        #     x_mem_initial = member.previous_locations[0]['x']
-        #     x_mem_t = member.location['x']
-        #     if x_mem_t < x_mem_initial:
-        #         progress_unw[idx] = (x_mem_t - x_inlet) / (x_inlet - x_mem_initial) + 1.0  # r(x_inlet)=1.0, r(x_initial)=0.0
-        #     else:
-        #         progress_unw[idx] = (x_mem_t - x_outlet) / (x_mem_initial - x_outlet) - 1.0  # r(x_outlet)=-1.0, r(x_initial)=0.0
-        # r_prog_w = self.w_progress * progress_unw
-
-        # --- Option 3: use absolute velocity to progress reward ---
-
-        vx_mem = np.array([m.velocity['x'] for m in self.swarm.members], dtype=np.float64)
-        r_per_member = -1.0 * vx_mem
-        v_ref = max(abs(float(self.inflow.amplitude)), 1e-9)
-        # progress_unw = np.clip(r_per_member / v_ref, -1.0, 1.0)
-        progress_unw = np.clip(r_per_member, -1.0, 1.0)
+        # --- Progress reward (piecewise on x position; rewards motion toward decreasing x) ---
+        progress_unw = np.zeros(n, dtype=np.float64)
+        xs_now = np.array([float(member.location['x']) for member in self.swarm.members], dtype=np.float64)
+        mean_x_now = float(np.mean(xs_now))
+        if mean_x_now <= self.progress_x_success:
+            progress_unw[:] = 10.0
+        for idx, member in enumerate(self.swarm.members):
+            x_t = float(member.location['x'])
+            if len(member.previous_locations) >= 2:
+                x_prev = float(member.previous_locations[-2]['x'])
+            else:
+                x_prev = x_t
+            if mean_x_now <= self.progress_x_success:
+                continue
+            elif x_t >= self.progress_x_failure:
+                progress_unw[idx] = -10.0
+            else:
+                progress_unw[idx] = (x_prev - x_t) / (self.progress_x_failure - self.progress_x_success) - 0.01  # -0.01 for time penalty
         r_prog_w = self.w_progress * progress_unw
 
         # --- Energy efficiency reward ---
@@ -985,14 +975,14 @@ def run_MOMAPPO(env, total_timesteps: int,
                     logprob = dist.log_prob(action).sum()
                     val_progress, val_energy, val_smooth = model.values(obs_joint.unsqueeze(0))
 
-                actions_all.append(action.cpu().numpy())
-                logprobs_all.append(float(logprob.cpu()))
-                vals_progress_all.append(val_progress[0].cpu())
-                vals_energy_all.append(val_energy[0].cpu())
-                vals_smooth_all.append(val_smooth[0].cpu())
+                actions_all.append(action.detach())
+                logprobs_all.append(float(logprob.item()))
+                vals_progress_all.append(val_progress[0].detach())
+                vals_energy_all.append(val_energy[0].detach())
+                vals_smooth_all.append(val_smooth[0].detach())
             
             # Format actions for VecEnv (shape: (num_envs, num_members, 2))
-            actions_np = np.array(actions_all)  # (num_envs, num_members, 2)
+            actions_np = torch.stack(actions_all).cpu().numpy()
             actions_np = np.clip(actions_np, -1.0, 1.0)
             actions_np = actions_np.reshape(num_envs, *env.action_space.shape)
             
@@ -1008,7 +998,6 @@ def run_MOMAPPO(env, total_timesteps: int,
             # Add experiences from ALL environments to buffer
             for env_idx in range(num_envs):
                 obs_actor, _ = obs_tensors[env_idx]
-                action_t = torch.tensor(actions_all[env_idx], dtype=torch.float32, device=dev)
 
                 info = infos_batch[env_idx]
                 comps = info.get('reward_components', {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0})
@@ -1020,9 +1009,9 @@ def run_MOMAPPO(env, total_timesteps: int,
                     s = float(comps.get('smoothness', 0.0)) / inv
                     rm = np.full((num_members, 3), [p, e, s], dtype=np.float32)
                 rm = np.asarray(rm, dtype=np.float32)
-                rew_progress = torch.tensor(rm[:, 0], dtype=torch.float32)
-                rew_energy = torch.tensor(rm[:, 1], dtype=torch.float32)
-                rew_smooth = torch.tensor(rm[:, 2], dtype=torch.float32)
+                rew_progress = torch.tensor(rm[:, 0], dtype=torch.float32, device=dev)
+                rew_energy = torch.tensor(rm[:, 1], dtype=torch.float32, device=dev)
+                rew_smooth = torch.tensor(rm[:, 2], dtype=torch.float32, device=dev)
                 reward_total = float(np.mean(np.sum(rm, axis=1)))
                 obj = info.get('objectives', {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0})
                 obj_progress = float(obj.get('progress', 0.0))
@@ -1038,8 +1027,8 @@ def run_MOMAPPO(env, total_timesteps: int,
                     step_obj_env0_energy = obj_energy
                     step_obj_env0_smooth = obj_smooth
                 buffer.add(
-                    obs_actor.cpu(),
-                    action_t.cpu(),
+                    obs_actor,
+                    actions_all[env_idx],
                     logprobs_all[env_idx],
                     bool(dones_batch[env_idx]),
                     rew_progress,

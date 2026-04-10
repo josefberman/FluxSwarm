@@ -1,7 +1,7 @@
 import argparse
 import os
 import re
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from train_cli import MEMBER_RADIUS, SIM_LENGTH_X, SIM_LENGTH_Y
 
@@ -25,8 +25,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create an MP4 animation of swarm member trajectories from a locations CSV."
     )
-    parser.add_argument("--csv", required=True, help="Path to locations.csv (with columns timestep, location_i_x, location_i_y)")
-    parser.add_argument("--output", required=True, help="Output MP4 file path")
+    parser.add_argument("--csv", required=True, help="Path to locations CSV (columns timestep, location_i_x, location_i_y, …)")
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Output MP4 path (default: same directory as --csv, basename matches the CSV stem; multi-field adds _vx/_vy/_p before .mp4)",
+    )
     parser.add_argument("--fps", type=int, default=24, help="Frames per second for the animation (default: 24)")
     parser.add_argument(
         "--radius",
@@ -46,7 +50,11 @@ def parse_args() -> argparse.Namespace:
         default=SIM_LENGTH_Y,
         help=f"Simulation domain length in y-direction (default: {SIM_LENGTH_Y}, same as main.py)",
     )
-    parser.add_argument("--fields", type=str, default=None, help="Path to fields npz file for background visualization")
+    parser.add_argument(
+        "--fields",
+        required=True,
+        help="Directory of step_*.npz field snapshots (or a single combined .npz) for background visualization",
+    )
     parser.add_argument("--field_type", type=str, default=None, choices=['vx', 'vy', 'p'], help="Field type to display (vx, vy, or p)")
     return parser.parse_args()
 
@@ -329,57 +337,68 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
     plt.close(fig)
 
 
+def _output_base(csv_path: str, output_override: Optional[str]) -> str:
+    """Base path for MP4(s): same directory as CSV when output is omitted; strip extension if override is a file path."""
+    if output_override is None:
+        return os.path.splitext(os.path.abspath(csv_path))[0]
+    base = output_override.rsplit(".", 1)[0] if "." in os.path.basename(output_override) else output_override
+    return os.path.abspath(base)
+
+
 def main() -> None:
     args = parse_args()
     df = read_locations(args.csv)
-    
+    out_base = _output_base(args.csv, args.output)
+
     # Gather the actual simulation timestamps we'll be animating
     if "timestep" in df.columns:
         frame_times = df["timestep"].to_numpy(dtype=np.float64)
     else:
         frame_times = None
 
-    # Load fields if provided
-    fields_data = None
-    if args.fields:
-        print(f"Loading fields from {args.fields}...")
-        if os.path.isdir(args.fields):
-            if frame_times is not None:
-                # Load only the field snapshots that match our animation frames
-                fields_data = load_fields_for_frames(args.fields, frame_times)
-            else:
-                # No timesteps in CSV — fall back to loading all and using direct index
-                fields_data = load_fields_for_frames(args.fields,
-                    np.linspace(0, 1, len(df)))  # dummy; index-based fallback
+    print(f"Loading fields from {args.fields}...")
+    if os.path.isdir(args.fields):
+        if frame_times is not None:
+            fields_data = load_fields_for_frames(args.fields, frame_times)
         else:
-            fields_data = load_fields(args.fields)
-        
-        print(f"  Loaded {len(fields_data['timestep'])} field snapshots")
-        print(f"  VX range: [{fields_data['vx'].min():.2e}, {fields_data['vx'].max():.2e}]")
-        print(f"  VY range: [{fields_data['vy'].min():.2e}, {fields_data['vy'].max():.2e}]")
-        print(f"  P range:  [{fields_data['p'].min():.2e}, {fields_data['p'].max():.2e}]")
-        
-        if args.field_type is None:
-            print("\nCreating animations for all three fields...")
-            base_output = args.output.rsplit('.', 1)[0]
-            for field_type in ['vx', 'vy', 'p']:
-                output_path = f"{base_output}_{field_type}.mp4"
-                print(f"Creating {field_type} animation -> {output_path}")
-                create_animation(
-                    df=df, output_path=output_path, fps=args.fps, radius=args.radius,
-                    length_x=args.length_x, length_y=args.length_y,
-                    fields_data=fields_data, field_type=field_type
-                )
-        else:
-            create_animation(
-                df=df, output_path=args.output, fps=args.fps, radius=args.radius,
-                length_x=args.length_x, length_y=args.length_y,
-                fields_data=fields_data, field_type=args.field_type
+            fields_data = load_fields_for_frames(
+                args.fields, np.linspace(0, 1, len(df))
             )
     else:
+        fields_data = load_fields(args.fields)
+
+    print(f"  Loaded {len(fields_data['timestep'])} field snapshots")
+    print(f"  VX range: [{fields_data['vx'].min():.2e}, {fields_data['vx'].max():.2e}]")
+    print(f"  VY range: [{fields_data['vy'].min():.2e}, {fields_data['vy'].max():.2e}]")
+    print(f"  P range:  [{fields_data['p'].min():.2e}, {fields_data['p'].max():.2e}]")
+
+    if args.field_type is None:
+        print("\nCreating animations for all three fields...")
+        for field_type in ["vx", "vy", "p"]:
+            output_path = f"{out_base}_{field_type}.mp4"
+            print(f"Creating {field_type} animation -> {output_path}")
+            create_animation(
+                df=df,
+                output_path=output_path,
+                fps=args.fps,
+                radius=args.radius,
+                length_x=args.length_x,
+                length_y=args.length_y,
+                fields_data=fields_data,
+                field_type=field_type,
+            )
+    else:
+        output_path = f"{out_base}.mp4"
+        print(f"Creating animation -> {output_path}")
         create_animation(
-            df=df, output_path=args.output, fps=args.fps, radius=args.radius,
-            length_x=args.length_x, length_y=args.length_y
+            df=df,
+            output_path=output_path,
+            fps=args.fps,
+            radius=args.radius,
+            length_x=args.length_x,
+            length_y=args.length_y,
+            fields_data=fields_data,
+            field_type=args.field_type,
         )
 
 

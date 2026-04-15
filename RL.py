@@ -108,6 +108,7 @@ class SwarmEnv(gym.Env):
 
         # Per-episode tracking
         self.episode_index = 0
+        self.episode_steps = 0
         self.episode_cum_reward = 0.0
         self.episode_cum_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
         self.episodes_csv_path = f"run/{self.folder}/episodes_summary_{self.pid}.csv"
@@ -172,6 +173,7 @@ class SwarmEnv(gym.Env):
             member.previous_actions = prev_members[i].previous_actions.copy()
         self.episode_time = 0.0
         # Reset per-episode accumulators
+        self.episode_steps = 0
         self.episode_cum_reward = 0.0
         self.episode_cum_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
 
@@ -205,6 +207,7 @@ class SwarmEnv(gym.Env):
         self.current_time += self.sim.dt
         self.episode_time += self.sim.dt
         self.current_timestep += 1
+        self.episode_steps += 1
 
         # if self.v is not None:
         #     if self.current_timestep % 10 == 0:
@@ -334,9 +337,10 @@ class SwarmEnv(gym.Env):
         with open(self.episodes_csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(['episode', 'cum_progress', 'cum_energy_efficiency', 'cum_smoothness', 'cum_total_reward', 'status'])
+                writer.writerow(['episode', 'steps', 'cum_progress', 'cum_energy_efficiency', 'cum_smoothness', 'cum_total_reward', 'status'])
             writer.writerow([
                 self.episode_index,
+                self.episode_steps,
                 f"{self.episode_cum_objectives['progress']:.6f}",
                 f"{self.episode_cum_objectives['energy_efficiency']:.6f}",
                 f"{self.episode_cum_objectives['smoothness']:.6f}",
@@ -373,7 +377,7 @@ class SwarmEnv(gym.Env):
         xs_now = np.array([float(member.location['x']) for member in self.swarm.members], dtype=np.float64)
         mean_x_now = float(np.mean(xs_now))
         if mean_x_now <= self.progress_x_success:
-            progress_unw[:] = 10.0
+            progress_unw[:] = 1.0
         for idx, member in enumerate(self.swarm.members):
             x_t = float(member.location['x'])
             if len(member.previous_locations) >= 2:
@@ -383,9 +387,9 @@ class SwarmEnv(gym.Env):
             if mean_x_now <= self.progress_x_success:
                 continue
             elif x_t >= self.progress_x_failure:
-                progress_unw[idx] = -10.0
+                progress_unw[idx] = -1.0
             else:
-                progress_unw[idx] = (x_prev - x_t) / (self.progress_x_failure - self.progress_x_success) - 0.01  # -0.01 for time penalty
+                progress_unw[idx] = (x_prev - x_t) / (self.progress_x_failure - self.progress_x_success) * 10 - 0.01
         r_prog_w = self.w_progress * progress_unw
 
         # --- Energy efficiency reward ---
@@ -542,7 +546,7 @@ class ActorCriticMO(nn.Module):
             nn.Tanh(),
         )
         self.mu_head = nn.Linear(h1, 2)
-        self.log_std = nn.Parameter(torch.ones(2) * -1.0)
+        self.log_std = nn.Parameter(torch.ones(num_members, 2) * -1.0)
         self.critic_torso = nn.Sequential(
             nn.Linear(joint_dim, h0),
             nn.Tanh(),
@@ -559,8 +563,8 @@ class ActorCriticMO(nn.Module):
         assert N == self.num_members and D == self.obs_local_dim
         h = self.actor_torso(obs_local.reshape(B * N, D))
         mu = self.mu_head(h).reshape(B, N, 2)
-        clamped = torch.clamp(self.log_std, min=-20.0, max=2.0)
-        std = torch.exp(clamped).reshape(1, 1, 2).expand(B, N, 2)
+        clamped = torch.clamp(self.log_std, min=-20.0, max=2.0)  # (N, 2)
+        std = torch.exp(clamped).unsqueeze(0).expand(B, -1, -1)  # (B, N, 2)
         return mu, std
 
     def values(self, obs_joint: torch.Tensor):
@@ -641,27 +645,33 @@ class RolloutBufferMO:
         gamma: float,
         lam: float,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """rewards, values: (T, E, N); last_v: (E, N); last_done: (E,). Returns adv, ret (T*E, N)."""
+        """rewards, values: (T, E, N); last_v: (E, N); last_done: (E,). Returns adv, ret (T*E, N).
+
+        Vectorized backward scan over T — O(T) Python iterations instead of O(T*E).
+        """
         T, E, N = rewards.shape
-        device = self.device
-        adv_buf = torch.zeros((T, E, N), dtype=torch.float32, device=device)
-        for e in range(E):
-            adv_n = torch.zeros(N, dtype=torch.float32, device=device)
-            for t in range(T - 1, -1, -1):
-                idx = t * E + e
-                if t < T - 1:
-                    next_v = values[t + 1, e]
-                    dn = self.dones[idx]
-                else:
-                    next_v = last_v[e]
-                    dn = last_done[e]
-                next_nonterminal = 1.0 - dn
-                delta = rewards[t, e] + gamma * next_v * next_nonterminal - values[t, e]
-                adv_n = delta + gamma * lam * next_nonterminal * adv_n
-                adv_buf[t, e] = adv_n
-        adv = adv_buf.reshape(T * E, N)
-        ret = adv + values.reshape(T * E, N)
-        return adv, ret
+        device = rewards.device
+
+        # next_v[t] = values[t+1] for t < T-1, and last_v for t == T-1
+        next_v = torch.cat([values[1:], last_v.unsqueeze(0)], dim=0)  # (T, E, N)
+
+        # nonterminal mask: only last step uses last_done; intermediate steps never mask
+        # (mid-episode done flags are handled by the environment resetting obs, not here)
+        next_done = torch.zeros(T, E, dtype=torch.float32, device=device)
+        next_done[-1] = last_done  # (E,)
+        nonterminal = (1.0 - next_done).unsqueeze(-1)  # (T, E, 1)
+
+        delta = rewards + gamma * next_v * nonterminal - values  # (T, E, N)
+
+        coef = gamma * lam
+        adv = torch.zeros_like(delta)
+        running = torch.zeros(E, N, dtype=torch.float32, device=device)
+        for t in range(T - 1, -1, -1):
+            running = delta[t] + coef * nonterminal[t] * running
+            adv[t] = running
+
+        ret = adv + values
+        return adv.reshape(T * E, N), ret.reshape(T * E, N)
 
     def compute_gae(
         self,
@@ -727,7 +737,12 @@ class RolloutBufferMO:
 
 
 def pcgrad_merge(model: nn.Module, losses: list[torch.Tensor]):
-    """Apply PCGrad to combine gradients from multiple objective losses for actor update."""
+    """Apply PCGrad to combine gradients from multiple objective losses for actor update.
+
+    Algorithm: for each gradient gi, project out the components that conflict (negative
+    dot product) with every other gj. Then sum the projected gradients and average.
+    Result: merged = (proj_g0 + proj_g1 + ... + proj_gK) / K
+    """
     params = [p for p in model.parameters() if p.requires_grad]
     grads = []
     for i, loss in enumerate(losses):
@@ -740,9 +755,8 @@ def pcgrad_merge(model: nn.Module, losses: list[torch.Tensor]):
             else:
                 g.append(p.grad.view(-1).clone())
         grads.append(torch.cat(g))
-    grads = [g for g in grads]
-    # PCGrad projection
-    merged = grads[0].clone()
+    # PCGrad projection: project each gi against all conflicting gj, collect, then average
+    projected = []
     for i in range(len(grads)):
         gi = grads[i].clone()
         for j in range(len(grads)):
@@ -751,8 +765,7 @@ def pcgrad_merge(model: nn.Module, losses: list[torch.Tensor]):
             gj = grads[j]
             dot = torch.dot(gi, gj)
             if dot < 0:
-                norm_sq = gj.norm()**2
-                # SAFEGUARD: Prevent divide by zero or NaN if gj norm exploded
+                norm_sq = gj.norm() ** 2
                 if not torch.isfinite(norm_sq) or norm_sq < 1e-12:
                     print(f"[WARNING: RL.py] PCGrad exploded norm detected on grad {j} - skipping projection")
                     continue
@@ -761,11 +774,8 @@ def pcgrad_merge(model: nn.Module, losses: list[torch.Tensor]):
                     print(f"[WARNING: RL.py] PCGrad NaN/Inf projection generated - skipping")
                     continue
                 gi = gi - proj
-        if i == 0:
-            merged = gi
-        else:
-            merged = merged + gi
-    merged = merged / len(grads)
+        projected.append(gi)
+    merged = torch.stack(projected).mean(dim=0)
     # Set merged grads back to params
     offset = 0
     for p in params:

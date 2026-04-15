@@ -26,7 +26,7 @@ PADDING = 2
 # Number of angular samples around each member used for pressure sampling
 NUM_PRESSURE_ANGLES = 4
 # Radial distance (in world units) for v/p samples: factor × member.radius along each sample ray
-FIELD_SAMPLE_RADIUS_FACTOR = 1.5
+FIELD_SAMPLE_RADIUS_FACTOR = 3.0
 _ANGLE_TRIG_CACHE: dict[int, tuple[np.ndarray, np.ndarray]] = {}
 PROFILE_SYNC_POINTS = False
 
@@ -149,7 +149,9 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
 
     #-----------------------------------------------
 
-    force_actions = force_actions/np.linalg.norm(force_actions, axis=1, keepdims=True) # normalize to unit length
+    norms = np.linalg.norm(force_actions, axis=1, keepdims=True)
+    over_unit = (norms > 1.0).squeeze(1)
+    force_actions[over_unit] = force_actions[over_unit] / norms[over_unit]
 
     timings = {}
     t0 = perf_counter()

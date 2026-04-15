@@ -42,7 +42,7 @@ def main(args):
         member_interval_x=1.25,
         member_interval_y=1.25,
         member_radius=args.member_radius,
-        member_density=5.150,
+        member_density=15.12, # density of FePt (L1_0) alloy
         member_max_force=args.swarm_max_force,
     )  # density in mg/mm^3, force in mg*mm/s^2
     # inflow = Inflow(frequency=0.5, amplitude=10, h_shift=np.pi / 2, v_shift=25)

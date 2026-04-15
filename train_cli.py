@@ -53,7 +53,7 @@ def build_training_argparser() -> argparse.ArgumentParser:
         '--dt-substeps',
         type=int,
         default=5,
-        help='Number of substeps per dt used in the simulator (default: 25)',
+        help='Number of substeps per dt used in the simulator (default: 5)',
     )
 
     parser.add_argument(
@@ -90,8 +90,8 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--swarm-max-force',
         type=float,
-        default=31400,  # The force induced by a 1T/m magnetic field on a magnetite sphere.
-        help='Maximum propulsion force per swarm member in mg*mm/s^2 (default: 31400)',
+        default=1491,  # The force induced by a 0.020T/m magnetic field on a magnetite sphere.
+        help='Maximum propulsion force per swarm member in mg*mm/s^2 (default: 1491)',
     )
 
     parser.add_argument(

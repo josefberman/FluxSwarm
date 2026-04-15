@@ -293,7 +293,7 @@ def consolidate_episodes(base_folder):
             # for y in ref_lines.get(key, []):
             #     ax.axhline(y, linestyle='dashed', color=line_color, linewidth=0.8, alpha=0.35)
 
-            ax.set_title(f'{_pretty_name(reward_col)} over episodes', fontweight='bold')
+            ax.set_title(f'{_pretty_name(reward_col)}', fontweight='bold')
             ax.set_xlabel('Episode')
             ax.set_ylabel(_pretty_name(reward_col))
             ax.grid(True, alpha=0.25, linewidth=0.5, linestyle='--')
@@ -343,9 +343,9 @@ def consolidate_episodes(base_folder):
                 )
 
                 pretty = _pretty_name(reward_col)
-                ax.set_title(f'{pretty} per step over episodes', fontweight='bold')
+                ax.set_title(f'{pretty} per episode duration', fontweight='bold')
                 ax.set_xlabel('Episode')
-                ax.set_ylabel(f'{pretty} / step')
+                ax.set_ylabel(f'{pretty} / duration')
                 ax.grid(True, alpha=0.25, linewidth=0.5, linestyle='--')
                 ax.set_axisbelow(True)
 

@@ -46,14 +46,14 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--dt',
         type=float,
-        default=0.05,
-        help='Base simulation timestep dt in seconds (default: 0.05)',
+        default=0.01,
+        help='Base simulation timestep dt in seconds (default: 0.01)',
     )
     parser.add_argument(
         '--dt-substeps',
         type=int,
-        default=5,
-        help='Number of substeps per dt used in the simulator (default: 5)',
+        default=28,
+        help='Number of substeps per dt used in the simulator (default: 28)',
     )
 
     parser.add_argument(

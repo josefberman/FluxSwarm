@@ -399,11 +399,9 @@ class SwarmEnv(gym.Env):
             if len(member.previous_actions) < 1:
                 energy_unw[idx] = 1.0
                 continue
-            a = member.previous_actions[-1]
-            ax, ay = float(a['x']), float(a['y'])
-            f_max = float(member.max_force)
-            f_mag = f_max * math.sqrt(ax * ax + ay * ay)
-            energy_unw[idx] = float(np.clip(1.0 - f_mag / f_max, 0.0, 1.0))
+            a_mem = member.previous_actions[-1]
+            v_mem = member.previous_velocities[-1]
+            energy_unw[idx] = np.dot(a_mem, v_mem) * self.sim.dt
         r_en_w = self.w_energy * energy_unw
 
         # --- Smoothness reward ---

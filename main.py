@@ -29,10 +29,11 @@ def main(args):
     sim = Simulation(
         length_x=args.sim_length_x,
         length_y=args.sim_length_y,
-        resolution=(1000, 40),
+        resolution=(int(args.sim_length_x*10), int(args.sim_length_y*10)),
         dt=args.dt,
         total_time=args.total_time,
-        substeps=args.dt_substeps,
+        # substeps=args.dt_substeps,
+        substeps=int(args.total_time * args.dt / 0.1),
     )
     swarm = Swarm(
         num_x=args.swarm_num_x,

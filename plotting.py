@@ -114,7 +114,7 @@ def plot_save_actions(folder_name: str, sim: Simulation, swarm: Swarm):
     for i, member in enumerate(swarm.members):
         data_dict[f'action_{i}_x'] = [item['x'] for item in member.previous_actions]
         data_dict[f'action_{i}_y'] = [item['y'] for item in member.previous_actions]
-    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/actions.csv')
+    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/forces.csv')
 
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
     list_of_member_actions = []

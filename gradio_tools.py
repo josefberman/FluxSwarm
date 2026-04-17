@@ -379,7 +379,12 @@ def run_overview_tool():
                 filepaths = []
             # Map basenames to paths
             lower_map = {os.path.basename(p).lower(): p for p in filepaths}
-            if 'actions.csv' in lower_map:
+            if 'forces.csv' in lower_map:
+                try:
+                    actions = pd.read_csv(lower_map['forces.csv'])
+                except Exception:
+                    actions = None
+            elif 'actions.csv' in lower_map:
                 try:
                     actions = pd.read_csv(lower_map['actions.csv'])
                 except Exception:
@@ -432,7 +437,12 @@ def run_overview_tool():
             if filepaths is None:
                 filepaths = []
             lower_map = {os.path.basename(p).lower(): p for p in filepaths}
-            if 'actions.csv' in lower_map:
+            if 'forces.csv' in lower_map:
+                try:
+                    actions = pd.read_csv(lower_map['forces.csv'])
+                except Exception:
+                    actions = None
+            elif 'actions.csv' in lower_map:
                 try:
                     actions = pd.read_csv(lower_map['actions.csv'])
                 except Exception:

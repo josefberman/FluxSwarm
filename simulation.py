@@ -91,25 +91,17 @@ def build_sampling_coords_tensor(
 
 def generate_parabolic_profile_mask(v: Field, sim: Simulation, inflow: Inflow, t: float):
     trap_wave = beat_waveform(t=t, v_peak=inflow.amplitude, v_dia=0, tau=inflow.frequency, upstroke=inflow.upstroke, plateau=inflow.plateau, downstroke=inflow.downstroke)
-    
+
     R = sim.resolution[1] / 2.0
-    delta = R / 2.0
-    
+
     # Parse the exact unpadded vector components from the grid
     v_u, v_v = math.unstack(v.values, '~vector')
-    
-    # Ensure y_coords aligns with the exact cell centers of the staggered U component
+
+    # Cell-center y for staggered U; Poiseuille parabola u ∝ 1 - ((y - R) / R)² (zero at y = 0, 2R)
     y_coords = math.range_tensor(v_u.shape['y']) + 0.5
-    
-    # Default is trap_wave for core region
-    mask = math.ones(v_u.shape['y']) * trap_wave
-    
-    # Parabolic ramps at the bottom
-    mask = math.where(y_coords < delta, trap_wave * (1 - (delta - y_coords)**2 / delta**2), mask)
-    
-    # Parabolic ramps at the top
-    mask = math.where(y_coords > 2*R - delta, trap_wave * (1 - (y_coords - (2*R - delta))**2 / delta**2), mask)
-    
+    parabolic = 1.0 - ((y_coords - R) / R) ** 2
+    mask = trap_wave * parabolic
+
     return mask, v_u, v_v
 
 def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, fluid_obj: Fluid, t: float,

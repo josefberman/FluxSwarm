@@ -20,12 +20,6 @@ def create_folders_for_run(folder_name) -> None:
     :return: None
     """
     os.makedirs(f'run/{folder_name}', exist_ok=True)
-    os.makedirs(f'run/{folder_name}/velocity', exist_ok=True)
-    os.makedirs(f'run/{folder_name}/pressure', exist_ok=True)
-    os.makedirs(f'run/{folder_name}/inflow', exist_ok=True)
-    os.makedirs(f'run/{folder_name}/figures', exist_ok=True)
-    os.makedirs(f'run/{folder_name}/PPO', exist_ok=True)
-    os.makedirs(f'run/{folder_name}/SAC', exist_ok=True)
     return None
 
 

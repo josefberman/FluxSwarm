@@ -399,12 +399,12 @@ class SwarmEnv(gym.Env):
             if len(member.previous_actions) < 1 or len(member.previous_locations) < 2:
                 energy_unw[idx] = 1.0
                 continue
-            fx = member.previous_actions[-1]['x'] * member.member_max_force
-            fy = member.previous_actions[-1]['y'] * member.member_max_force
+            ax = member.previous_actions[-1]['x']
+            ay = member.previous_actions[-1]['y']
             dx = member.previous_locations[-1]['x'] - member.previous_locations[-2]['x']
             dy = member.previous_locations[-1]['y'] - member.previous_locations[-2]['y']
-            work = fx * dx + fy * dy
-            max_work = member.member_max_force * np.sqrt(dx**2 + dy**2)
+            work = member.max_force * (ax * dx + ay * dy)
+            max_work = member.max_force * np.sqrt(dx**2 + dy**2)
             energy_unw[idx] = work / max_work if max_work > 0 else 1.0
         r_en_w = self.w_energy * energy_unw
 

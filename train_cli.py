@@ -11,7 +11,7 @@ import argparse
 # --- Geometry / domain (used by main.main() and animate_locations defaults) ---
 SIM_LENGTH_X = 100.0
 SIM_LENGTH_Y = 4.0
-MEMBER_RADIUS = 0.5
+MEMBER_RADIUS = 0.25
 
 
 def build_training_argparser() -> argparse.ArgumentParser:
@@ -78,13 +78,13 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--swarm-num-x',
         type=int,
-        default=5,
+        default=4,
         help='Number of swarm members along the x-direction (default: 5)',
     )
     parser.add_argument(
         '--swarm-num-y',
         type=int,
-        default=3,
+        default=4,
         help='Number of swarm members along the y-direction (default: 3)',
     )
     parser.add_argument(

@@ -176,11 +176,21 @@ def build_colors(n: int) -> List[str]:
     return [cmap(i % cmap.N) for i in range(n)]
 
 
-def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float, length_x: float, length_y: float, 
-                     fields_data: dict = None, field_type: str = None) -> None:
+def create_animation(
+    df: pd.DataFrame,
+    output_path: str,
+    fps: int,
+    radius: float,
+    length_x: float,
+    length_y: float,
+    fields_data: dict = None,
+    field_type: str = None,
+) -> None:
     member_ids = extract_member_ids(df)
     if not member_ids:
         raise ValueError("No member columns found. Expected columns like 'location_0_x' and 'location_0_y'.")
+
+    n_frames = len(df)
 
     # Use fixed simulation domain dimensions
     x_min, x_max = 0.0, length_x
@@ -247,8 +257,10 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
             zorder=0,
             interpolation='bilinear'
         )
-        # Add colorbar
-        colorbar = fig.colorbar(field_img, ax=ax, orientation='horizontal', pad=0.1, shrink=0.8)
+        # Horizontal colorbar below axes — pad + tight_layout rect avoid overlap with x-axis label
+        colorbar = fig.colorbar(
+            field_img, ax=ax, orientation='horizontal', pad=0.18, shrink=0.85, aspect=28
+        )
         colorbar_labels = {
             'vx': 'Velocity X [mm/s]',
             'vy': 'Velocity Y [mm/s]',
@@ -285,8 +297,6 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
     )
     ax.add_patch(com_circle)
 
-    num_frames = len(df)
-
     def update(frame_idx: int):
         # Update field background if present — fields_data is already aligned to df rows
         artists = []
@@ -320,9 +330,14 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
 
     fps_used = max(1, int(fps))
     frame_interval_ms = max(1, int(1000 / fps_used))
-    print(f"  Animation: {num_frames} frames at {fps_used} fps (interval {frame_interval_ms} ms)")
-    fig.tight_layout()
-    ani = animation.FuncAnimation(fig, update, frames=num_frames, interval=frame_interval_ms, blit=True)
+    print(f"  Animation: {n_frames} frames at {fps_used} fps (interval {frame_interval_ms} ms)")
+    if colorbar is not None:
+        fig.tight_layout(rect=(0, 0.12, 1, 1))
+    else:
+        fig.tight_layout()
+    ani = animation.FuncAnimation(
+        fig, update, frames=n_frames, interval=frame_interval_ms, blit=True
+    )
 
     # Ensure directory exists
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)

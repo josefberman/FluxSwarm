@@ -240,9 +240,9 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
             field_array[0].T,  # Transpose to match (x,y) -> (row, col) convention
             origin='lower',
             extent=[x_min, x_max, y_min, y_max],
-            cmap='viridis',
-            vmin=vmin,
-            vmax=vmax,
+            cmap='bwr',
+            vmin=-max(abs(vmin), abs(vmax)),
+            vmax=max(abs(vmin), abs(vmax)),
             aspect='auto',
             zorder=0,
             interpolation='bilinear'
@@ -268,7 +268,7 @@ def create_animation(df: pd.DataFrame, output_path: str, fps: int, radius: float
         ax.add_patch(circ)
         circles.append(circ)
 
-    # Add a dashed white smaller circle for the center of mass
+    # Add a black smaller circle for the center of mass
     # Initial center of mass
     xs0 = [float(df[f"location_{mid}_x"].iloc[0]) for mid in member_ids]
     ys0 = [float(df[f"location_{mid}_y"].iloc[0]) for mid in member_ids]

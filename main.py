@@ -38,10 +38,10 @@ def main(args):
     swarm = Swarm(
         num_x=args.swarm_num_x,
         num_y=args.swarm_num_y,
-        left_location=48.65,
-        bottom_location=0.65,
-        member_interval_x=0.9,
-        member_interval_y=0.9,
+        left_location=50-0.33/2-(0.5+0.33)*3-0.25,
+        bottom_location=0.33+0.25,
+        member_interval_x=0.33+0.25+0.25,
+        member_interval_y=0.33+0.25+0.25,
         member_radius=args.member_radius,
         member_density=15.12, # density of FePt (L1_0) alloy
         member_max_force=args.swarm_max_force,

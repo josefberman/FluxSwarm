@@ -28,20 +28,28 @@ def beat_waveform(t: float, v_peak: float, v_dia: float, tau: float, upstroke: f
     :param downstroke: downstroke duration (seconds)
     :return: value of a beat waveform at time t
     """
+    # t_cycle = 1/tau
+    # t = t % t_cycle
+    # dv = v_peak-v_dia
+    # upstroke = upstroke*t_cycle
+    # plateau = plateau*t_cycle
+    # downstroke = downstroke*t_cycle
+    # if 0<=t<upstroke:
+    #     return v_dia+dv*S(t/upstroke)
+    # elif upstroke<=t<upstroke+plateau:
+    #     return v_peak
+    # elif upstroke+plateau<=t<upstroke+plateau+downstroke:
+    #     return v_peak-dv*S((t-upstroke-plateau)/downstroke)
+    # else:
+    #     return v_dia
     t_cycle = 1/tau
     t = t % t_cycle
-    dv = v_peak-v_dia
-    upstroke = upstroke*t_cycle
-    plateau = plateau*t_cycle
-    downstroke = downstroke*t_cycle
-    if 0<=t<upstroke:
-        return v_dia+dv*S(t/upstroke)
-    elif upstroke<=t<upstroke+plateau:
-        return v_peak
-    elif upstroke+plateau<=t<upstroke+plateau+downstroke:
-        return v_peak-dv*S((t-upstroke-plateau)/downstroke)
+    if 0<=t<0.15:
+        return -71111*t**2 + 10667*t  # parabola with positive peak at (0.075,400)
+    elif 0.15<=t<0.25:
+        return 2400*t**2 - 960*t + 90  # parabola with negative peak at (0.2,-6)
     else:
-        return v_dia
+        return 987.164 * (t-0.25) * (1-t)**6.5  # beta distribution with positive peak at (0.35,6)
 
 
 def S(x: float):

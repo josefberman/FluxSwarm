@@ -90,8 +90,8 @@ class SwarmEnv(gym.Env):
         self.folder = folder
         self.rewards = []
         # Multi-objective reward weights (can be tuned externally after init)
-        self.w_progress = 1.0     # relative x vs fluid: mean(u_fluid_x - v_member_x), normalized
-        self.w_energy = 1.0       # energy efficiency: mean(1 - ||F_i||/||F_max||)
+        self.w_progress = 9.0     # relative x vs fluid: mean(u_fluid_x - v_member_x), normalized
+        self.w_energy = 1.0       # energy efficiency: mean(F*v*dt/F_max*v)
         self.w_smooth = 1.0       # maximize action smoothness (cosine similarity)
         # Tracking for logging
         self.last_reward_components = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
@@ -128,8 +128,6 @@ class SwarmEnv(gym.Env):
         self.action_space = spaces.Box(
             low=-1.0, high=1.0, shape=(len(swarm.members), 2), dtype=np.float32
         )
-        os.makedirs(f'run/{self.folder}/PPO/velocity_{self.pid}', exist_ok=True)
-        os.makedirs(f'run/{self.folder}/PPO/pressure_{self.pid}', exist_ok=True)
 
     def reset(self, seed=None, options=None):
         """
@@ -219,9 +217,9 @@ class SwarmEnv(gym.Env):
         self.rewards.append(reward)
         # Update per-episode accumulators
         self.episode_cum_reward += float(reward)
-        self.episode_cum_objectives['progress'] += float(self.last_objectives.get('progress', 0.0))
-        self.episode_cum_objectives['energy_efficiency'] += float(self.last_objectives.get('energy_efficiency', 0.0))
-        self.episode_cum_objectives['smoothness'] += float(self.last_objectives.get('smoothness', 0.0))
+        self.episode_cum_objectives['progress'] += float(self.last_reward_components.get('progress', 0.0))
+        self.episode_cum_objectives['energy_efficiency'] += float(self.last_reward_components.get('energy_efficiency', 0.0))
+        self.episode_cum_objectives['smoothness'] += float(self.last_reward_components.get('smoothness', 0.0))
 
         # Save fields every step, only for first environment (env_id=0) to reduce I/O
         if self.save_fields and self.env_id == 0 and self.v is not None and self.p is not None:
@@ -790,83 +788,6 @@ def pcgrad_merge(model: nn.Module, losses: list[torch.Tensor]):
         offset += numel
 
 
-def run_PPO(env: SwarmEnv | VecEnv, timesteps: int):
-    """
-    Executes the Proximal Policy Optimization (PPO) algorithm on a given environment and saves training
-    models, visualizations, and logs. The function supports single Swarm Environment instances as well
-    as vectorized multiple environment instances. Training progress and logs are saved to TensorBoard,
-    and analysis plots are saved to the specified directory.
-
-    :param env: The environment on which PPO will be executed. Can either be a single SwarmEnv or a VecEnv instance.
-    :type env: SwarmEnv | VecEnv
-
-    :param timesteps: Total number of timesteps for which the PPO model will be trained. For VecEnv,
-        this value is multiplied by the number of environments.
-    :type timesteps: int
-
-    :return: None
-    """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    num_steps = 128
-    if isinstance(env, VecEnv):
-        if os.path.exists(f"run/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip"):
-            model = PPO.load(f"run/{env.get_attr('folder')[0]}/swarm_rl_ppo.zip", env=env)
-            print('Successfully loaded model')
-        else:
-            model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=32,
-                        device=device, gamma=0.95, learning_rate=0.0003, ent_coef=0.01, n_epochs=10,
-                        tensorboard_log=f"run/{env.get_attr('folder')[0]}/swarm_rl_ppo_tb")
-        model.learn(total_timesteps=timesteps * env.num_envs, log_interval=1, progress_bar=True,
-                    callback=RewardLoggerCallback(), reset_num_timesteps=False)
-        model.save(f"run/{env.get_attr('folder')[0]}/swarm_rl_ppo")
-        for env_i in range(env.num_envs):
-            date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
-            os.makedirs(f"run/{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}", exist_ok=True)
-            plot_save_locations(folder_name=f"{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}",
-                                sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
-            plot_save_velocities(folder_name=f"{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}",
-                                 sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
-            plot_save_rewards(folder_name=f"{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}",
-                              rewards=env.get_attr('rewards')[env_i], sim=env.get_attr('sim')[env_i])
-            plot_save_actions(folder_name=f"{env.get_attr('folder')[env_i]}/PPO/{date_stamp}_{env.get_attr('pid')[env_i]}",
-                              sim=env.get_attr('sim')[env_i], swarm=env.get_attr('swarm')[env_i])
-            # plot_save_fields(folder_name=f'{env.get_attr('folder')[env_i]}/PPO/', pid=env.get_attr('pid')[env_i])
-    elif isinstance(env, SwarmEnv):
-        if os.path.exists(f"run/{env.folder}/swarm_rl_ppo.zip"):
-            model = PPO.load(f"run/{env.folder}/swarm_rl_ppo.zip", env=env)
-            print('Successfully loaded model')
-        else:
-            model = PPO('MlpPolicy', env, verbose=2, n_steps=num_steps, batch_size=num_steps, device=device, gamma=0.95,
-                        tensorboard_log=f"run/{env.folder}/swarm_rl_ppo_tb")
-        model.learn(total_timesteps=timesteps, log_interval=1, progress_bar=True, callback=RewardLoggerCallback(),
-                    reset_num_timesteps=False)
-        model.save(f"run/{env.folder}/swarm_rl_ppo")
-        date_stamp = f'{datetime.now().year}-{datetime.now().month}-{datetime.now().day}_{datetime.now().hour}-{datetime.now().minute}-{datetime.now().second}'
-        os.makedirs(f"run/{env.folder}/PPO/{date_stamp}", exist_ok=True)
-        plot_save_locations(folder_name=f"{env.folder}/PPO/{date_stamp}", sim=env.sim, swarm=env.swarm)
-        plot_save_velocities(folder_name=f"{env.folder}/PPO/{date_stamp}", sim=env.sim, swarm=env.swarm)
-        plot_save_rewards(folder_name=f"{env.folder}/PPO/{date_stamp}", rewards=env.rewards, sim=env.sim)
-        plot_save_actions(folder_name=f"{env.folder}/PPO/{date_stamp}", sim=env.sim, swarm=env.swarm)
-
-def run_SAC(env: SwarmEnv):
-    """
-    Trains and saves a Soft Actor-Critic (SAC) model for the given swarm environment. This function
-    also generates and saves plots for location trajectories, velocities, and rewards during the
-    simulation.
-
-    :param env: The swarm environment where the SAC model is trained. Must be an instance of
-        `SwarmEnv`.
-    :return: None
-    """
-    model = SAC('MlpPolicy', env, verbose=2, device='cpu', gamma=0.95, tau=0.1)
-    model.learn(total_timesteps=env.sim.time_steps, progress_bar=True)
-    model.save(f'run/{env.folder}/swarm_rl_sac')
-
-    plot_save_locations(folder_name=f'{env.folder}/SAC', sim=env.sim, swarm=env.swarm)
-    plot_save_velocities(folder_name=f'{env.folder}/SAC', sim=env.sim, swarm=env.swarm)
-    plot_save_rewards(folder_name=f'{env.folder}/SAC', rewards=env.rewards, sim=env.sim)
-
-
 def run_MOMAPPO(env, total_timesteps: int,
                 n_steps: int = 1024, batch_size: int = 256, update_epochs: int = 10,
                 gamma: float = 0.95, gae_lambda: float = 0.95, clip_coef: float = 0.2,
@@ -1025,10 +946,10 @@ def run_MOMAPPO(env, total_timesteps: int,
                 rew_energy = torch.tensor(rm[:, 1], dtype=torch.float32, device=dev)
                 rew_smooth = torch.tensor(rm[:, 2], dtype=torch.float32, device=dev)
                 reward_total = float(np.mean(np.sum(rm, axis=1)))
-                obj = info.get('objectives', {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0})
-                obj_progress = float(obj.get('progress', 0.0))
-                obj_energy = float(obj.get('energy_efficiency', 0.0))
-                obj_smooth = float(obj.get('smoothness', 0.0))
+                comps_w = info.get('reward_components', {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0})
+                obj_progress = float(comps_w.get('progress', 0.0))
+                obj_energy = float(comps_w.get('energy_efficiency', 0.0))
+                obj_smooth = float(comps_w.get('smoothness', 0.0))
                 rollout_obj_progress.append(obj_progress)
                 rollout_obj_energy.append(obj_energy)
                 rollout_obj_smooth.append(obj_smooth)

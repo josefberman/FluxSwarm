@@ -128,14 +128,9 @@ class Inflow:
     :type center_y: float
     """
 
-    def __init__(self, frequency: float = 0, amplitude: float = 0, h_shift: float = 0, v_shift: float = 0, upstroke: float = 0, plateau: float = 0, downstroke: float = 0):
+    def __init__(self, frequency: float = 0, amplitude: float = 0):
         self.frequency = frequency
         self.amplitude = amplitude
-        self.h_shift = h_shift
-        self.v_shift = v_shift
-        self.upstroke = upstroke
-        self.plateau = plateau
-        self.downstroke = downstroke
 
 
 class Fluid:

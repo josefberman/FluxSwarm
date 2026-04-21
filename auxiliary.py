@@ -16,7 +16,7 @@ def trapezoidal_waveform(t: float, a: float = 1, tau: float = 1, h: float = 1, v
     return a / pi * (arcsin(sin(pi / tau * t + h)) + arccos(cos(pi / tau * t + h))) - a / 2 + v
 
 
-def beat_waveform(t: float, v_peak: float, v_dia: float, tau: float, upstroke: float, plateau: float, downstroke: float):
+def beat_waveform(t: float, amplitude: float):
     """
     Computes the value of a beat waveform at time t
     :param t: time step (seconds)
@@ -42,14 +42,15 @@ def beat_waveform(t: float, v_peak: float, v_dia: float, tau: float, upstroke: f
     #     return v_peak-dv*S((t-upstroke-plateau)/downstroke)
     # else:
     #     return v_dia
+    tau = 1
     t_cycle = 1/tau
     t = t % t_cycle
     if 0<=t<0.15:
-        return -71111*t**2 + 10667*t  # parabola with positive peak at (0.075,400)
+        return -177.77 * amplitude * t * (t-0.15)  # parabola with positive peak at (0.075,100)
     elif 0.15<=t<0.25:
-        return 2400*t**2 - 960*t + 90  # parabola with negative peak at (0.2,-6)
+        return 8.00 * amplitude * (t-0.15) * (t-0.25)  # parabola with negative peak at (0.2,-2)
     else:
-        return 987.164 * (t-0.25) * (1-t)**6.5  # beta distribution with positive peak at (0.35,6)
+        return 0.32 * amplitude * (t-0.25) * (1-t)**6.5  # t-shifted beta distribution with positive peak at (0.35,2)
 
 
 def S(x: float):

@@ -14,7 +14,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from plotting import animate_save_simulation, plot_save_locations, plot_save_rewards, plot_save_velocities
 from logs import create_run_name, create_folders_for_run, log_parameters, log_hyperparameters
 from data_structures import Simulation, Swarm, Inflow, Fluid
-from RL import SwarmEnv, run_PPO, run_MOMAPPO
+from RL import SwarmEnv, run_MOMAPPO
 from train_cli import build_training_argparser
 import warnings
 
@@ -50,9 +50,6 @@ def main(args):
     inflow = Inflow(
         frequency=1,
         amplitude=args.inflow_velocity,
-        upstroke=0.2,
-        plateau=0.15,
-        downstroke=0.2,
     )  # velocity in mm/s
     inflow.center_x = 0
     fluid = Fluid(viscosity=3)  # viscosity of blood in mg/(mm*s)
@@ -97,12 +94,6 @@ def main(args):
     env = SubprocVecEnv([make_env(i) for i in range(num_envs)])
     print(f"[Parallelization] Running {num_envs} environments in parallel (timestamp: {run_timestamp})")
     
-    # run_PPO(env, sim.time_steps)
-    # HYPERPARAMETERS: Balanced exploration/exploitation
-    # - ent_coef=0.01: Mild entropy bonus
-    # - clip_coef=0.2: Standard PPO clip range
-    # - gamma=0.95: Standard discount factor for longer-horizon planning
-    # - lr=3e-4: Standard learning rate
     print(f'Maximum propulsion force per swarm member: {swarm.members[0].max_force} mg*mm/s^2')
     print(f'Fluid velocity: {inflow.amplitude} mm/s')
     run_MOMAPPO(env, sim.time_steps, n_steps=args.n_steps, batch_size=args.batch_size, update_epochs=args.update_epochs, 

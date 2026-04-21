@@ -97,8 +97,8 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--inflow-velocity',
         type=float,
-        default=55,
-        help='Peak inflow centerline velocity in mm/s (default: 55)',
+        default=100,
+        help='Peak inflow centerline velocity in mm/s (default: 100)',
     )
 
     parser.add_argument(

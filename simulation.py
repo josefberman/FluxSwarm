@@ -90,7 +90,7 @@ def build_sampling_coords_tensor(
 
 
 def generate_parabolic_profile_mask(v: Field, sim: Simulation, inflow: Inflow, t: float):
-    trap_wave = beat_waveform(t=t, v_peak=inflow.amplitude, v_dia=0, tau=inflow.frequency, upstroke=inflow.upstroke, plateau=inflow.plateau, downstroke=inflow.downstroke)
+    trap_wave = beat_waveform(t=t, amplitude=inflow.amplitude)
 
     R = sim.resolution[1] / 2.0
 

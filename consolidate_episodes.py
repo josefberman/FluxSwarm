@@ -21,6 +21,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 from scipy.interpolate import interp1d
 
 
@@ -271,6 +272,7 @@ def _plot_steps(agg_steps: dict | None, base: Path) -> None:
     ax.set_title('Episode length', fontweight='bold')
     ax.set_xlabel('Global environment steps (all envs combined)')
     ax.set_ylabel('Steps per episode')
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax.grid(True, alpha=0.25, linestyle='--')
     ax.set_axisbelow(True)
     # ax.legend(loc='best', frameon=True, framealpha=0.9, edgecolor='gray')

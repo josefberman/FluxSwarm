@@ -46,8 +46,8 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--dt',
         type=float,
-        default=0.01,
-        help='Base simulation timestep dt in seconds (default: 0.01)',
+        default=0.001,
+        help='Base simulation timestep dt in seconds (default: 0.001)',
     )
     parser.add_argument(
         '--dt-substeps',
@@ -116,14 +116,14 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--batch-size',
         type=int,
-        default=16,
-        help='Batch size (default: 16)',
+        default=256,
+        help='Batch size (default: 256)',
     )
     parser.add_argument(
         '--update-epochs',
         type=int,
-        default=10,
-        help='Number of update epochs (default: 10)',
+        default=4,
+        help='Number of update epochs (default: 4)',
     )
     parser.add_argument(
         '--ent-coef',

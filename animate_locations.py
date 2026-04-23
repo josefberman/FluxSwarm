@@ -63,6 +63,12 @@ def read_locations(csv_path: str) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
     if "timestep" in df.columns:
         df = df.sort_values("timestep").reset_index(drop=True)
+    # Drop the first row so locations lag one frame behind the field data.
+    # Locations are recorded after the physics step, so they correspond to
+    # the *end* of timestep t, while the field snapshot is from the *start*;
+    # shifting by one frame re-aligns them.
+    if len(df) > 1:
+        df = df.iloc[1:].reset_index(drop=True)
     return df
 
 

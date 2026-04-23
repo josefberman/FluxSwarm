@@ -145,8 +145,56 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
     over_unit = (norms > 1.0).squeeze(1)
     force_actions[over_unit] = force_actions[over_unit] / norms[over_unit]
 
-    timings = {}
-    t0 = perf_counter()
+    # timings = {}
+    # t0 = perf_counter()
+
+    # Swarm member progression
+    # t_sampling = perf_counter()
+    # t_updates = perf_counter()
+    pos, vel, radii, masses, max_forces = _extract_swarm_state_arrays(swarm)
+    if t>0.0:
+        coords_tensor = build_sampling_coords_tensor(
+            swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES
+        )
+        pressure_profiles_all = sample_field_around_obstacles(
+            f=p, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, coords_tensor=coords_tensor
+        )  # shape: (num_members, n)
+        velocity_profiles = sample_field_around_obstacles(
+            f=v, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, coords_tensor=coords_tensor
+        )
+        
+        
+        
+        pos, vel = vectorized_advance_by_viscous_drag(
+            pos=pos,
+            vel=vel,
+            radii=radii,
+            masses=masses,
+            sim=sim,
+            fluid=fluid_obj,
+            velocity_profiles=velocity_profiles,
+        )
+        pos, vel = vectorized_advance_by_pressure_gradient(
+            pos=pos,
+            vel=vel,
+            radii=radii,
+            masses=masses,
+            sim=sim,
+            pressure_profiles=pressure_profiles_all,
+        )
+        pos, vel = vectorized_advance_by_forces(
+            pos=pos,
+            vel=vel,
+            radii=radii,
+            masses=masses,
+            max_forces=max_forces,
+            sim=sim,
+            internal_forces=torch.as_tensor(force_actions, dtype=torch.float64, device=pos.device),
+        )
+    pos, vel = resolve_collisions_tensor(pos, vel, radii, masses, sim)
+
+    # Fluid progression
+
     dt_sub = sim.dt / sim.substeps
     # Swarm geometry is unchanged within a major step; build mask once.
     obstacles = swarm.as_obstacle_list()
@@ -173,7 +221,7 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         v = v * (1.0 - swarm_mask)
         
         try:
-            t_solver = perf_counter()
+            # t_solver = perf_counter()
             solver = Solve(
                 method='CG',
                 x0=p,
@@ -188,7 +236,7 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
                     obstacles=(),
                     solve=solver
                 )
-            timings['solver'] = timings.get('solver', 0.0) + (perf_counter() - t_solver)
+            # timings['solver'] = timings.get('solver', 0.0) + (perf_counter() - t_solver)
             # info = solves[solver]
             # print(
             #     f"[make_incompressible] t_sub={t_sub:.4f} "
@@ -198,51 +246,8 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
             print(f'Time sub-step {t_sub} diverged: {e}')
             pass
     # Vectorized sampling for all members to reduce Python overhead
-    t_sampling = perf_counter()
-    coords_tensor = build_sampling_coords_tensor(
-        swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES
-    )
-    pressure_profiles_all = sample_field_around_obstacles(
-        f=p, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, coords_tensor=coords_tensor
-    )  # shape: (num_members, n)
-    velocity_profiles = sample_field_around_obstacles(
-        f=v, swarm=swarm, sim=sim, n=NUM_PRESSURE_ANGLES, coords_tensor=coords_tensor
-    )
-    timings['sampling'] = perf_counter() - t_sampling
-    t_updates = perf_counter()
-    pos, vel, radii, masses, max_forces = _extract_swarm_state_arrays(swarm)
-
-    pos, vel = vectorized_advance_by_viscous_drag(
-        pos=pos,
-        vel=vel,
-        radii=radii,
-        masses=masses,
-        sim=sim,
-        fluid=fluid_obj,
-        velocity_profiles=velocity_profiles,
-    )
-    pos, vel = vectorized_advance_by_pressure_gradient(
-        pos=pos,
-        vel=vel,
-        radii=radii,
-        masses=masses,
-        sim=sim,
-        pressure_profiles=pressure_profiles_all,
-    )
-    pos, vel = vectorized_advance_by_forces(
-        pos=pos,
-        vel=vel,
-        radii=radii,
-        masses=masses,
-        max_forces=max_forces,
-        sim=sim,
-        internal_forces=torch.as_tensor(force_actions, dtype=torch.float64, device=pos.device),
-    )
-
-    pos, vel = resolve_collisions_tensor(pos, vel, radii, masses, sim, restitution=0.2)
-    timings['updates'] = perf_counter() - t_updates
-
-    t_writeback = perf_counter()
+    
+    # t_writeback = perf_counter()
     _writeback_swarm_state_arrays(swarm, pos, vel)
 
     # Capture post-collision state for trajectory histories
@@ -251,14 +256,16 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
         member.previous_locations.append(member.location.copy())
         member.previous_velocities.append(member.velocity.copy())
         member.previous_actions.append({'x': force_actions[i][0], 'y': force_actions[i][1]})
-    timings['writeback_logging'] = perf_counter() - t_writeback
-    timings['total'] = perf_counter() - t0
-    if PROFILE_SYNC_POINTS:
-        print(
-            f"[step_timing] total={timings['total']:.4f}s "
-            f"solver={timings.get('solver', 0.0):.4f}s sampling={timings.get('sampling', 0.0):.4f}s "
-            f"updates={timings.get('updates', 0.0):.4f}s writeback={timings.get('writeback_logging', 0.0):.4f}s"
-        )
+    # timings['writeback_logging'] = perf_counter() - t_writeback
+    # timings['total'] = perf_counter() - t0
+    # timings['sampling'] = perf_counter() - t_sampling
+    # timings['updates'] = perf_counter() - t_updates
+    # if PROFILE_SYNC_POINTS:
+    #     print(
+    #         f"[step_timing] total={timings['total']:.4f}s "
+    #         f"solver={timings.get('solver', 0.0):.4f}s sampling={timings.get('sampling', 0.0):.4f}s "
+    #         f"updates={timings.get('updates', 0.0):.4f}s writeback={timings.get('writeback_logging', 0.0):.4f}s"
+    #     )
     return v, p, swarm
 
 
@@ -459,7 +466,12 @@ def vectorized_advance_by_forces(
     sim: Simulation,
     internal_forces: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Vectorized internal/contact-force update for all members."""
+    """Apply each member's own action force — no inter-sphere force transmission.
+
+    Each sphere only feels its own policy action scaled by max_force. Transmitting
+    neighbours' actions through contact is not physical for magnetic microrobots and
+    was the primary source of jitter; the impulse collision solver handles separation.
+    """
     n_members = pos.shape[0]
     if n_members == 0:
         return pos, vel
@@ -468,32 +480,11 @@ def vectorized_advance_by_forces(
     if forces.shape[0] != n_members:
         raise ValueError("internal_forces length does not match swarm member count")
 
-    # Self internal force term (equivalent to member == other_member branch).
-    self_force = forces * max_forces[:, None]
-
-    # Pairwise geometry from i to j: r_ij = pos_j - pos_i
-    r_ij = pos[None, :, :] - pos[:, None, :]
-    dist = torch.linalg.norm(r_ij, dim=2)
-    safe_dist = torch.where(dist > 1e-12, dist, torch.ones_like(dist))
-    n_ij = r_ij / safe_dist[:, :, None]
-
-    # Contact mask equivalent to the original condition:
-    # 0 < dist < (2 * radius_j + 2 * max(dx,dy))
-    contact_thresh = 2.0 * radii[None, :] + 2.0 * max(sim.dx, sim.dy)
-    contact_mask = (dist > 0.0) & (dist < contact_thresh)
-    contact_mask.fill_diagonal_(False)
-
-    # Original implementation adds scalar dot(...) to both components.
-    # Preserve that behavior exactly.
-    other_force = forces[None, :, :] * max_forces[None, :, None]
-    contact_scalar = torch.sum(other_force * n_ij, dim=2)  # (i, j)
-    contact_scalar = torch.where(contact_mask, contact_scalar, torch.zeros_like(contact_scalar))
-    contact_sum = torch.sum(contact_scalar, dim=1)  # (i,)
-    total_force = self_force + contact_sum[:, None]
+    total_force = forces * max_forces[:, None]
 
     bad = ~torch.isfinite(total_force).all(dim=1)
     if torch.any(bad):
-        print("[WARNING: simulation.py] NaN/Inf detected in internal/contact forces. Clamping to 0.")
+        print("[WARNING: simulation.py] NaN/Inf detected in action forces. Clamping to 0.")
         total_force[bad] = 0.0
 
     return _apply_force_with_bounds(pos, vel, total_force, radii, masses, sim)
@@ -680,15 +671,26 @@ def advance_by_forces(member: Member, sim: Simulation, fluid: Fluid,
         member.velocity['y'] = 0
 
 
+_COLLISION_ITERATIONS = 4  # passes per timestep; more = fewer cascading overlaps
+
+
 def resolve_collisions_tensor(
     pos: torch.Tensor,
     vel: torch.Tensor,
     radii: torch.Tensor,
     masses: torch.Tensor,
     sim: Simulation,
-    restitution: float = 0.0
+    restitution: float = 0.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Resolve collisions for tensor state using spatial-hash broad phase."""
+    """Resolve sphere-sphere and sphere-wall collisions.
+
+    Uses a spatial-hash broad phase to find candidate pairs and runs
+    ``_COLLISION_ITERATIONS`` sequential passes so that cascading overlaps
+    (A pushes B into C) converge within a single timestep.
+
+    ``restitution=0.0`` (default) is appropriate for microrobots in viscous blood
+    flow: the fluid damps any kinetic energy on contact so there is no physical bounce.
+    """
     num = pos.shape[0]
     if num < 2:
         return pos, vel
@@ -697,62 +699,63 @@ def resolve_collisions_tensor(
     vel = vel.clone()
     inv_masses = torch.where(masses > 0, 1.0 / masses, torch.zeros_like(masses))
 
-    # Spatial hash in Python space (candidate generation only).
+    # Spatial hash: candidate pairs built once from pre-step positions.
     pos_cpu = pos.detach().cpu().numpy()
     radii_cpu = radii.detach().cpu().numpy()
-    max_interaction = 2.0 * float(np.max(radii_cpu)) + 2.0 * max(sim.dx, sim.dy)
+    max_interaction = 2.0 * float(np.max(radii_cpu))
     cell_size = max(max_interaction, 1e-9)
     cell_coords = np.floor(pos_cpu / cell_size).astype(np.int64)
 
     buckets: dict[tuple[int, int], list[int]] = {}
     for idx, c in enumerate(cell_coords):
         key = (int(c[0]), int(c[1]))
-        if key not in buckets:
-            buckets[key] = []
-        buckets[key].append(idx)
+        buckets.setdefault(key, []).append(idx)
 
     neighbor_offsets = [
         (-1, -1), (-1, 0), (-1, 1),
-        (0, -1), (0, 0), (0, 1),
-        (1, -1), (1, 0), (1, 1),
+        ( 0, -1), ( 0, 0), ( 0, 1),
+        ( 1, -1), ( 1, 0), ( 1, 1),
     ]
     candidate_pairs: set[tuple[int, int]] = set()
     for key, indices in buckets.items():
         for i in indices:
-            for dx, dy in neighbor_offsets:
-                nkey = (key[0] + dx, key[1] + dy)
-                if nkey not in buckets:
-                    continue
-                for j in buckets[nkey]:
-                    if j <= i:
-                        continue
-                    candidate_pairs.add((i, j))
+            for ddx, ddy in neighbor_offsets:
+                nkey = (key[0] + ddx, key[1] + ddy)
+                for j in buckets.get(nkey, []):
+                    if j > i:
+                        candidate_pairs.add((i, j))
 
-    for i, j in sorted(candidate_pairs):
-        diff_ij = pos[i] - pos[j]
-        d = torch.linalg.norm(diff_ij)
-        min_dist_ij = radii[i] + radii[j]
-        if not (d < min_dist_ij):
-            continue
+    sorted_pairs = sorted(candidate_pairs)
 
-        if d <= 1e-12:
-            n = torch.tensor([1.0, 0.0], dtype=pos.dtype, device=pos.device)
-            d = torch.tensor(1e-6, dtype=pos.dtype, device=pos.device)
-        else:
-            n = diff_ij / d
+    for _ in range(_COLLISION_ITERATIONS):
+        for i, j in sorted_pairs:
+            diff_ij = pos[i] - pos[j]
+            d = torch.linalg.norm(diff_ij)
+            min_dist_ij = radii[i] + radii[j]
+            if not (d < min_dist_ij):
+                continue
 
-        overlap = min_dist_ij - d
-        correction = 0.5 * overlap * n
-        pos[i] += correction
-        pos[j] -= correction
+            if d <= 1e-12:
+                n = torch.tensor([1.0, 0.0], dtype=pos.dtype, device=pos.device)
+                d = torch.tensor(1e-6, dtype=pos.dtype, device=pos.device)
+            else:
+                n = diff_ij / d
 
-        v_rel = vel[i] - vel[j]
-        v_sep = torch.dot(v_rel, n)
-        if v_sep < 0:
-            j_imp = -(1.0 + restitution) * v_sep / (inv_masses[i] + inv_masses[j] + 1e-12)
-            impulse = j_imp * n
-            vel[i] += impulse * inv_masses[i]
-            vel[j] -= impulse * inv_masses[j]
+            # Push apart proportionally to inverse mass (equal masses → equal split).
+            overlap = min_dist_ij - d
+            w_i = inv_masses[i] / (inv_masses[i] + inv_masses[j] + 1e-12)
+            w_j = inv_masses[j] / (inv_masses[i] + inv_masses[j] + 1e-12)
+            pos[i] += w_i * overlap * n
+            pos[j] -= w_j * overlap * n
+
+            # Zero out approaching normal velocity (restitution=0 → no bounce).
+            v_rel = vel[i] - vel[j]
+            v_sep = torch.dot(v_rel, n)
+            if v_sep < 0:
+                j_imp = -(1.0 + restitution) * v_sep / (inv_masses[i] + inv_masses[j] + 1e-12)
+                impulse = j_imp * n
+                vel[i] += impulse * inv_masses[i]
+                vel[j] -= impulse * inv_masses[j]
 
     x_lower = radii
     x_upper = sim.length_x - radii

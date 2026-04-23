@@ -563,7 +563,7 @@ class ActorCriticMO(nn.Module):
         assert N == self.num_members and D == self.obs_local_dim
         h = self.actor_torso(obs_local.reshape(B * N, D))
         mu = self.mu_head(h).reshape(B, N, 2)
-        clamped = torch.clamp(self.log_std, min=-20.0, max=2.0)  # (N, 2)
+        clamped = torch.clamp(self.log_std, min=-2.0, max=2.0)  # (N, 2)  floor e^-2 ≈ 0.135
         std = torch.exp(clamped).unsqueeze(0).expand(B, -1, -1)  # (B, N, 2)
         return mu, std
 
@@ -872,7 +872,11 @@ def run_MOMAPPO(env, total_timesteps: int,
     env0_cum_reward = 0.0
 
     for update in range(num_updates):
-        # Create buffer sized for all environments
+        # Linear LR decay: lr → 0 over the course of training
+        frac = 1.0 - update / max(num_updates, 1)
+        for pg in optimizer.param_groups:
+            pg['lr'] = lr * frac
+
         buffer = RolloutBufferMO(
             n_steps * num_envs, num_members, obs_local_dim, dev,
             num_envs=num_envs, n_steps=n_steps,

@@ -909,6 +909,9 @@ def run_MOMAPPO(env, total_timesteps: int,
                     mu, std = model(obs_actor.unsqueeze(0))
                     dist = Normal(mu, std)
                     action = dist.sample()[0]
+                    # Per-member L2: map (action_x, action_y) into the closed unit disk
+                    norms = torch.linalg.norm(action, dim=-1, keepdim=True).clamp(min=1e-12)
+                    action = action / torch.maximum(norms, torch.ones_like(norms))
                     logprob = dist.log_prob(action).sum()
                     val_progress, val_energy, val_smooth = model.values(obs_joint.unsqueeze(0))
 
@@ -920,7 +923,6 @@ def run_MOMAPPO(env, total_timesteps: int,
             
             # Format actions for VecEnv (shape: (num_envs, num_members, 2))
             actions_np = torch.stack(actions_all).cpu().numpy()
-            actions_np = np.clip(actions_np, -1.0, 1.0)
             actions_np = actions_np.reshape(num_envs, *env.action_space.shape)
             
             # Step all environments

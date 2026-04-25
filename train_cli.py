@@ -46,8 +46,8 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--dt',
         type=float,
-        default=0.01,
-        help='Base simulation timestep dt in seconds (default: 0.01)',
+        default=0.001,
+        help='Base simulation timestep dt in seconds (default: 0.001)',
     )
     parser.add_argument(
         '--dt-substeps',

@@ -138,6 +138,13 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
 
     # --- IMPORTANT: REMOVE FOR GENERAL USE ---
     # force_actions = np.array([[-1.0, 0.0] for _ in range(len(swarm.members))], dtype=np.float64) # defaults to brute-force control, normalized to unit length
+    force_actions = []
+    for member in swarm.members:
+        if member.previous_locations[0]['y'] > sim.length_y / 2:
+            force_actions.append([-1.0/np.sqrt(2), 1.0/np.sqrt(2)]) # defaults to brute-force smart control, normalized to unit length
+        else:
+            force_actions.append([-1.0/np.sqrt(2), -1.0/np.sqrt(2)]) # defaults to brute-force control, normalized to unit length
+    force_actions = np.array(force_actions, dtype=np.float64)
 
     #-----------------------------------------------
 

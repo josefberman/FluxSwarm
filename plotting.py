@@ -11,7 +11,53 @@ from glob import glob
 from scipy.signal import savgol_filter
 from auxiliary import TO_MMHG, trapezoidal_waveform
 
- 
+# Must match RL.py; stream files live under ``run/<parent_run>/env_<id>_<ts>/`` (not the MOMAPPO subfolder).
+TRAINING_LOG_TRAJECTORY = "training_log_trajectory.csv"
+TRAINING_LOG_REWARDS = "training_log_rewards.csv"
+
+
+def _env_run_dir_from_plot_output_folder(folder_name: str) -> str:
+    """Map ``.../MOMAPPO/<date>`` output path to the env run directory that holds training logs."""
+    p = folder_name.replace("\\", "/")
+    if "/MOMAPPO/" in p:
+        return p.split("/MOMAPPO/", 1)[0]
+    return p
+
+
+def _path_training_trajectory(folder_name: str) -> str:
+    return f"run/{_env_run_dir_from_plot_output_folder(folder_name)}/{TRAINING_LOG_TRAJECTORY}"
+
+
+def _path_training_rewards(folder_name: str) -> str:
+    return f"run/{_env_run_dir_from_plot_output_folder(folder_name)}/{TRAINING_LOG_REWARDS}"
+
+
+def _read_trajectory_or_fail(folder_name: str) -> pd.DataFrame:
+    p = _path_training_trajectory(folder_name)
+    if not os.path.isfile(p):
+        raise FileNotFoundError(
+            f"Missing {TRAINING_LOG_TRAJECTORY} at {p}. "
+            "Run training so SwarmEnv writes stream logs under run/<parent>/env_<id>_*/."
+        )
+    df = pd.read_csv(p)
+    if df.empty:
+        raise ValueError(f"Training trajectory log is empty: {p}")
+    return df
+
+
+def _read_rewards_log_or_fail(folder_name: str) -> pd.DataFrame:
+    p = _path_training_rewards(folder_name)
+    if not os.path.isfile(p):
+        raise FileNotFoundError(
+            f"Missing {TRAINING_LOG_REWARDS} at {p}. "
+            "Run training so SwarmEnv writes stream logs under run/<parent>/env_<id>_*/."
+        )
+    df = pd.read_csv(p)
+    if df.empty:
+        raise ValueError(f"Training rewards log is empty: {p}")
+    return df
+
+
 
 def plot_save_fields(v: Field, p: Field, folder_name: str, pid: int, current_time: float, sim: Simulation):
     """
@@ -55,190 +101,161 @@ def plot_save_fields(v: Field, p: Field, folder_name: str, pid: int, current_tim
 
 def plot_save_locations(folder_name: str, sim: Simulation, swarm: Swarm):
     """
-    Plots and saves the locations of swarm members to a CSV file and visualizes the
-    x and y positional changes over time with plots. The function calculates
-    average positions of the swarm and highlights their trajectories in comparison
-    to individual members on the plots.
+    Read ``training_log_trajectory.csv`` from the parent env folder, write
+    ``locations.csv`` and ``locations.jpg`` under ``run/{folder_name}/``.
 
-    :param folder_name: Name of the folder where the dataset and plots will
-        be saved.
-    :param sim: Simulation object containing simulation parameters like
-        timestep, total time, domain length in x and y directions.
-    :param swarm: Swarm object containing information about swarm members,
-        including their historical positions.
-    :return: None
+    The trajectory log is produced by :class:`SwarmEnv` (one row per step, includes ``episode``).
     """
-    # Index i is the snapshot at simulation time i * dt (i=0 is initial state before any step).
-    data_dict = {
-        'timestep': np.arange(len(swarm.members[0].previous_locations), dtype=np.float64) * sim.dt,
+    df = _read_trajectory_or_fail(folder_name)
+    n = len(swarm.members)
+    data_dict: dict = {
+        'timestep': df['current_time'].to_numpy(dtype=np.float64),
+        'episode': df['episode'].to_numpy(dtype=np.int64),
     }
-    for i, member in enumerate(swarm.members):
-        data_dict[f'location_{i}_x'] = [item['x'] for item in member.previous_locations]
-        data_dict[f'location_{i}_y'] = [item['y'] for item in member.previous_locations]
-    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/locations.csv')
-    n_loc = len(swarm.members[0].previous_locations)
-    time_axis = np.arange(n_loc, dtype=np.float64) * sim.dt
+    for i in range(n):
+        data_dict[f'location_{i}_x'] = df[f'location_{i}_x']
+        data_dict[f'location_{i}_y'] = df[f'location_{i}_y']
+    os.makedirs(f'run/{folder_name}', exist_ok=True)
+    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/locations.csv', index=False)
+    time_axis = df['current_time'].to_numpy(dtype=np.float64)
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
-    list_of_member_locations = []
-    for member in swarm.members:
-        axes[0].plot(time_axis, [item['x'] for item in member.previous_locations], c='#bbbbbb', linewidth=0.5)
-        list_of_member_locations.append(member.previous_locations)
-    average_dict = [{'x': sum(d['x'] for d in g) / len(g), 'y': sum(d['y'] for d in g) / len(g)} for g in
-                    zip(*list_of_member_locations)]
-    axes[0].plot(time_axis, [item['x'] for item in average_dict], c='k', linewidth=1)
+    loc_cols_x = [df[f'location_{i}_x'].to_numpy() for i in range(n)]
+    loc_cols_y = [df[f'location_{i}_y'].to_numpy() for i in range(n)]
+    for lx in loc_cols_x:
+        axes[0].plot(time_axis, lx, c='#bbbbbb', linewidth=0.5)
+    mean_x = np.mean(np.stack(loc_cols_x, axis=0), axis=0)
+    mean_y = np.mean(np.stack(loc_cols_y, axis=0), axis=0)
+    axes[0].plot(time_axis, mean_x, c='k', linewidth=1)
     axes[0].set_title('x locations', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Location [mm]')
     axes[0].set_ylim(0, sim.length_x)
-    for member in swarm.members:
-        axes[1].plot(time_axis, [item['y'] for item in member.previous_locations], c='#bbbbbb', linewidth=0.5)
-    axes[1].plot(time_axis, [item['y'] for item in average_dict], c='k', linewidth=1)
+    for ly in loc_cols_y:
+        axes[1].plot(time_axis, ly, c='#bbbbbb', linewidth=0.5)
+    axes[1].plot(time_axis, mean_y, c='k', linewidth=1)
     axes[1].set_title('y locations', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Location [mm]')
     axes[1].set_ylim(0, sim.length_y)
     plt.tight_layout()
     plt.savefig(f'run/{folder_name}/locations.jpg', dpi=300)
+    plt.close(fig)
 
 
 def plot_save_actions(folder_name: str, sim: Simulation, swarm: Swarm):
     """
-    Generates and saves action data of swarm members in both x and y directions
-    over time to a CSV file and creates corresponding plots. The function takes
-    the simulation and swarm data to compute the action information for each
-    member, along with the average action over the swarm. It saves the computed
-    action data as a CSV file and generates plots for visualization that highlight
-    both individual member actions and the average actions.
+    Read ``training_log_trajectory.csv`` and write ``actions.csv`` / ``actions.jpg`` under ``run/{folder_name}/``.
     """
-    data_dict = {'timestep': np.array([t + sim.dt for t in range(len(swarm.members[0].previous_actions))])}
-    for i, member in enumerate(swarm.members):
-        data_dict[f'action_{i}_x'] = [item['x'] for item in member.previous_actions]
-        data_dict[f'action_{i}_y'] = [item['y'] for item in member.previous_actions]
-    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/forces.csv')
-
+    _ = sim
+    df = _read_trajectory_or_fail(folder_name)
+    n = len(swarm.members)
+    data_dict: dict = {
+        'timestep': df['current_time'].to_numpy(dtype=np.float64),
+        'episode': df['episode'].to_numpy(dtype=np.int64),
+    }
+    for i in range(n):
+        data_dict[f'action_{i}_x'] = df[f'action_{i}_x']
+        data_dict[f'action_{i}_y'] = df[f'action_{i}_y']
+    os.makedirs(f'run/{folder_name}', exist_ok=True)
+    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/actions.csv', index=False)
+    time_axis = df['current_time'].to_numpy(dtype=np.float64)
+    ax_x = [df[f'action_{i}_x'].to_numpy() for i in range(n)]
+    ax_y = [df[f'action_{i}_y'].to_numpy() for i in range(n)]
+    mean_x = np.mean(np.stack(ax_x, axis=0), axis=0)
+    mean_y = np.mean(np.stack(ax_y, axis=0), axis=0)
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
-    list_of_member_actions = []
-    for member in swarm.members:
-        axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_actions)),
-                     [item['x'] for item in member.previous_actions], c='#bbbbbb', linewidth=0.5)
-        list_of_member_actions.append(member.previous_actions)
-    average_dict = [{'x': sum(d['x'] for d in g) / len(g), 'y': sum(d['y'] for d in g) / len(g)} for g in
-                    zip(*list_of_member_actions)]
-    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
-                 [item['x'] for item in average_dict], c='k', linewidth=1)
+    for x in ax_x:
+        axes[0].plot(time_axis, x, c='#bbbbbb', linewidth=0.5)
+    axes[0].plot(time_axis, mean_x, c='k', linewidth=1)
     axes[0].set_title('x actions', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Action [mm/s]')
-    for member in swarm.members:
-        axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_actions)),
-                     [item['y'] for item in member.previous_actions], c='#bbbbbb', linewidth=0.5)
-    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
-                 [item['y'] for item in average_dict], c='k', linewidth=1)
+    for y in ax_y:
+        axes[1].plot(time_axis, y, c='#bbbbbb', linewidth=0.5)
+    axes[1].plot(time_axis, mean_y, c='k', linewidth=1)
     axes[1].set_title('y actions', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Action [mm/s]')
     plt.tight_layout()
     plt.savefig(f'run/{folder_name}/actions.jpg', dpi=300)
+    plt.close(fig)
 
 
 def plot_save_velocities(folder_name: str, sim: Simulation, swarm: Swarm):
     """
-    Generates and saves velocity data of swarm members in both x and y directions
-    over time to a CSV file and creates corresponding plots. The function takes
-    the simulation and swarm data to compute the velocity information for each
-    member, along with the average velocity over the swarm. It saves the computed
-    velocity data as a CSV file and generates plots for visualization that highlight
-    both individual member velocities and the average velocities.
-
-    :param folder_name: The folder name identifying the location where resulting
-        CSV and plots will be saved.
-    :type folder_name: str
-    :param sim: The simulation object containing metadata about the timestep
-        and total time of the simulation.
-    :type sim: Simulation
-    :param swarm: The swarm object containing the individuals for which velocity
-        data is logged.
-    :type swarm: Swarm
-    :return: None
+    Read ``training_log_trajectory.csv`` and write ``velocities.csv`` / ``velocities.jpg``.
     """
-    data_dict = {'timestep': np.array([t + sim.dt for t in range(len(swarm.members[0].previous_velocities))])}
-    for i, member in enumerate(swarm.members):
-        data_dict[f'velocity_{i}_x'] = [item['x'] for item in member.previous_velocities]
-        data_dict[f'velocity_{i}_y'] = [item['y'] for item in member.previous_velocities]
-    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/velocities.csv')
+    _ = sim
+    df = _read_trajectory_or_fail(folder_name)
+    n = len(swarm.members)
+    data_dict: dict = {
+        'timestep': df['current_time'].to_numpy(dtype=np.float64),
+        'episode': df['episode'].to_numpy(dtype=np.int64),
+    }
+    for i in range(n):
+        data_dict[f'velocity_{i}_x'] = df[f'velocity_{i}_x']
+        data_dict[f'velocity_{i}_y'] = df[f'velocity_{i}_y']
+    os.makedirs(f'run/{folder_name}', exist_ok=True)
+    pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/velocities.csv', index=False)
+    time_axis = df['current_time'].to_numpy(dtype=np.float64)
+    vx = [df[f'velocity_{i}_x'].to_numpy() for i in range(n)]
+    vy = [df[f'velocity_{i}_y'].to_numpy() for i in range(n)]
+    mean_x = np.mean(np.stack(vx, axis=0), axis=0)
+    mean_y = np.mean(np.stack(vy, axis=0), axis=0)
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
-    list_of_member_velocities = []
-    for member in swarm.members:
-        axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
-                     [item['x'] for item in member.previous_velocities], c='#bbbbbb', linewidth=0.5)
-        list_of_member_velocities.append(member.previous_velocities)
-    average_dict = [{'x': sum(d['x'] for d in g) / len(g), 'y': sum(d['y'] for d in g) / len(g)} for g in
-                    zip(*list_of_member_velocities)]
-    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
-                 [item['x'] for item in average_dict], c='k', linewidth=1)
+    for x in vx:
+        axes[0].plot(time_axis, x, c='#bbbbbb', linewidth=0.5)
+    axes[0].plot(time_axis, mean_x, c='k', linewidth=1)
     axes[0].set_title('x velocities', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Velocity [mm/s]')
-    for member in swarm.members:
-        axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(member.previous_locations)),
-                     [item['y'] for item in member.previous_velocities], c='#bbbbbb', linewidth=0.5)
-    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(average_dict)),
-                 [item['y'] for item in average_dict], c='k', linewidth=1)
+    for y in vy:
+        axes[1].plot(time_axis, y, c='#bbbbbb', linewidth=0.5)
+    axes[1].plot(time_axis, mean_y, c='k', linewidth=1)
     axes[1].set_title('y velocities', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Velocity [mm/s]')
     plt.tight_layout()
     plt.savefig(f'run/{folder_name}/velocities.jpg', dpi=300)
+    plt.close(fig)
 
 
 def plot_save_forces(folder_name: str, sim: Simulation, swarm: Swarm):
     """
-    Save and plot applied propulsion force components (action × max_force per member) over time.
-
-    Forces use the same scaling as the simulation: ``F_x = a_x * max_force``, ``F_y = a_y * max_force``
-    where actions are the normalized controls stored in ``previous_actions``.
+    Read actions from ``training_log_trajectory.csv`` and save ``force_i = action_i * max_force`` per member.
     """
-    os.makedirs(f'run/{folder_name}', exist_ok=True)
-    n_steps = len(swarm.members[0].previous_actions)
-    data_dict = {'timestep': np.array([t + sim.dt for t in range(n_steps)], dtype=np.float64)}
+    _ = sim
+    df = _read_trajectory_or_fail(folder_name)
+    n = len(swarm.members)
+    time_axis = df['current_time'].to_numpy(dtype=np.float64)
+    data_dict: dict = {
+        'timestep': time_axis,
+        'episode': df['episode'].to_numpy(dtype=np.int64),
+    }
+    fx_cols: list = []
+    fy_cols: list = []
     for i, member in enumerate(swarm.members):
         fmax = float(member.max_force)
-        data_dict[f'force_{i}_x'] = [float(item['x']) * fmax for item in member.previous_actions]
-        data_dict[f'force_{i}_y'] = [float(item['y']) * fmax for item in member.previous_actions]
+        ax = df[f'action_{i}_x'].to_numpy(dtype=np.float64)
+        ay = df[f'action_{i}_y'].to_numpy(dtype=np.float64)
+        data_dict[f'force_{i}_x'] = ax * fmax
+        data_dict[f'force_{i}_y'] = ay * fmax
+        fx_cols.append(ax * fmax)
+        fy_cols.append(ay * fmax)
+    os.makedirs(f'run/{folder_name}', exist_ok=True)
     pd.DataFrame(data_dict).to_csv(f'run/{folder_name}/forces.csv', index=False)
-
+    mean_fx = np.mean(np.stack(fx_cols, axis=0), axis=0)
+    mean_fy = np.mean(np.stack(fy_cols, axis=0), axis=0)
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
-    list_of_member_forces = []
-    time_axis = np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=n_steps)
-    for member in swarm.members:
-        fmax = float(member.max_force)
-        axes[0].plot(
-            time_axis,
-            [float(item['x']) * fmax for item in member.previous_actions],
-            c='#bbbbbb',
-            linewidth=0.5,
-        )
-        axes[1].plot(
-            time_axis,
-            [float(item['y']) * fmax for item in member.previous_actions],
-            c='#bbbbbb',
-            linewidth=0.5,
-        )
-        list_of_member_forces.append(
-            [{'x': float(a['x']) * fmax, 'y': float(a['y']) * fmax} for a in member.previous_actions]
-        )
-    average_dict = [
-        {
-            'x': sum(d['x'] for d in g) / len(g),
-            'y': sum(d['y'] for d in g) / len(g),
-        }
-        for g in zip(*list_of_member_forces)
-    ]
-    axes[0].plot(time_axis, [item['x'] for item in average_dict], c='k', linewidth=1)
+    for x in fx_cols:
+        axes[0].plot(time_axis, x, c='#bbbbbb', linewidth=0.5)
+    axes[0].plot(time_axis, mean_fx, c='k', linewidth=1)
     axes[0].set_title('x forces', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Force [mg*mm/s^2]')
-    axes[1].plot(time_axis, [item['y'] for item in average_dict], c='k', linewidth=1)
+    for y in fy_cols:
+        axes[1].plot(time_axis, y, c='#bbbbbb', linewidth=0.5)
+    axes[1].plot(time_axis, mean_fy, c='k', linewidth=1)
     axes[1].set_title('y forces', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Force [mg*mm/s^2]')
@@ -247,63 +264,48 @@ def plot_save_forces(folder_name: str, sim: Simulation, swarm: Swarm):
     plt.close(fig)
 
 
-def plot_save_rewards(folder_name: str, rewards: list, sim: Simulation):
+def plot_save_rewards(folder_name: str, sim: Simulation):
     """
-    Generates and saves reward data and plots for a simulation.
-
-    This function takes in the folder name, a list of rewards, and a simulation
-    object. It creates a DataFrame to save the rewards with corresponding timesteps,
-    plots the cumulative and step rewards, and saves these plots to specified files.
-
-    :param folder_name: A string representing the name of the output folder where
-        the reward data and plots will be saved.
-    :param rewards: A list of floats representing the rewards at each timestep
-        during the simulation.
-    :param sim: An instance of the Simulation class used to extract simulation
-        properties such as timestep duration and total simulation time.
-    :return: None
+    Read ``training_log_rewards.csv`` and write ``rewards.csv`` / ``rewards.jpg`` (no in-memory list).
     """
-    pd.DataFrame({'timestep': np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)),
-                  'reward': rewards}).to_csv(f'run/{folder_name}/rewards.csv')
+    _ = sim
+    df = _read_rewards_log_or_fail(folder_name)
+    t = df['current_time'].to_numpy(dtype=np.float64)
+    rw = df['step_reward'].to_numpy(dtype=np.float64)
+    os.makedirs(f'run/{folder_name}', exist_ok=True)
+    out = pd.DataFrame({
+        'timestep': t,
+        'episode': df['episode'].to_numpy(dtype=np.int64),
+        'reward': rw,
+    })
+    out.to_csv(f'run/{folder_name}/rewards.csv', index=False)
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
-    axes[0].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)), np.cumsum(rewards), c='k',
-                 linewidth=0.5)
+    axes[0].plot(t, np.cumsum(rw), c='k', linewidth=0.5)
     axes[0].set_title('Cumulative reward', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Cumulative reward')
-    axes[1].plot(np.linspace(start=sim.dt, stop=sim.total_time + sim.dt, num=len(rewards)), rewards, c='k',
-                 linewidth=0.5)
+    axes[1].plot(t, rw, c='k', linewidth=0.5)
     axes[1].set_title('Step reward', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Step reward')
     plt.tight_layout()
     plt.savefig(f'run/{folder_name}/rewards.jpg', dpi=300)
+    plt.close(fig)
 
 
-def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_history: list, title_suffix: str = '',
-                                objective_weights: tuple[float, float, float] = (16.0, 1.0, 1.0)):
+def plot_save_rewards_objectives(folder_name: str, sim: Simulation, title_suffix: str = '',
+                                 objective_weights: tuple[float, float, float] = (16.0, 1.0, 1.0)):
     """
-    Plot and save per-objective reward over time.
-
-    :param folder_name: output subfolder under ../runs
-    :param sim: Simulation to get dt and total_time
-    :param objective_history: list of dicts with keys 'progress' (normalized relative u_x), 'energy_efficiency', 'smoothness'
-    :param title_suffix: optional string appended to plot titles
-    :param objective_weights: (w_progress, w_energy, w_smooth) used to convert weighted
-        rewards back to unweighted objectives if needed.
-    :return: None
+    Read unweighted per-step objectives from ``training_log_rewards.csv``; write ``rewards_objectives.*``.
     """
-    if len(objective_history) == 0:
-        return
-    timesteps = np.linspace(start=sim.dt, stop=sim.dt * len(objective_history), num=len(objective_history))
-    prog = [d.get('progress', d.get('location_progress', 0.0)) for d in objective_history]
-    energy = [d.get('energy_efficiency', d.get('cohesion', 0.0)) for d in objective_history]
-    sm = [d.get('smoothness', 0.0) for d in objective_history]
+    _ = sim
+    df = _read_rewards_log_or_fail(folder_name)
+    timesteps = df['current_time'].to_numpy(dtype=np.float64)
+    prog = df['progress'].to_numpy(dtype=np.float64).tolist()
+    energy = df['energy_efficiency'].to_numpy(dtype=np.float64).tolist()
+    sm = df['smoothness'].to_numpy(dtype=np.float64).tolist()
 
     w_progress, w_energy, w_smooth = objective_weights
-
-    # Ensure plotted objectives are unweighted. If history already looks unweighted,
-    # keep it as-is; otherwise divide by the configured objective weight.
     if w_progress > 0 and any(abs(v) > 1.5 for v in prog):
         prog = [float(v) / float(w_progress) for v in prog]
     if w_energy > 0 and any(abs(v) > 1.5 for v in energy):
@@ -314,43 +316,31 @@ def plot_save_rewards_objectives(folder_name: str, sim: Simulation, objective_hi
     os.makedirs(f'run/{folder_name}', exist_ok=True)
     pd.DataFrame({
         'timestep': timesteps,
+        'episode': df['episode'].to_numpy(dtype=np.int64),
         'progress': prog,
         'energy_efficiency': energy,
         'smoothness': sm,
     }).to_csv(f'run/{folder_name}/rewards_objectives.csv', index=False)
 
     fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(20, 12))
-    
-    # Relative fluid-x progress (first): unweighted mean(u_fluid_x - v_member_x) / v_ref in [-1, 1]
     axes[0].plot(timesteps, prog, c='tab:purple', linewidth=1.0, label='progress')
-    # axes[0].axhline(1.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
-    # axes[0].axhline(0.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
-    # axes[0].axhline(-1.0, linestyle='dashed', color='tab:purple', linewidth=1.0, alpha=0.5)
     axes[0].set_title(f'Normalized velocity over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[0].set_xlabel('Time [s]')
     axes[0].set_ylabel('Rel. u_x objective')
-    # axes[0].legend(loc='best')
 
-    # Energy efficiency (second): mean(1 - ||F||/||F_max||)
     axes[1].plot(timesteps, energy, c='tab:green', linewidth=1.0, label='energy_efficiency')
-    # axes[1].axhline(1.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5)
-    # axes[1].axhline(0.0, linestyle='dashed', color='tab:green', linewidth=1.0, alpha=0.5)
     axes[1].set_title(f'Energy efficiency over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[1].set_xlabel('Time [s]')
     axes[1].set_ylabel('Energy efficiency')
-    # axes[1].legend(loc='best')
 
-    # Smoothness (third)
     axes[2].plot(timesteps, sm, c='tab:orange', linewidth=1.0, label='smoothness')
-    # axes[2].axhline(1.0, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Max possible reward
-    # axes[2].axhline(-1.0, linestyle='dashed', color='tab:orange', linewidth=1.0, alpha=0.5) # Min possible reward
     axes[2].set_title(f'Smoothness reward over time{(" - " + title_suffix) if title_suffix else ""}', fontweight='bold')
     axes[2].set_xlabel('Time [s]')
     axes[2].set_ylabel('Smoothness')
-    # axes[2].legend(loc='best')
 
     plt.tight_layout()
     plt.savefig(f'run/{folder_name}/rewards_objectives.jpg', dpi=300)
+    plt.close(fig)
 
 
 def create_animation_frame_row(fig: plt.Figure, axis, sim: Simulation, swarm: Swarm, imshow_data: np.ndarray,

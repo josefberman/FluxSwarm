@@ -22,6 +22,10 @@ import subprocess
 import math
 import csv
 import pandas as pd
+
+# Append-only training logs under ``run/{SwarmEnv.folder}/`` (read by ``plotting.plot_save_*``).
+TRAINING_LOG_TRAJECTORY = "training_log_trajectory.csv"
+TRAINING_LOG_REWARDS = "training_log_rewards.csv"
 try:
     from tqdm import tqdm
 except Exception:
@@ -61,8 +65,6 @@ class SwarmEnv(gym.Env):
     :type current_timestep: int
     :ivar folder: The folder path used for saving simulation results.
     :type folder: str
-    :ivar rewards: A list storing the reward values accumulated during an episode.
-    :type rewards: list
     :ivar v: The velocity field of the fluid in the simulation.
     :type v: StaggeredGrid
     :ivar p: The pressure field of the fluid in the simulation, initialized as None.
@@ -88,15 +90,17 @@ class SwarmEnv(gym.Env):
         self.episode_time = 0.0
         self.current_timestep = 0
         self.folder = folder
-        self.rewards = []
+        # Training stream log file handles (append-only under run/{folder}/)
+        self._traj_fh = None
+        self._traj_w = None
+        self._rew_fh = None
+        self._rew_w = None
         # Multi-objective reward weights (can be tuned externally after init)
         self.w_progress = 9.0     # relative x vs fluid: mean(u_fluid_x - v_member_x), normalized
         self.w_energy = 1.0       # energy efficiency: mean(F*v*dt/F_max*v)
         self.w_smooth = 1.0       # maximize action smoothness (cosine similarity)
         # Tracking for logging
         self.last_reward_components = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
-        self.reward_components_history = []
-        self.objectives_history = []
         box = Box['x,y', 0:sim.length_x, 0:sim.length_y]
         boundary = {'x': ZERO_GRADIENT, 'y': 0}
         self.v = StaggeredGrid(0, boundary=boundary, bounds=box, x=sim.resolution[0], y=sim.resolution[1])
@@ -129,15 +133,76 @@ class SwarmEnv(gym.Env):
             low=-1.0, high=1.0, shape=(len(swarm.members), 2), dtype=np.float32
         )
 
+    def _ensure_training_traj_writer(self) -> None:
+        if self._traj_fh is not None:
+            return
+        base = f"run/{self.folder}"
+        os.makedirs(base, exist_ok=True)
+        path = os.path.join(base, TRAINING_LOG_TRAJECTORY)
+        new = not os.path.exists(path) or os.path.getsize(path) == 0
+        self._traj_fh = open(path, 'a', newline='', buffering=1)
+        self._traj_w = csv.writer(self._traj_fh)
+        if new:
+            h = ['episode', 'current_time', 'episode_time']
+            for i in range(self.num_members):
+                h += [
+                    f'location_{i}_x', f'location_{i}_y',
+                    f'velocity_{i}_x', f'velocity_{i}_y',
+                    f'action_{i}_x', f'action_{i}_y',
+                ]
+            self._traj_w.writerow(h)
+            self._traj_fh.flush()
+
+    def _ensure_training_rew_writer(self) -> None:
+        if self._rew_fh is not None:
+            return
+        base = f"run/{self.folder}"
+        os.makedirs(base, exist_ok=True)
+        path = os.path.join(base, TRAINING_LOG_REWARDS)
+        new = not os.path.exists(path) or os.path.getsize(path) == 0
+        self._rew_fh = open(path, 'a', newline='', buffering=1)
+        self._rew_w = csv.writer(self._rew_fh)
+        if new:
+            self._rew_w.writerow(
+                ['episode', 'current_time', 'episode_time', 'step_reward', 'progress', 'energy_efficiency', 'smoothness']
+            )
+            self._rew_fh.flush()
+
+    def _append_training_stream(self, action: np.ndarray, step_reward: float) -> None:
+        """Record one step to full-run CSV logs under ``run/{self.folder}/`` (read by ``plotting.plot_save_*``)."""
+        self._ensure_training_traj_writer()
+        self._ensure_training_rew_writer()
+        a = np.asarray(action, dtype=np.float64).reshape(self.num_members, 2)
+        row_t = [self.episode_index, self.current_time, self.episode_time]
+        for i, m in enumerate(self.swarm.members):
+            row_t += [
+                float(m.location['x']), float(m.location['y']),
+                float(m.velocity['x']), float(m.velocity['y']),
+                float(a[i, 0]), float(a[i, 1]),
+            ]
+        self._traj_w.writerow(row_t)
+        self._traj_fh.flush()
+        o = self.last_objectives
+        self._rew_w.writerow(
+            [
+                self.episode_index,
+                self.current_time,
+                self.episode_time,
+                float(step_reward),
+                float(o.get('progress', 0.0)),
+                float(o.get('energy_efficiency', 0.0)),
+                float(o.get('smoothness', 0.0)),
+            ]
+        )
+        self._rew_fh.flush()
+
     def reset(self, seed=None, options=None):
         """
         Resets the simulation environment to an initial state.
 
-        This method initializes or re-initializes the swarm, simulation grid, velocity field,
-        and other parameters necessary to start a new episode. Additionally, it preserves
-        certain attributes of the previous swarm members for continuity, such as their
-        previous locations, velocities, and forces. It returns the initial observation of the
-        environment along with an auxiliary dictionary.
+        Rebuilds the swarm, grid, and fluid field. In-memory per-member
+        history is **not** carried across episodes; the full time series
+        is appended to ``training_log_*.csv`` under ``run/{folder}/``.
 
         :param seed: A seed value for random number generation, if required.
         :type seed: Optional[int]
@@ -165,10 +230,6 @@ class SwarmEnv(gym.Env):
         stacked_v = TensorStack((v_tensor_u, v_v), dual(vector='x,y'))
         self.v = self.v.with_values(stacked_v)
         self.p = None
-        for i, member in enumerate(self.swarm.members):
-            member.previous_locations = prev_members[i].previous_locations.copy()
-            member.previous_velocities = prev_members[i].previous_velocities.copy()
-            member.previous_actions = prev_members[i].previous_actions.copy()
         self.episode_time = 0.0
         # Reset per-episode accumulators
         self.episode_steps = 0
@@ -214,7 +275,7 @@ class SwarmEnv(gym.Env):
 
         # Compute reward (scalarized multi-objective)
         reward = self._compute_reward()
-        self.rewards.append(reward)
+        self._append_training_stream(np.asarray(action, dtype=np.float64), reward)
         # Update per-episode accumulators
         self.episode_cum_reward += float(reward)
         self.episode_cum_objectives['progress'] += float(self.last_reward_components.get('progress', 0.0))
@@ -357,8 +418,6 @@ class SwarmEnv(gym.Env):
             self.last_objectives_matrix = z.copy()
             self.last_reward_components = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
             self.last_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
-            self.reward_components_history.append(self.last_reward_components.copy())
-            self.objectives_history.append(self.last_objectives.copy())
             return 0.0
 
         if self.v is None:
@@ -366,8 +425,6 @@ class SwarmEnv(gym.Env):
             self.last_objectives_matrix = z.copy()
             self.last_reward_components = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
             self.last_objectives = {'progress': 0.0, 'energy_efficiency': 0.0, 'smoothness': 0.0}
-            self.reward_components_history.append(self.last_reward_components.copy())
-            self.objectives_history.append(self.last_objectives.copy())
             return 0.0
 
         # --- Progress reward (piecewise on x position; rewards motion toward decreasing x) ---
@@ -445,8 +502,6 @@ class SwarmEnv(gym.Env):
             'energy_efficiency': float(np.mean(energy_unw)),
             'smoothness': float(np.mean(smooth_unw))
         }
-        self.reward_components_history.append(self.last_reward_components.copy())
-        self.objectives_history.append(self.last_objectives.copy())
         # Gym scalar: mean over agents of total weighted reward per agent
         total_reward = float(np.mean(np.sum(self.last_reward_matrix, axis=1)))
         return total_reward
@@ -791,7 +846,7 @@ def pcgrad_merge(model: nn.Module, losses: list[torch.Tensor]):
 def run_MOMAPPO(env, total_timesteps: int,
                 n_steps: int = 1024, batch_size: int = 256, update_epochs: int = 10,
                 gamma: float = 0.95, gae_lambda: float = 0.95, clip_coef: float = 0.2,
-                ent_coef: float = 0.0, vf_coef: float = 0.5, lr: float = 3e-4,
+                ent_coef: float = 0.01, vf_coef: float = 0.5, lr: float = 3e-4,
                 device: str = 'cuda' if torch.cuda.is_available() else 'cpu', open_tensorboard: bool = True,
                 resume: bool = True):
     """
@@ -868,7 +923,7 @@ def run_MOMAPPO(env, total_timesteps: int,
     # Track last done state for all environments
     last_dones = np.zeros(num_envs, dtype=np.float32)
     # For TensorBoard curves that can be compared directly to end-of-run plots
-    # (which use env.rewards and env.objectives_history from env_idx=0).
+    # (TensorBoard physical scalars from env0.)
     env0_cum_reward = 0.0
 
     for update in range(num_updates):
@@ -1148,8 +1203,6 @@ def run_MOMAPPO(env, total_timesteps: int,
                 env_folder = env.get_attr('folder')[env_idx]
                 sim_attr = env.get_attr('sim')[env_idx]
                 swarm_attr = env.get_attr('swarm')[env_idx]
-                rewards_attr = env.get_attr('rewards')[env_idx]
-                objectives_attr = env.get_attr('objectives_history')[env_idx]
                 pid_attr = env.get_attr('pid')[env_idx]
                 
                 run_dir = f"run/{env_folder}/MOMAPPO/{date_stamp}"
@@ -1157,9 +1210,10 @@ def run_MOMAPPO(env, total_timesteps: int,
                 
                 plot_save_locations(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
                 plot_save_velocities(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
+                plot_save_actions(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
                 plot_save_forces(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
-                plot_save_rewards(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", rewards=rewards_attr, sim=sim_attr)
-                plot_save_rewards_objectives(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, objective_history=objectives_attr)
+                plot_save_rewards(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr)
+                plot_save_rewards_objectives(folder_name=f"{env_folder}/MOMAPPO/{date_stamp}", sim=sim_attr, objective_weights=(9.0, 1.0, 1.0))
                 print(f"Saved plots for env {env_idx} (pid={pid_attr}) to {run_dir}")
             except Exception as e:
                 print(f"Warning: Failed to save plots for env {env_idx}: {e}")
@@ -1167,16 +1221,14 @@ def run_MOMAPPO(env, total_timesteps: int,
         folder = env.folder
         sim_attr = env.sim
         swarm_attr = env.swarm
-        rewards_attr = env.rewards
-        objectives_attr = getattr(env, 'objectives_history', [])
-
         run_dir = f"run/{folder}/MOMAPPO/{date_stamp}"
         os.makedirs(run_dir, exist_ok=True)
         plot_save_locations(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
         plot_save_velocities(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
+        plot_save_actions(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
         plot_save_forces(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, swarm=swarm_attr)
-        plot_save_rewards(folder_name=f"{folder}/MOMAPPO/{date_stamp}", rewards=rewards_attr, sim=sim_attr)
-        plot_save_rewards_objectives(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, objective_history=objectives_attr)
+        plot_save_rewards(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr)
+        plot_save_rewards_objectives(folder_name=f"{folder}/MOMAPPO/{date_stamp}", sim=sim_attr, objective_weights=(9.0, 1.0, 1.0))
 
     # Save checkpoints (timestamped and latest)
     ts_ckpt = f"{ckpt_dir}/model_{date_stamp}.pt"

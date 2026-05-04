@@ -234,14 +234,17 @@ def _plot_metric(
     if len(valid) == 1:
         axes = [axes]
     for ax, col in zip(axes, valid):
-        d = agg[col]
+        d = pd.DataFrame(agg[col])
+        d['mean_rolling'] = d['mean'].rolling(window=10, center=True).mean()
+        d['std_rolling'] = d['std'].rolling(window=10, center=True).mean()
         x = d['grid']
-        m = d['mean']
-        s = d['std']
+        m = d['mean_rolling']
+        s = d['std_rolling']
         c = _color_for(col)
 
         ax.fill_between(x, m - s, m + s, color=c, alpha=0.20, edgecolor='none', label='±1 SD across envs')
-        ax.step(x, m, where='post', color=c, linewidth=1.2, label='mean across envs')
+        ax.plot(x, m, color=c, linewidth=1.2, label='mean across envs')
+        # ax.step(x, m, where='post', color=c, linewidth=1.2, label='mean across envs')
         # pretty = _pretty(col) + (' / step' if ylabel_suffix == '/step' else '')
         pretty = _pretty(col)
         ax.set_title(pretty, fontweight='bold')

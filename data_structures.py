@@ -1,7 +1,11 @@
+from collections import deque
 from phi.flow import *
 from math import floor
 import phi.field as field
 import numpy as np
+
+# In-memory state history per member: RL only needs last 1–2 steps; cap to bound memory.
+_PREV_HISTORY_MAXLEN = 4
 
 
 class Member:
@@ -23,10 +27,10 @@ class Member:
     :type density: float
     :ivar mass: The mass of the member, calculated based on its radius and density.
     :type mass: float
-    :ivar previous_locations: A list of previous locations of the member.
-    :type previous_locations: list of dict
-    :ivar previous_velocities: A list of previous velocities of the member.
-    :type previous_velocities: list of dict
+    :ivar previous_locations: Rolling window of recent locations (``deque``, maxlen 4).
+    :type previous_locations: collections.deque
+    :ivar previous_velocities: Rolling window of recent velocities (``deque``, maxlen 4).
+    :type previous_velocities: collections.deque
     :ivar previous_forces: A list of previous forces applied on the member.
     :type previous_forces: list
     :ivar max_force: The maximum force that can be applied on the member.
@@ -44,9 +48,12 @@ class Member:
         self.radius = radius
         self.density = density
         self.mass = self.density * 4 / 3 * np.pi * radius ** 3
-        self.previous_locations = [self.location]
-        self.previous_velocities = [self.velocity]
-        self.previous_actions = [self.action]
+        loc0 = dict(self.location) if self.location is not None else {}
+        vel0 = dict(self.velocity) if self.velocity is not None else {}
+        act0 = dict(self.action) if self.action is not None else {}
+        self.previous_locations = deque((loc0,), maxlen=_PREV_HISTORY_MAXLEN)
+        self.previous_velocities = deque((vel0,), maxlen=_PREV_HISTORY_MAXLEN)
+        self.previous_actions = deque((act0,), maxlen=_PREV_HISTORY_MAXLEN)
         self.max_force = max_force
 
     def as_sphere(self):

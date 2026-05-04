@@ -46,8 +46,8 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--dt',
         type=float,
-        default=0.001,
-        help='Base simulation timestep dt in seconds (default: 0.001)',
+        default=0.01,
+        help='Base simulation timestep dt in seconds (default: 0.01)',
     )
     parser.add_argument(
         '--dt-substeps',
@@ -99,27 +99,27 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--inflow-velocity',
         type=float,
-        default=100,
-        help='Peak inflow centerline velocity in mm/s (default: 100)',
+        default=400,
+        help='Peak inflow centerline velocity in mm/s (default: 400)',
     )
 
     parser.add_argument(
         '--num-envs',
         type=int,
-        default=16,
-        help='Number of parallel environments (default: 16)',
+        default=8,
+        help='Number of parallel environments (default: 8)',
     )
     parser.add_argument(
         '--n-steps',
         type=int,
-        default=128,
-        help='Number of steps per environment (default: 128)',
+        default=64,
+        help='Number of steps per environment (default: 64)',
     )
     parser.add_argument(
         '--batch-size',
         type=int,
-        default=256,
-        help='Batch size (default: 256)',
+        default=16,
+        help='Batch size (default: 16)',
     )
     parser.add_argument(
         '--update-epochs',
@@ -148,8 +148,8 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--lr',
         type=float,
-        default=3e-4,
-        help='Learning rate (default: 3e-4)',
+        default=1e-4,
+        help='Learning rate (default: 1e-4)',
     )
     return parser
 

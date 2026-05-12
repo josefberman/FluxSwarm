@@ -32,6 +32,26 @@ except Exception:
     tqdm = None
 
 
+def _blend_preset_x_unit_disk(raw_action: torch.Tensor, relax_frac: float, preset_x: float = -1.0) -> torch.Tensor:
+    """
+    Map Gaussian samples onto the closed unit disk with a fading x preset.
+
+    For each raw sample ``(gx, gy)``, form ``u = (u_x, u_y)`` with
+    ``u_x = (1-r)·preset_x + r·gx`` and ``u_y = gy``, then normalize ``u``.
+    Default ``preset_x=-1``: at ``r=0``, strict maximal thrust in −x before norm.
+    ``r=1``: same as projecting ``(gx, gy)`` to the disk (current behavior).
+    """
+    r = float(max(0.0, min(1.0, relax_frac)))
+    px = float(preset_x)
+    gx = raw_action[..., 0]
+    gy = raw_action[..., 1]
+    ux = (1.0 - r) * px + r * gx
+    uy = gy
+    u = torch.stack((ux, uy), dim=-1)
+    norms = torch.linalg.norm(u, dim=-1, keepdim=True).clamp(min=1e-12)
+    return u / torch.maximum(norms, torch.ones_like(norms))
+
+
 class SwarmEnv(gym.Env):
     """
     SwarmEnv class for simulating robotic swarm behavior in fluid flow environments.
@@ -435,16 +455,19 @@ class SwarmEnv(gym.Env):
             progress_unw[:] = 1.0
         for idx, member in enumerate(self.swarm.members):
             x_t = float(member.location['x'])
+            x_0 = float(member.previous_locations[0]['x'])
             if len(member.previous_locations) >= 2:
                 x_prev = float(member.previous_locations[-2]['x'])
             else:
                 x_prev = x_t
-            if mean_x_now <= self.progress_x_success:
-                continue
-            elif x_t >= self.progress_x_failure:
+            if x_t >= self.progress_x_failure:
                 progress_unw[idx] = -1.0
             else:
-                progress_unw[idx] = (x_prev - x_t) / (self.progress_x_failure - self.progress_x_success) * 10 - 0.01
+                if x_t < x_0:
+                    progress_unw[idx] = (x_prev - x_t) / (self.progress_x_failure - self.progress_x_success) * 10 - 0.01
+                else:
+                    progress_unw[idx] = ((x_prev - x_t) / (self.progress_x_failure - self.progress_x_success))**3 * 10 - 0.01
+                
         r_prog_w = self.w_progress * progress_unw
 
         # --- Energy efficiency reward ---
@@ -848,11 +871,18 @@ def run_MOMAPPO(env, total_timesteps: int,
                 gamma: float = 0.95, gae_lambda: float = 0.95, clip_coef: float = 0.2,
                 ent_coef: float = 0.01, vf_coef: float = 0.5, lr: float = 3e-4,
                 device: str = 'cuda' if torch.cuda.is_available() else 'cpu', open_tensorboard: bool = True,
-                resume: bool = True):
+                resume: bool = True,
+                use_action_x_prior: bool = True,
+                action_x_prior_warmup_fraction: float = 0.25):
     """
     Multi-objective MAPPO (CTDE): shared decentralized actor π(a_i|o_i), centralized
     critics V_i^k(s_joint), per-member reward_matrix (N,3), PCGrad on three policy objectives.
     Supports multiple parallel environments.
+
+    If ``use_action_x_prior`` is True, actions use a blend toward the unit disk: early rollout
+    rows use preset ``x = -1`` with the sampled ``y``, then normalize; relax
+    ``r ∈ [0,1]`` reaches 1 after the first ``action_x_prior_warmup_fraction`` of the total
+    rollout row count ``num_updates * n_steps`` (same timeline as MOMAPPO's batched rollout).
     """
     dev = torch.device(device)
     is_vec = isinstance(env, VecEnv)
@@ -910,9 +940,22 @@ def run_MOMAPPO(env, total_timesteps: int,
             print(f"Warning: failed to load checkpoint {latest_ckpt}: {e}")
 
     # Adjust total timesteps for parallel envs
-    effective_total_timesteps = int(total_timesteps)
+    effective_total_timesteps = int(total_timesteps*num_envs)
     num_updates = max(1, int(math.ceil(effective_total_timesteps / float(n_steps))))
+    prior_w_frac = float(max(0.0, min(1.0, action_x_prior_warmup_fraction)))
+    prior_warmup_rows = effective_total_timesteps * prior_w_frac
     step_count = 0
+    if not use_action_x_prior:
+        print("[MOMAPPO] Action-x prior: disabled (full Gaussian-disk map from rollout 0)")
+    elif prior_warmup_rows < 1e-9:
+        print("[MOMAPPO] Action-x prior: enabled; warmup fraction 0 → relaxed from first rollout row.")
+    else:
+        nr = num_updates * n_steps
+        print(
+            f"[MOMAPPO] Action-x prior: relax 0→1 over first {prior_w_frac * 100:.1f}% of rollout "
+            f"(~{prior_warmup_rows:.0f} / {nr} rows at n_steps={n_steps}); "
+            f"preset x=-1 + sampled y, then ‖·‖ normalize."
+        )
 
     # Create progress bar tracking timesteps
     if tqdm is not None:
@@ -927,10 +970,6 @@ def run_MOMAPPO(env, total_timesteps: int,
     env0_cum_reward = 0.0
 
     for update in range(num_updates):
-        # Linear LR decay: lr → 0 over the course of training
-        frac = 1.0 - update / max(num_updates, 1)
-        for pg in optimizer.param_groups:
-            pg['lr'] = lr * frac
 
         buffer = RolloutBufferMO(
             n_steps * num_envs, num_members, obs_local_dim, dev,
@@ -941,6 +980,11 @@ def run_MOMAPPO(env, total_timesteps: int,
         rollout_obj_smooth = []
 
         for t in range(n_steps):
+            rollout_row_index = float(update * n_steps + t)
+            if (not use_action_x_prior) or prior_warmup_rows < 1e-9:
+                prior_relax = 1.0
+            else:
+                prior_relax = min(1.0, (rollout_row_index + 1.0) / prior_warmup_rows)
             # Sample actions for ALL environments in parallel
             actions_all = []
             logprobs_all = []
@@ -963,10 +1007,9 @@ def run_MOMAPPO(env, total_timesteps: int,
                 with torch.no_grad():
                     mu, std = model(obs_actor.unsqueeze(0))
                     dist = Normal(mu, std)
-                    action = dist.sample()[0]
-                    # Per-member L2: map (action_x, action_y) into the closed unit disk
-                    norms = torch.linalg.norm(action, dim=-1, keepdim=True).clamp(min=1e-12)
-                    action = action / torch.maximum(norms, torch.ones_like(norms))
+                    raw = dist.sample()[0]
+                    # Per-member L2: unit disk; optional warmup blends preset x=-1 with sampled y before norm
+                    action = _blend_preset_x_unit_disk(raw, prior_relax)
                     logprob = dist.log_prob(action).sum()
                     val_progress, val_energy, val_smooth = model.values(obs_joint.unsqueeze(0))
 
@@ -1048,6 +1091,7 @@ def run_MOMAPPO(env, total_timesteps: int,
                 writer.add_scalar('physical/env0/velocity_y', float(env.get_attr('swarm')[0].members[0].previous_velocities[-1]['y']), step_count)
                 writer.add_scalar('physical/env0/action_x', float(env.get_attr('swarm')[0].members[0].previous_actions[-1]['x']), step_count)
                 writer.add_scalar('physical/env0/action_y', float(env.get_attr('swarm')[0].members[0].previous_actions[-1]['y']), step_count)
+                writer.add_scalar('training/action_x_prior_relax', float(prior_relax), step_count)
                 # if rm_env0 is not None and rm_env0.shape[0] == num_members:
                 #     for mi in range(num_members):
                 #         writer.add_scalar(

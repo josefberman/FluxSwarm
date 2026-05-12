@@ -46,8 +46,8 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--dt',
         type=float,
-        default=0.01,
-        help='Base simulation timestep dt in seconds (default: 0.01)',
+        default=0.005,
+        help='Base simulation timestep dt in seconds (default: 0.001)',
     )
     parser.add_argument(
         '--dt-substeps',
@@ -148,9 +148,30 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--lr',
         type=float,
-        default=1e-4,
+        default=1e-3,
         help='Learning rate (default: 1e-4)',
     )
+    parser.add_argument(
+        '--no-action-x-prior',
+        dest='use_action_x_prior',
+        action='store_false',
+        help=(
+            'Disable the x=-1 action prior (full Gaussian-disk map from the first rollout row). '
+            'The prior is enabled by default.'
+        ),
+    )
+    parser.add_argument(
+        '--action-x-prior-warmup-fraction',
+        type=float,
+        default=0.5,
+        metavar='F',
+        help=(
+            'With the prior enabled, relax it linearly over this fraction of total rollout rows '
+            '(rows ≈ ceil(total_timesteps/n_steps)×n_steps). After that the map is fully relaxed. '
+            'Default: 0.5. Use 0 for no ramp (fully relaxed from row 0).'
+        ),
+    )
+    parser.set_defaults(use_action_x_prior=True)
     return parser
 
 

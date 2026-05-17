@@ -44,16 +44,16 @@ def beat_waveform(t: float, amplitude: float):
     #     return v_dia
     tau = 1
     t_cycle = 1/tau
-    t = t % t_cycle
+    inner_t = (t+0.5) % t_cycle
     # if 0<=t<0.15:
     #     return -177.77 * amplitude * t * (t-0.15)  # parabola with positive peak at (0.075,100)
     # elif 0.15<=t<0.25:
     #     return 8.00 * amplitude * (t-0.15) * (t-0.25)  # parabola with negative peak at (0.2,-2)
     # else:
     #     return 0.32 * amplitude * (t-0.25) * (1-t)**6.5  # t-shifted beta distribution with positive peak at (0.35,2)
-    return amplitude * exp(-((t-0.14)**2)/(2*0.04**2)) \
-        - 0.1*amplitude * exp(-((t-0.32)**2)/(2*0.035**2)) \
-        + 0.05*amplitude * exp(-((t-0.45)**2)/(2*0.05**2))
+    return amplitude * exp(-((inner_t-0.14)**2)/(2*0.04**2)) \
+        - 0.1*amplitude * exp(-((inner_t-0.32)**2)/(2*0.035**2)) \
+        + 0.05*amplitude * exp(-((inner_t-0.45)**2)/(2*0.05**2))
 
 
 def S(x: float):

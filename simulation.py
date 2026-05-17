@@ -148,6 +148,9 @@ def step(v: Field, p: Field, inflow: Inflow, sim: Simulation, swarm: Swarm, flui
 
     #-----------------------------------------------
 
+    if t<=0.005:
+        force_actions = np.array([[-1.0, 0.0] for _ in range(len(swarm.members))], dtype=np.float64) # ensure initial position is left of the domain
+
     norms = np.linalg.norm(force_actions, axis=1, keepdims=True)
     over_unit = (norms > 1.0).squeeze(1)
     force_actions[over_unit] = force_actions[over_unit] / norms[over_unit]

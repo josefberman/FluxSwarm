@@ -452,21 +452,21 @@ class SwarmEnv(gym.Env):
         xs_now = np.array([float(member.location['x']) for member in self.swarm.members], dtype=np.float64)
         mean_x_now = float(np.mean(xs_now))
         if mean_x_now <= self.progress_x_success:
-            progress_unw[:] = 1.0
+            progress_unw[:] = 10.0
         for idx, member in enumerate(self.swarm.members):
             x_t = float(member.location['x'])
-            x_0 = float(member.previous_locations[0]['x'])
+            # x_0 = float(member.previous_locations[0]['x'])
             if len(member.previous_locations) >= 2:
                 x_prev = float(member.previous_locations[-2]['x'])
             else:
                 x_prev = x_t
             if x_t >= self.progress_x_failure:
-                progress_unw[idx] = -1.0
+                progress_unw[idx] = -10.0
             else:
-                if x_t < x_0:
-                    progress_unw[idx] = (x_prev - x_t) / (self.progress_x_failure - self.progress_x_success) * 10 - 0.01
+                if x_t < x_prev:
+                    progress_unw[idx] = np.tanh(3*(x_prev - x_t) / (self.progress_x_failure - self.progress_x_success)) / np.tanh(3) * 100 - 0.1
                 else:
-                    progress_unw[idx] = ((x_prev - x_t) / (self.progress_x_failure - self.progress_x_success))**3 * 10 - 0.01
+                    progress_unw[idx] = ((x_prev - x_t) / (self.progress_x_failure - self.progress_x_success)) * 100 - 0.1
                 
         r_prog_w = self.w_progress * progress_unw
 
@@ -772,7 +772,9 @@ class RolloutBufferMO:
         val_flat = self.val_progress[:ptr].view(T, E, N)
         rew = self.rew_progress[:ptr].view(T, E, N)
         adv, ret = self._gae_one_objective(rew, val_flat, last_vp, last_done, gamma, lam)
-        self.adv_progress[:ptr] = norm(adv)
+        # Keep raw GAE for progress so weighted reward scale (e.g. w_progress) drives PPO magnitude;
+        # energy/smooth still z-score per rollout below.
+        self.adv_progress[:ptr] = adv
         self.ret_progress[:ptr] = ret
 
         val_flat = self.val_energy[:ptr].view(T, E, N)
@@ -871,6 +873,7 @@ def run_MOMAPPO(env, total_timesteps: int,
                 gamma: float = 0.95, gae_lambda: float = 0.95, clip_coef: float = 0.2,
                 ent_coef: float = 0.01, vf_coef: float = 0.5, lr: float = 3e-4,
                 device: str = 'cuda' if torch.cuda.is_available() else 'cpu', open_tensorboard: bool = True,
+                tensorboard_port: int = 6006,
                 resume: bool = True,
                 use_action_x_prior: bool = True,
                 action_x_prior_warmup_fraction: float = 0.25):
@@ -914,12 +917,16 @@ def run_MOMAPPO(env, total_timesteps: int,
     # Try to open TensorBoard server
     if open_tensorboard:
         try:
+            tb_port = int(tensorboard_port)
             tb_proc = subprocess.Popen([
-                "tensorboard", "--logdir", tb_root_log_dir, "--port", "6006", "--host", "127.0.0.1"
+                "tensorboard", "--logdir", tb_root_log_dir, "--port", str(tb_port), "--host", "127.0.0.1"
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"TensorBoard: http://127.0.0.1:6006 (logdir {tb_root_log_dir})")
+            print(f"TensorBoard: http://127.0.0.1:{tb_port} (logdir {tb_root_log_dir})")
         except Exception as e:
-            print(f"Could not launch TensorBoard automatically: {e}. You can run: tensorboard --logdir {tb_root_log_dir}")
+            print(
+                f"Could not launch TensorBoard automatically: {e}. You can run: "
+                f"tensorboard --logdir {tb_root_log_dir} --port {tensorboard_port} --host 127.0.0.1"
+            )
     num_members = int(env.action_space.shape[0])
     obs_local_dim = int(env.observation_space.shape[1])
     model = ActorCriticMO(num_members, obs_local_dim).to(dev)

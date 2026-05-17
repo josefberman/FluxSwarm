@@ -59,15 +59,18 @@ def main():
     output_base = f"{latest_folder}/animation"
     
     # Pass directory directly to animate_locations.py (it can handle it now)
+    forces_csv = os.path.join(os.path.dirname(locations_csv), "forces.csv")
+    forces_clause = ""
+    if os.path.isfile(forces_csv):
+        forces_clause = f' --forces "{forces_csv}"'
     cmd = (
         f'python animate_locations.py '
-        f'--csv "{locations_csv}" '
+        f'--locations "{locations_csv}" '
         f'--output "{output_base}.mp4" '
         f'--fields "{fields_dir}" '
         f'--length_x {args.length_x} '
         f'--length_y {args.length_y} '
-        f'--radius {args.radius} '
-        f'--subsample {args.subsample}'
+        f'--radius {args.radius}{forces_clause}'
     )
     
     print(f"\nRunning command:\n{cmd}\n")

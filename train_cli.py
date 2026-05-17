@@ -112,13 +112,13 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--n-steps',
         type=int,
-        default=64,
+        default=16,
         help='Number of steps per environment (default: 64)',
     )
     parser.add_argument(
         '--batch-size',
         type=int,
-        default=16,
+        default=4,
         help='Batch size (default: 16)',
     )
     parser.add_argument(
@@ -163,13 +163,20 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--action-x-prior-warmup-fraction',
         type=float,
-        default=0.5,
+        default=0.2,
         metavar='F',
         help=(
             'With the prior enabled, relax it linearly over this fraction of total rollout rows '
             '(rows ≈ ceil(total_timesteps/n_steps)×n_steps). After that the map is fully relaxed. '
             'Default: 0.5. Use 0 for no ramp (fully relaxed from row 0).'
         ),
+    )
+    parser.add_argument(
+        '--tensorboard-port',
+        type=int,
+        default=6006,
+        metavar='PORT',
+        help='Port for automatically launched TensorBoard (default: 6006); use distinct ports per concurrent run.',
     )
     parser.set_defaults(use_action_x_prior=True)
     return parser

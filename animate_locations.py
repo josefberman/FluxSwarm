@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import re
 from typing import List, Optional, Tuple
@@ -9,7 +10,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, FancyArrowPatch
 import shutil
 import matplotlib as mpl
 ffmpeg_path = shutil.which("ffmpeg")
@@ -25,11 +26,20 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create an MP4 animation of swarm member trajectories from a locations CSV."
     )
-    parser.add_argument("--csv", required=True, help="Path to locations CSV (columns timestep, location_i_x, location_i_y, …)")
+    parser.add_argument(
+        "--locations",
+        required=True,
+        help="Path to locations CSV (timestep, location_i_x, location_i_y, …)",
+    )
+    parser.add_argument(
+        "--forces",
+        default=None,
+        help="Optional path to forces.csv (timestep, force_i_x, force_i_y); must align with locations rows. Draws force direction arrows.",
+    )
     parser.add_argument(
         "--output",
         default=None,
-        help="Output MP4 path (default: same directory as --csv, basename matches the CSV stem; multi-field adds _vx/_vy/_p before .mp4)",
+        help="Output MP4 path (default: same directory as --locations; multi-field adds _vx/_vy/_p before .mp4)",
     )
     parser.add_argument("--fps", type=int, default=24, help="Frames per second for the animation (default: 24)")
     parser.add_argument(
@@ -67,6 +77,16 @@ def read_locations(csv_path: str) -> pd.DataFrame:
     # Locations are recorded after the physics step, so they correspond to
     # the *end* of timestep t, while the field snapshot is from the *start*;
     # shifting by one frame re-aligns them.
+    if len(df) > 1:
+        df = df.iloc[1:].reset_index(drop=True)
+    return df
+
+
+def read_forces(csv_path: str) -> pd.DataFrame:
+    """Same row trim as locations so forces stay frame-aligned."""
+    df = pd.read_csv(csv_path)
+    if "timestep" in df.columns:
+        df = df.sort_values("timestep").reset_index(drop=True)
     if len(df) > 1:
         df = df.iloc[1:].reset_index(drop=True)
     return df
@@ -191,6 +211,7 @@ def create_animation(
     length_y: float,
     fields_data: dict = None,
     field_type: str = None,
+    forces_df: Optional[pd.DataFrame] = None,
 ) -> None:
     member_ids = extract_member_ids(df)
     if not member_ids:
@@ -202,45 +223,27 @@ def create_animation(
     x_min, x_max = 0.0, length_x
     y_min, y_max = 0.0, length_y
 
-    # Calculate proper figure size to match simulation dimensions
-    # Cap dimensions to prevent FFmpeg errors (max ~2000 pixels per dimension)
+    # Figure size: wide enough for the x-domain; axes aspect below makes y/x display 4:1.
     target_max_pixels = 2000
-    aspect_ratio = length_x / length_y
-    
-    # Start with reasonable figure size - cap width to prevent extreme aspect ratios
-    fig_height = 4.0
-    max_fig_width = 10.0  # Cap figure width to 10 inches
-    fig_width = min(fig_height * aspect_ratio, max_fig_width)
-    
-    # Calculate DPI to keep pixel dimensions within target_max_pixels
-    # Calculate what DPI would give us the target max pixels for the larger dimension
+    fig_width = 12.0
+    fig_height = max(fig_width * (length_y / length_x) * 4.0, 3.0)
     max_fig_dim = max(fig_width, fig_height)
     dpi = int(target_max_pixels / max_fig_dim)
-    dpi = max(50, min(dpi, 300))  # Clamp DPI between 50 and 300
-    
-    # Verify final pixel dimensions
+    dpi = max(50, min(dpi, 300))
     final_pixel_width = fig_width * dpi
     final_pixel_height = fig_height * dpi
-    
     if final_pixel_width > target_max_pixels or final_pixel_height > target_max_pixels:
-        # Further scale down if needed
         scale = min(target_max_pixels / final_pixel_width, target_max_pixels / final_pixel_height)
         fig_width *= scale
         fig_height *= scale
-    
+
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    ax.set_aspect('equal', adjustable='box')  # Equal aspect ratio for mm units
+    # Visual y/x scale 4:1 (y data unit draws 4× the length of one x unit); not 1:1 "equal".
+    ax.set_aspect(4.0, adjustable="box")
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
     ax.set_xlabel("X [mm]")
     ax.set_ylabel("Y [mm]")
-    
-    # Set title based on field type
-    if field_type:
-        field_names = {'vx': 'X-Velocity', 'vy': 'Y-Velocity', 'p': 'Pressure'}
-        ax.set_title(f"Swarm Motion - {field_names.get(field_type, field_type)} Field")
-    else:
-        ax.set_title("Swarm Motion")
     ax.grid(False)
     
     # Setup field background if provided
@@ -259,13 +262,13 @@ def create_animation(
             cmap='bwr',
             vmin=-max(abs(vmin), abs(vmax)),
             vmax=max(abs(vmin), abs(vmax)),
-            aspect='auto',
+            aspect="auto",
             zorder=0,
             interpolation='bilinear'
         )
-        # Horizontal colorbar below axes — pad + tight_layout rect avoid overlap with x-axis label
+        # Horizontal colorbar below axes — extra pad + ample bottom rect so xlabel stays above colorbar.
         colorbar = fig.colorbar(
-            field_img, ax=ax, orientation='horizontal', pad=0.18, shrink=0.85, aspect=28
+            field_img, ax=ax, orientation='horizontal', pad=0.26, shrink=0.85, aspect=28
         )
         colorbar_labels = {
             'vx': 'Velocity X [mm/s]',
@@ -274,15 +277,19 @@ def create_animation(
         }
         colorbar.set_label(colorbar_labels.get(field_type, field_type))
 
-    # Timestep overlay (updated each frame)
-    time_text = ax.text(0.02, 0.95, "", transform=ax.transAxes, ha='left', va='top')
-
     colors = build_colors(len(member_ids))
     circles: List[Circle] = []
     for idx, mid in enumerate(member_ids):
         x0 = float(df[f"location_{mid}_x"].iloc[0])
         y0 = float(df[f"location_{mid}_y"].iloc[0])
-        circ = Circle((x0, y0), radius=radius, color=colors[idx])
+        circ = Circle(
+            (x0, y0),
+            radius=radius,
+            facecolor=colors[idx],
+            edgecolor='black',
+            linewidth=0.35,
+            zorder=5,
+        )
         ax.add_patch(circ)
         circles.append(circ)
 
@@ -303,6 +310,58 @@ def create_animation(
     )
     ax.add_patch(com_circle)
 
+    arrows: List[FancyArrowPatch] = []
+    if forces_df is not None:
+        for mid in member_ids:
+            cols = (f"force_{mid}_x", f"force_{mid}_y")
+            if cols[0] not in forces_df.columns or cols[1] not in forces_df.columns:
+                raise ValueError(f"Forces CSV must include columns {cols[0]} and {cols[1]}.")
+
+        base_arrow_mm = max(radius * 2.25, length_y * 0.06, length_x * 0.015)
+        force_mag_max = 0.0
+        for i in range(len(forces_df)):
+            for mid in member_ids:
+                fx_i = float(forces_df[f"force_{mid}_x"].iloc[i])
+                fy_i = float(forces_df[f"force_{mid}_y"].iloc[i])
+                force_mag_max = max(force_mag_max, math.hypot(fx_i, fy_i))
+        force_mag_max = float(max(force_mag_max, 1e-30))
+
+        def arrow_length_mm(mag: float) -> float:
+            return base_arrow_mm * (mag / force_mag_max)
+
+        for mid in member_ids:
+            x0 = float(df[f"location_{mid}_x"].iloc[0])
+            y0 = float(df[f"location_{mid}_y"].iloc[0])
+            fx0 = float(forces_df[f"force_{mid}_x"].iloc[0])
+            fy0 = float(forces_df[f"force_{mid}_y"].iloc[0])
+            m0 = math.hypot(fx0, fy0)
+            L0 = arrow_length_mm(m0)
+            if m0 < 1.0:
+                p0, p1 = (x0, y0), (x0, y0)
+                hide0 = True
+            else:
+                hide0 = False
+                if L0 <= 0:
+                    p0, p1 = (x0, y0), (x0, y0)
+                else:
+                    p0 = (x0, y0)
+                    p1 = (x0 + (fx0 / m0) * L0, y0 + (fy0 / m0) * L0)
+            arr = FancyArrowPatch(
+                p0,
+                p1,
+                arrowstyle="-|>",
+                mutation_scale=4.2,
+                mutation_aspect=0.32,
+                linewidth=0.4,
+                edgecolor="black",
+                facecolor="black",
+                zorder=6,
+                clip_on=True,
+                visible=not hide0,
+            )
+            ax.add_patch(arr)
+            arrows.append(arr)
+
     def update(frame_idx: int):
         # Update field background if present — fields_data is already aligned to df rows
         artists = []
@@ -312,12 +371,19 @@ def create_animation(
             if frame_idx < len(field_array):
                 field_img.set_data(field_array[frame_idx].T)
                 artists.append(field_img)
-        
+
+        # With a field overlay, members (and arrows) lag by one CSV row vs the field shown.
+        swarm_frame = (
+            max(0, frame_idx - 1)
+            if field_img is not None and fields_data is not None
+            else frame_idx
+        )
+
         xs = []
         ys = []
         for circ, mid in zip(circles, member_ids):
-            x = float(df[f"location_{mid}_x"].iloc[frame_idx])
-            y = float(df[f"location_{mid}_y"].iloc[frame_idx])
+            x = float(df[f"location_{mid}_x"].iloc[swarm_frame])
+            y = float(df[f"location_{mid}_y"].iloc[swarm_frame])
             circ.center = (x, y)
             xs.append(x)
             ys.append(y)
@@ -325,20 +391,32 @@ def create_animation(
         com_x = np.mean(xs)
         com_y = np.mean(ys)
         com_circle.center = (com_x, com_y)
-        # Update timestep text
-        if "timestep" in df.columns:
-            t = float(df["timestep"].iloc[frame_idx])
-            time_text.set_text(f"t = {t:.2f} s")
-        else:
-            time_text.set_text(f"t = {frame_idx * 0.05:.2f} s")
-        
-        return [*artists, *circles, com_circle, time_text]
+        out_art = [*artists, *circles, com_circle]
+        if arrows:
+            for arr, mid in zip(arrows, member_ids):
+                x = float(df[f"location_{mid}_x"].iloc[swarm_frame])
+                y = float(df[f"location_{mid}_y"].iloc[swarm_frame])
+                fx = float(forces_df[f"force_{mid}_x"].iloc[swarm_frame])
+                fy = float(forces_df[f"force_{mid}_y"].iloc[swarm_frame])
+                m = math.hypot(fx, fy)
+                if m < 1.0:
+                    arr.set_visible(False)
+                else:
+                    L = arrow_length_mm(m)
+                    arr.set_visible(True)
+                    if L <= 0:
+                        arr.set_positions((x, y), (x, y))
+                    else:
+                        ux, uy = fx / m, fy / m
+                        arr.set_positions((x, y), (x + ux * L, y + uy * L))
+                out_art.append(arr)
+        return out_art
 
     fps_used = max(1, int(fps))
     frame_interval_ms = max(1, int(1000 / fps_used))
     print(f"  Animation: {n_frames} frames at {fps_used} fps (interval {frame_interval_ms} ms)")
     if colorbar is not None:
-        fig.tight_layout(rect=(0, 0.12, 1, 1))
+        fig.tight_layout(rect=(0, 0.22, 1, 1))
     else:
         fig.tight_layout()
     ani = animation.FuncAnimation(
@@ -358,18 +436,23 @@ def create_animation(
     plt.close(fig)
 
 
-def _output_base(csv_path: str, output_override: Optional[str]) -> str:
-    """Base path for MP4(s): same directory as CSV when output is omitted; strip extension if override is a file path."""
+def _output_base(locations_path: str, output_override: Optional[str]) -> str:
+    """Base path for MP4(s): same directory as locations when output is omitted."""
     if output_override is None:
-        return os.path.splitext(os.path.abspath(csv_path))[0]
+        return os.path.splitext(os.path.abspath(locations_path))[0]
     base = output_override.rsplit(".", 1)[0] if "." in os.path.basename(output_override) else output_override
     return os.path.abspath(base)
 
 
 def main() -> None:
     args = parse_args()
-    df = read_locations(args.csv)
-    out_base = _output_base(args.csv, args.output)
+    df = read_locations(args.locations)
+    forces_df = read_forces(args.forces) if args.forces else None
+    if forces_df is not None and len(forces_df) != len(df):
+        raise ValueError(
+            f"forces row count ({len(forces_df)}) must match locations ({len(df)}) after alignment trim."
+        )
+    out_base = _output_base(args.locations, args.output)
 
     # Gather the actual simulation timestamps we'll be animating
     if "timestep" in df.columns:
@@ -407,6 +490,7 @@ def main() -> None:
                 length_y=args.length_y,
                 fields_data=fields_data,
                 field_type=field_type,
+                forces_df=forces_df,
             )
     else:
         output_path = f"{out_base}.mp4"
@@ -420,6 +504,7 @@ def main() -> None:
             length_y=args.length_y,
             fields_data=fields_data,
             field_type=args.field_type,
+            forces_df=forces_df,
         )
 
 

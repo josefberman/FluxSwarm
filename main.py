@@ -98,7 +98,8 @@ def main(args):
     run_MOMAPPO(env, sim.time_steps, n_steps=args.n_steps, batch_size=args.batch_size, update_epochs=args.update_epochs, 
                 ent_coef=args.ent_coef, clip_coef=args.clip_coef, gamma=args.gamma, lr=args.lr,
                 use_action_x_prior=args.use_action_x_prior,
-                action_x_prior_warmup_fraction=args.action_x_prior_warmup_fraction)
+                action_x_prior_warmup_fraction=args.action_x_prior_warmup_fraction,
+                tensorboard_port=args.tensorboard_port)
     
     # Log hyperparameters for reproducibility
     log_hyperparameters(folder_name, 
@@ -107,7 +108,8 @@ def main(args):
                        gae_lambda=0.95, vf_coef=0.5, total_timesteps=sim.time_steps,
                        num_envs=args.num_envs, log_std_init=-1.0,
                        use_action_x_prior=args.use_action_x_prior,
-                       action_x_prior_warmup_fraction=args.action_x_prior_warmup_fraction)
+                       action_x_prior_warmup_fraction=args.action_x_prior_warmup_fraction,
+                       tensorboard_port=args.tensorboard_port)
 
 
 

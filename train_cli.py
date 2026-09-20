@@ -78,13 +78,13 @@ def build_training_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--swarm-num-x',
         type=int,
-        default=8,
+        default=4,
         help='Number of swarm members along the x-direction (default: 5)',
     )
     parser.add_argument(
         '--swarm-num-y',
         type=int,
-        default=2,
+        default=4,
         help='Number of swarm members along the y-direction (default: 3)',
     )
     parser.add_argument(

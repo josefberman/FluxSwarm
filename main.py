@@ -34,13 +34,14 @@ def main(args):
         total_time=args.total_time,
         substeps=int(args.inflow_velocity * args.dt / 0.1), 
     )
+    gap_between_members = (sim.length_y-2*args.swarm_num_y*args.member_radius)/(args.swarm_num_y+1)
     swarm = Swarm(
         num_x=args.swarm_num_x,
         num_y=args.swarm_num_y,
-        left_location=50-0.33/2-(0.5+0.33)*3-0.25,
-        bottom_location=0.33+0.25,
-        member_interval_x=0.33+0.25+0.25,
-        member_interval_y=0.33+0.25+0.25,
+        left_location=sim.length_x/2-(2*(args.swarm_num_x-1)*args.member_radius+(args.swarm_num_x-1)*gap_between_members)/2,
+        bottom_location=gap_between_members+args.member_radius,
+        member_interval_x=gap_between_members,
+        member_interval_y=gap_between_members,
         member_radius=args.member_radius,
         member_density=15.12, # density of FePt (L1_0) alloy
         member_max_force=args.swarm_max_force,

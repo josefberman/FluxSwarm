@@ -87,7 +87,6 @@ class ObsConfig:
     ring_points: int = 8
     ring_radius_factor: float = 3.0
     history: int = 4
-    neighbor_k: int = 3
     neighbor_radius: float = 2.0
     velocity_frame: Literal["fluid", "lab"] = "fluid"
     imu_bias: float = 1.0
@@ -196,7 +195,6 @@ def _apply_cli_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "obs_ring_points": ("obs", "ring_points"),
         "obs_history": ("obs", "history"),
         "neighbor_radius": ("obs", "neighbor_radius"),
-        "neighbor_k": ("obs", "neighbor_k"),
         "velocity_frame": ("obs", "velocity_frame"),
         "imu_bias": ("obs", "imu_bias"),
         "imu_noise": ("obs", "imu_noise"),
@@ -303,8 +301,15 @@ def build_argparser(description: str | None = None) -> argparse.ArgumentParser:
     )
     g.add_argument("--obs-ring-points", type=int, default=None, help=f"pressure/velocity ring samples ({d.obs.ring_points})")
     g.add_argument("--obs-history", type=int, default=None, help=f"stacked observation frames ({d.obs.history})")
-    g.add_argument("--neighbor-radius", type=float, default=None, help=f"neighbor sensing radius, mm ({d.obs.neighbor_radius})")
-    g.add_argument("--neighbor-k", type=int, default=None, help=f"k nearest neighbors ({d.obs.neighbor_k})")
+    g.add_argument(
+        "--neighbor-radius",
+        type=float,
+        default=None,
+        help=(
+            f"neighbor sensing radius, mm; k is always the swarm size so this is "
+            f"the only neighbor cutoff ({d.obs.neighbor_radius})"
+        ),
+    )
     g.add_argument(
         "--velocity-frame",
         choices=["fluid", "lab"],

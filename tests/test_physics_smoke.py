@@ -22,7 +22,6 @@ def tiny_cfg():
     cfg.obs.preset = "rich"
     cfg.obs.history = 2
     cfg.obs.ring_points = 4
-    cfg.obs.neighbor_k = 1
     cfg.train.device = "cuda" if torch.cuda.is_available() else "cpu"
     return cfg
 

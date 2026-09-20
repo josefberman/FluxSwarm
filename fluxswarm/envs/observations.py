@@ -14,7 +14,7 @@ def obs_dim(cfg: ObsConfig, num_members: int) -> int:
     if cfg.preset == "legacy":
         return 8
     k = cfg.ring_points
-    base = 2 + k + 2 * k + cfg.neighbor_k * 4 + 2
+    base = 2 + k + 2 * k + num_members * 4 + 2
     if cfg.localization == "none":
         loc = 0
     elif cfg.localization == "absolute-y":
@@ -95,7 +95,7 @@ class ObservationBuilder:
         ring_v = vv - vel[..., 1:2]
         ring_rel = torch.stack([ring_u, ring_v], dim=-1).reshape(B, N, 2 * k)
 
-        neigh = self._neighbors(pos, vel, cfg.neighbor_k, cfg.neighbor_radius)
+        neigh = self._neighbors(pos, vel, N, cfg.neighbor_radius)
         prev_a = solver.swarm.prev_action
         parts = [own_vel, pr, ring_rel, neigh, prev_a]
 
@@ -127,8 +127,11 @@ class ObservationBuilder:
         dist = torch.linalg.norm(rel, dim=-1)
         eye = torch.eye(N, device=pos.device, dtype=torch.bool).unsqueeze(0)
         dist = dist.masked_fill(eye, float("inf"))
-        knn_dist, knn_idx = dist.topk(min(k, N - 1), dim=-1, largest=False)
-        # Pad if N-1 < k
+        k_take = min(k, max(N - 1, 0))
+        if k_take == 0:
+            return torch.zeros(B, N, k * 4, device=pos.device, dtype=pos.dtype)
+        knn_dist, knn_idx = dist.topk(k_take, dim=-1, largest=False)
+        # Pad if N-1 < k (self is excluded, so k == N leaves one masked slot)
         if knn_idx.shape[-1] < k:
             pad = k - knn_idx.shape[-1]
             knn_idx = torch.cat([knn_idx, knn_idx[..., :1].expand(*knn_idx.shape[:-1], pad)], dim=-1)

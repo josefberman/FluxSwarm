@@ -63,8 +63,8 @@ def test_obs_dim_no_position_in_rich_none():
     cfg.preset = "rich"
     cfg.localization = "none"
     d = obs_dim(cfg, 16)
-    # Should not include absolute x,y
-    assert d == 2 + cfg.ring_points + 2 * cfg.ring_points + cfg.neighbor_k * 4 + 2
+    # Should not include absolute x,y; neighbor slots = swarm size
+    assert d == 2 + cfg.ring_points + 2 * cfg.ring_points + 16 * 4 + 2
     assert obs_dim_stacked(cfg, 16) == d * cfg.history
 
 

@@ -5,7 +5,7 @@ Physics-informed multi-objective multi-agent RL for controlling a microrobot swa
 ## Highlights
 
 - **Batched PhiFlow solver** — all environments share one process and a GPU batch dimension (no `SubprocVecEnv` CUDA contention).
-- **Two-way fluid–swarm coupling** by default (`--coupling one-way` for faster runs).
+- **One-way coupling** by default (`--coupling two-way` for obstacle-in-Poisson coupling; much slower).
 - **MOMAPPO** — CTDE multi-objective PPO (progress, energy, smoothness) with corrected tanh-Gaussian log-probs, per-agent ratios, and actor-only PCGrad.
 - **Position-blind local observations** with an observability ladder (`--obs-localization`).
 - **Baselines**: brute-upstream, brute-wall, and standard single-objective PPO.
@@ -23,7 +23,7 @@ pip install -e .
 ```bash
 python -m fluxswarm.cli train \
   --batch-envs 64 \
-  --coupling two-way \
+  --coupling one-way \
   --total-timesteps-per-env 25000 \
   --obs-localization none \
   --progress-reward potential \
@@ -51,7 +51,7 @@ Single-run figures land in `runs_new/<run_id>/figures/`. Comparisons go to `runs
 
 | Flag | Meaning |
 |------|---------|
-| `--coupling {two-way,one-way}` | Obstacle coupling in pressure solve |
+| `--coupling {one-way,two-way}` | Default `one-way`. `two-way` is much slower |
 | `--obs-localization {none,imu,displacement,absolute-y,full}` | Localization ablation |
 | `--progress-reward {potential,fluid-relative,legacy}` | Progress objective |
 | `--no-pcgrad` | Disable gradient surgery |

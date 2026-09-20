@@ -119,17 +119,25 @@ def train_momappo(
     env: Optional[BatchedSwarmEnv] = None,
     recorder: Optional[RunRecorder] = None,
 ) -> Path:
+    from concurrent.futures import ThreadPoolExecutor
+
     from fluxswarm.perf import resolve_device, split_batch_sizes
 
     device = torch.device(resolve_device(cfg.train.device))
     gpu_n, cpu_n = split_batch_sizes(cfg)
+    if cfg.sim.coupling == "two-way" and cpu_n > 0:
+        # Two-way pressure is SciPy on CPU; a second CPU env just serializes more work.
+        cpu_n = 0
+        gpu_n = cfg.train.batch_envs
     if env is None:
         # Primary env on GPU (or CPU if no CUDA). CPU shard is optional and
         # stepped after the GPU batch when device_split=cpu-shard.
         env = BatchedSwarmEnv(cfg, batch=gpu_n, device=str(device))
     cpu_env = None
+    cpu_pool = None
     if cpu_n > 0 and device.type == "cuda":
         cpu_env = BatchedSwarmEnv(cfg, batch=cpu_n, device="cpu")
+        cpu_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cpu-shard")
     if recorder is None:
         recorder = RunRecorder(cfg, algorithm="momappo")
     recorder.save_config(cfg)
@@ -193,14 +201,17 @@ def train_momappo(
                 values = model.critic(joint).permute(0, 2, 1)
 
             action_np = action.detach().cpu().numpy()
-            next_obs_np, scalar_r, terms, truncs, info = env.step(action_np)
-            # Pipeline: step CPU shard while GPU work is done (best-effort overlap)
+            cpu_fut = None
             if cpu_env is not None and cpu_obs_np is not None:
                 with torch.no_grad():
                     c_obs = obs_norm.normalize(torch.tensor(cpu_obs_np, device=device))
                     c_dist, _ = model.actor.dist(c_obs)
                     c_act = torch.tanh(c_dist.mean).detach().cpu().numpy()
-                cpu_obs_np, c_scalar, _, _, c_info = cpu_env.step(c_act)
+                cpu_fut = cpu_pool.submit(cpu_env.step, c_act)
+            next_obs_np, scalar_r, terms, truncs, info = env.step(action_np)
+            pbar.set_postfix(rollout=f"{t + 1}/{n_steps}", steps=global_steps + B, refresh=True)
+            if cpu_fut is not None:
+                cpu_obs_np, c_scalar, _, _, c_info = cpu_fut.result()
                 recorder.log_step(global_steps + B, cpu_env, c_scalar, c_info)
 
             reward_matrix = torch.tensor(info["reward_matrix"], device=device, dtype=torch.float32)
@@ -305,4 +316,6 @@ def train_momappo(
 
     writer.close()
     recorder.close()
+    if cpu_pool is not None:
+        cpu_pool.shutdown(wait=True)
     return recorder.run_dir

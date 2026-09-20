@@ -24,7 +24,7 @@ class SimConfig:
     viscosity: float = 3.0
     inflow_velocity: float = 400.0
     inflow_period: float = 1.0
-    coupling: Literal["two-way", "one-way"] = "two-way"
+    coupling: Literal["two-way", "one-way"] = "one-way"
     fluid_density: float = 1.06
 
     @property
@@ -263,7 +263,10 @@ def build_argparser(description: str | None = None) -> argparse.ArgumentParser:
         "--coupling",
         choices=["two-way", "one-way"],
         default=None,
-        help=f"fluid–swarm coupling ({d.sim.coupling})",
+        help=(
+            f"fluid–swarm coupling ({d.sim.coupling}); two-way rebuilds a CPU Poisson "
+            f"solve every fluid substep and is ~6–10× slower"
+        ),
     )
 
     g = parser.add_argument_group("swarm")
@@ -373,7 +376,10 @@ def build_argparser(description: str | None = None) -> argparse.ArgumentParser:
         "--device-split",
         choices=["gpu", "cpu-shard"],
         default=None,
-        help=f"env device placement ({d.train.device_split})",
+        help=(
+            f"env device placement ({d.train.device_split}); cpu-shard only helps "
+            f"one-way GPU runs — with two-way both shards fight over the CPU"
+        ),
     )
     g.add_argument("--seed", type=int, default=None, help=f"RNG seed ({d.train.seed})")
     g.add_argument(

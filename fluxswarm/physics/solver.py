@@ -2,15 +2,30 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 import torch
+from scipy.sparse import SparseEfficiencyWarning
+
+# PhiFlow assembles a CSR Poisson matrix every pressure solve; PyTorch still flags CSR as beta.
+warnings.filterwarnings(
+    "ignore",
+    message="Sparse CSR tensor support is in beta state.*",
+    category=UserWarning,
+)
+# SciPy ILU (two-way CG) triangular solves convert COO→CSC on every call.
+warnings.filterwarnings(
+    "ignore",
+    message="CSC or CSR matrix format is required.*",
+    category=SparseEfficiencyWarning,
+)
 
 from fluxswarm.config import Config, SimConfig
 from fluxswarm.physics.domain import Domain
-from fluxswarm.physics.inflow import beat_waveform, poiseuille_on_grid
+from fluxswarm.physics.inflow import beat_waveform
 from fluxswarm.physics.swarm import (
     SwarmState,
     apply_force_integrate,
@@ -87,46 +102,33 @@ class BatchedFluidSolver:
         self._apply_inflow_delta(t=0.0, dt_sub=0.0, absolute=True)
 
     def _apply_inflow_delta(self, t: float, dt_sub: float, absolute: bool = False) -> None:
-        """Add beat*Poiseuille increment to u-component (or set absolute at t=0)."""
+        """Add beat*Poiseuille increment to u-component (or set absolute at t=0).
+
+        Staggered u/v have different spatial sizes, so they must be packed with
+        ``TensorStack(..., dual(vector))`` — a channel-stack silently fails.
+        """
         from phi import math as phimath
+        from phiml.math import dual
+        from phiml.math._tensors import TensorStack
 
         amp = self.sim.inflow_velocity
         period = self.sim.inflow_period
         if absolute:
             mask_val = beat_waveform(t, amp, period)
         else:
-            mask_next = beat_waveform(t + dt_sub, amp, period)
-            mask_curr = beat_waveform(t, amp, period)
-            mask_val = mask_next - mask_curr
+            mask_val = beat_waveform(t + dt_sub, amp, period) - beat_waveform(t, amp, period)
 
-        ny = self.domain.ny
-        parabolic = poiseuille_on_grid(ny, self.sim.length_y, device=None)
-        # Work through PhiFlow unstack
-        try:
-            v_u, v_v = phimath.unstack(self.v.values, "~vector")
-            # Build mask matching u-grid y-size
-            # Use numpy/torch bridge via phimath
-            y_coords = phimath.range_tensor(v_u.shape["y"]) + 0.5
-            R = self.domain.ny / 2.0
-            parabolic_phi = 1.0 - ((y_coords - R) / R) ** 2
-            mask = float(mask_val) * parabolic_phi
-            if absolute:
-                # Replace u with mask (broadcast over x)
-                new_u = phimath.ones(v_u.shape) * 0 + mask  # spatial mask
-                # For absolute init, set u everywhere to parabolic*amp at t
-                stacked = phimath.stack([new_u * 0 + mask, v_v * 0], dim=phimath.channel("vector"))
-                # Simpler: add mask as delta from zero
-                delta = phimath.stack(
-                    [mask + v_u * 0, v_v * 0],
-                    dim=phimath.channel("vector"),
-                )
-                self.v = self.v.with_values(self.v.values * 0 + delta)
-            else:
-                delta = phimath.stack([mask + v_u * 0, v_v * 0], dim=phimath.channel("vector"))
-                self.v = self.v.with_values(self.v.values + delta)
-        except Exception:
-            # Fallback: skip if shape mismatch during early init
-            pass
+        v_u, v_v = phimath.unstack(self.v.values, "~vector")
+        y_coords = phimath.range_tensor(v_u.shape["y"]) + 0.5
+        R = self.domain.ny / 2.0
+        parabolic = 1.0 - ((y_coords - R) / R) ** 2
+        mask_x = phimath.expand(float(mask_val) * parabolic, v_u.shape["x"])
+        if absolute:
+            v_u = mask_x + v_u * 0
+            v_v = v_v * 0
+        else:
+            v_u = v_u + mask_x
+        self.v = self.v.with_values(TensorStack((v_u, v_v), dual(vector="x,y")))
 
     def reset(self, env_ids: Optional[torch.Tensor] = None) -> None:
         if env_ids is None:
@@ -208,6 +210,7 @@ class BatchedFluidSolver:
         """One RL step: swarm forces then fluid substeps. actions: (B, N, 2)."""
         from phi.torch.flow import Sphere, Obstacle, union, StaggeredGrid, diffuse, advect, fluid, Solve, vec
         from phi import math as phimath
+        from phiml.math._optimize import Diverged, NotConverged, SolveTape
 
         actions = project_actions_to_unit_disk(actions.to(self.device, dtype=torch.float64))
         # Early override like legacy
@@ -261,9 +264,28 @@ class BatchedFluidSolver:
         dt_sub = dt / self.sim.substeps
         Re_inv = self.sim.viscosity / max(self.sim.inflow_velocity * self.sim.length_y, 1e-8)
 
-        # Build obstacles once (list of Obstacle, one per member, batched)
-        obstacles = self._build_obstacles()
         coupling = self.sim.coupling
+        obst_list: list = self._build_obstacles() if coupling == "two-way" else []
+        one_way_mask = self._obstacle_mask() if coupling == "one-way" else None
+        if obst_list:
+            pressure_solve_kw = dict(
+                method="scipy-CG",
+                rel_tol=1e-2,
+                abs_tol=1e-3,
+                max_iterations=1000,
+                rank_deficiency=0,
+                preconditioner="ilu",
+                suppress=[NotConverged, Diverged],
+            )
+        else:
+            pressure_solve_kw = dict(
+                method="CG",
+                rel_tol=1e-2,
+                abs_tol=1e-3,
+                max_iterations=1000,
+                rank_deficiency=0,
+                suppress=[NotConverged, Diverged],
+            )
 
         for s in range(self.sim.substeps):
             t_sub = float(self.episode_time.mean().item()) + s * dt_sub
@@ -271,40 +293,46 @@ class BatchedFluidSolver:
             self.v = diffuse.explicit(self.v, Re_inv, dt_sub)
             self.v = advect.semi_lagrangian(self.v, self.v, dt_sub)
 
-            if coupling == "one-way":
-                mask = self._obstacle_mask()
-                self.v = self.v * (1.0 - mask)
-                obst_list: list = []
-            else:
-                obst_list = obstacles
+            if one_way_mask is not None:
+                self.v = self.v * (1.0 - one_way_mask)
 
-            try:
-                self.v, self.p = fluid.make_incompressible(
+            # PhiFlow only returns the last CG iterate if NotConverged is suppressed.
+            # SolveTape disables solver optimizations — only record the first substep.
+            pressure_solve = Solve(x0=self.p, **pressure_solve_kw)
+            if s == 0:
+                with SolveTape() as solves:
+                    v_proj, p_proj = fluid.make_incompressible(
+                        velocity=self.v,
+                        obstacles=obst_list,
+                        solve=pressure_solve,
+                    )
+                info = solves[pressure_solve]
+                diverged, missed = _pressure_solve_status(info)
+                if diverged:
+                    warnings.warn(
+                        f"Pressure solve issue at t={t_sub}: {info.msg}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    self.p = None
+                    continue
+                self.v, self.p = v_proj, p_proj
+                if missed:
+                    warnings.warn(
+                        f"Pressure solve issue at t={t_sub}: {info.msg}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+            else:
+                v_proj, p_proj = fluid.make_incompressible(
                     velocity=self.v,
                     obstacles=obst_list,
-                    solve=Solve(
-                        "CG",
-                        1e-2,
-                        1e-3,
-                        max_iterations=100,
-                        x0=self.p,
-                        rank_deficiency=0,
-                    ),
+                    solve=pressure_solve,
                 )
-            except Exception as e:
-                # PhiFlow raises NotConverged on hard residual; continue with last fields
-                # (matches legacy silent swallow) but surface a warning.
-                import warnings
+                self.v, self.p = v_proj, p_proj
 
-                warnings.warn(f"Pressure solve issue at t={t_sub}: {e}", RuntimeWarning)
-                from phiml.math._optimize import NotConverged
-
-                if not isinstance(e, NotConverged) and "converg" not in str(e).lower():
-                    raise RuntimeError(f"Pressure solve failed at t={t_sub}: {e}") from e
-
-            if coupling == "one-way":
-                mask = self._obstacle_mask()
-                self.v = self.v * (1.0 - mask)
+            if one_way_mask is not None:
+                self.v = self.v * (1.0 - one_way_mask)
 
         self.episode_time = self.episode_time + dt
         self._sample_rings()
@@ -326,55 +354,61 @@ class BatchedFluidSolver:
 
     def _build_obstacles(self):
         """Batched obstacles without instance dims (PhiFlow grids disallow instance)."""
-        from phi.torch.flow import Sphere, Obstacle, union
+        from phi.torch.flow import Sphere, Obstacle
         from phi import math as phimath
+        from phi.math import NUMPY
 
         B, N = self.batch, self.swarm.n
-        pos = self.swarm.pos.detach().cpu().numpy()
-        vel = self.swarm.vel.detach().cpu().numpy()
+        pos = np.asarray(self.swarm.pos.detach().cpu(), dtype=np.float64)
+        vel = np.asarray(self.swarm.vel.detach().cpu(), dtype=np.float64)
         spheres = []
-        for i in range(N):
-            if B > 1:
-                cx = phimath.tensor(pos[:, i, 0], phimath.batch("b"))
-                cy = phimath.tensor(pos[:, i, 1], phimath.batch("b"))
-                vx = phimath.tensor(vel[:, i, 0], phimath.batch("b"))
-                vy = phimath.tensor(vel[:, i, 1], phimath.batch("b"))
-            else:
-                cx = phimath.tensor(float(pos[0, i, 0]))
-                cy = phimath.tensor(float(pos[0, i, 1]))
-                vx = phimath.tensor(float(vel[0, i, 0]))
-                vy = phimath.tensor(float(vel[0, i, 1]))
-            center = phimath.stack({"x": cx, "y": cy}, phimath.channel(vector="x,y"))
-            ovel = phimath.stack({"x": vx, "y": vy}, phimath.channel(vector="x,y"))
-            spheres.append(Obstacle(Sphere(center=center, radius=self.swarm.radius), velocity=ovel))
-        # Union of Obstacle geometries: pass as list to make_incompressible
+        # Geometry sampling is NumPy-only; torch natives here raise
+        # `'torch.dtype' object has no attribute 'char'` in the NumPy backend.
+        with NUMPY:
+            for i in range(N):
+                if B > 1:
+                    cx = phimath.tensor(pos[:, i, 0], phimath.batch("b"))
+                    cy = phimath.tensor(pos[:, i, 1], phimath.batch("b"))
+                    vx = phimath.tensor(vel[:, i, 0], phimath.batch("b"))
+                    vy = phimath.tensor(vel[:, i, 1], phimath.batch("b"))
+                else:
+                    cx = phimath.tensor(float(pos[0, i, 0]))
+                    cy = phimath.tensor(float(pos[0, i, 1]))
+                    vx = phimath.tensor(float(vel[0, i, 0]))
+                    vy = phimath.tensor(float(vel[0, i, 1]))
+                center = phimath.stack({"x": cx, "y": cy}, phimath.channel(vector="x,y"))
+                ovel = phimath.stack({"x": vx, "y": vy}, phimath.channel(vector="x,y"))
+                spheres.append(Obstacle(Sphere(center=center, radius=self.swarm.radius), velocity=ovel))
         return spheres
 
     def _obstacle_mask(self):
         """Rasterized obstacle mask for one-way coupling (no instance dims)."""
         from phi.torch.flow import Sphere, StaggeredGrid, union
         from phi import math as phimath
+        from phi.math import NUMPY
 
-        pos = self.swarm.pos.detach().cpu().numpy()
+        pos = np.asarray(self.swarm.pos.detach().cpu(), dtype=np.float64)
         B, N, _ = pos.shape
-        geos = []
-        for i in range(N):
-            if B > 1:
-                cx = phimath.tensor(pos[:, i, 0], phimath.batch("b"))
-                cy = phimath.tensor(pos[:, i, 1], phimath.batch("b"))
-            else:
-                cx = phimath.tensor(float(pos[0, i, 0]))
-                cy = phimath.tensor(float(pos[0, i, 1]))
-            center = phimath.stack({"x": cx, "y": cy}, phimath.channel(vector="x,y"))
-            geos.append(Sphere(center=center, radius=self.swarm.radius))
-        geo = union(geos) if len(geos) > 1 else geos[0]
-        return StaggeredGrid(
-            geo,
-            boundary=self.v.boundary,
-            bounds=self.v.bounds,
-            x=self.domain.nx,
-            y=self.domain.ny,
-        )
+        with NUMPY:
+            geos = []
+            for i in range(N):
+                if B > 1:
+                    cx = phimath.tensor(pos[:, i, 0], phimath.batch("b"))
+                    cy = phimath.tensor(pos[:, i, 1], phimath.batch("b"))
+                else:
+                    cx = phimath.tensor(float(pos[0, i, 0]))
+                    cy = phimath.tensor(float(pos[0, i, 1]))
+                center = phimath.stack({"x": cx, "y": cy}, phimath.channel(vector="x,y"))
+                geos.append(Sphere(center=center, radius=self.swarm.radius))
+            geo = union(geos) if len(geos) > 1 else geos[0]
+            mask = StaggeredGrid(
+                geo,
+                boundary=self.v.boundary,
+                bounds=self.v.bounds,
+                x=self.domain.nx,
+                y=self.domain.ny,
+            )
+        return mask
 
     def export_fields(self, env_index: int = 0) -> FieldSnapshot:
         """Export numpy field arrays for one env."""
@@ -383,6 +417,21 @@ class BatchedFluidSolver:
 
 
 # ---- numpy sampling helpers -------------------------------------------------
+
+
+def _pressure_solve_status(info) -> tuple[bool, bool]:
+    """Return (diverged, missed_tolerance)."""
+    conv = info.converged
+    div = info.diverged
+    try:
+        conv_ok = bool(conv.trajectory[-1].all)
+    except Exception:
+        conv_ok = bool(conv.all)
+    try:
+        diverged = bool(div.any)
+    except Exception:
+        diverged = False
+    return diverged, (not conv_ok) and not diverged
 
 
 def _numpy_sample_field(f, coords: np.ndarray, domain: Domain) -> np.ndarray:

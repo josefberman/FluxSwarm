@@ -1,179 +1,79 @@
 # FluxSwarm
 
-FluxSwarm is a physics-informed reinforcement learning project for controlling a swarm in a 2D fluid environment.  
-It combines:
+Physics-informed multi-objective multi-agent RL for controlling a microrobot swarm in a 2D fluid channel.
 
-- fluid simulation (via PhiFlow),
-- multi-agent swarm dynamics,
-- and policy optimization (MOMAPPO / PPO-style training).
+## Highlights
 
-The project is geared toward experiments where swarm behavior is optimized under multiple objectives such as:
+- **Batched PhiFlow solver** — all environments share one process and a GPU batch dimension (no `SubprocVecEnv` CUDA contention).
+- **Two-way fluid–swarm coupling** by default (`--coupling one-way` for faster runs).
+- **MOMAPPO** — CTDE multi-objective PPO (progress, energy, smoothness) with corrected tanh-Gaussian log-probs, per-agent ratios, and actor-only PCGrad.
+- **Position-blind local observations** with an observability ladder (`--obs-localization`).
+- **Baselines**: brute-upstream, brute-wall, and standard single-objective PPO.
+- **Outputs** under `runs_new/` (legacy `run/` is never touched).
 
-- relative fluid-x progress (ring-mean fluid u_x minus member v_x, normalized),
-- energy efficiency (unused thrust budget),
-- and action smoothness.
-
-## Features
-
-- **Custom Gymnasium environment** for swarm-in-fluid control (`SwarmEnv`).
-- **Multi-objective PPO training loop** with separate value heads per objective.
-- **Parallelized rollout collection** using vectorized environments.
-- **Reward weighting support** during optimization with unweighted objective plotting.
-- **TensorBoard logging** and run-folder artifact tracking.
-- **Post-run plotting utilities** for rewards, objectives, kinematics, and fields.
-
-## Repository Structure
-
-- `main.py` - entry point; builds simulation + swarm + inflow and launches training.
-- `RL.py` - environment implementation and RL training logic (`run_MOMAPPO`, `run_PPO`).
-- `simulation.py` - fluid/swarm stepping and simulation utilities.
-- `data_structures.py` - core data containers (`Simulation`, `Swarm`, `Inflow`, `Fluid`, etc.).
-- `plotting.py` - run artifact visualization and export helpers.
-- `logs.py` - run folder creation and parameter/hyperparameter logging.
-- `requirements.txt` - Python dependencies.
-- `fluxswarm/rl/env.py` - additional environment implementation variant.
-- `test_*.py` - utility/validation scripts.
-
-## Requirements
-
-- Python 3.10+ recommended
-- Linux (or compatible environment with required native dependencies)
-- CUDA-capable GPU recommended for training speed (project defaults to GPU in places)
-
-Install dependencies:
+## Install
 
 ```bash
-pip install -r requirements.txt
+conda activate fluxswarm   # or your env with phiflow + torch
+pip install -e .
 ```
 
-## Quick Start
-
-Run training:
+## Train
 
 ```bash
-python main.py
+python -m fluxswarm.cli train \
+  --batch-envs 64 \
+  --coupling two-way \
+  --total-timesteps 200000 \
+  --obs-localization none \
+  --progress-reward potential \
+  --tag momappo_exp1
 ```
 
-At startup, the script asks whether to create a new run folder:
-
-- `y` -> creates a new timestamped folder under `run/`
-- `n` -> prompts for an existing folder name
-
-### Example With Explicit Hyperparameters
+## Baselines
 
 ```bash
-python main.py \
-  --num-envs 8 \
-  --total-time 100.0 \
-  --dt 0.05 \
-  --n-steps 256 \
-  --batch-size 32 \
-  --update-epochs 10 \
-  --gamma 0.95 \
-  --clip-coef 0.2 \
-  --ent-coef 0.01 \
-  --lr 3e-4 \
-  --swarm-num-x 4 \
-  --swarm-num-y 4 \
-  --swarm-max-force 3700 \
-  --inflow-velocity 162
+python -m fluxswarm.cli baseline --policy upstream --max-steps 5000 --coupling one-way
+python -m fluxswarm.cli baseline --policy wall --wall-policy-mode static
+python -m fluxswarm.cli baseline --policy ppo --total-timesteps 200000
 ```
 
-### CLI Options
-
-`main.py` exposes flags for:
-
-- simulation timing (`--total-time`, `--dt`, `--dt-substeps`)
-- swarm layout and force limits (`--swarm-num-x`, `--swarm-num-y`, `--swarm-max-force`)
-- inflow profile (`--inflow-velocity`)
-- RL training (`--num-envs`, `--n-steps`, `--batch-size`, `--update-epochs`, `--gamma`, `--clip-coef`, `--ent-coef`, `--lr`)
-- field saving (`--save-fields`, `--no-save-fields`)
-
-Run `python main.py --help` for the full command reference.
-
-## Training and Rewards
-
-The environment computes **per-member** weighted rewards for three objectives, stacked as `info['reward_matrix']` with shape `(N, 3)` — columns: progress, energy efficiency, smoothness. Each row uses the same physics as before, but **not** averaged across the swarm before learning; MOMAPPO consumes this matrix for credit assignment.
-
-- **Progress** — per member: `clip((u_fluid_x - v_x) / v_ref, -1, 1)` with ring-mean fluid u_x (see `simulation.step` sampling) and `v_ref = max(|inflow.amplitude|, small constant)`.
-- **Energy efficiency** — per member: `1 - ||F||/||F||_max` on the action-scaled force.
-- **Smoothness** — per member: cosine similarity between consecutive actions.
-
-**CTDE (MOMAPPO):** a shared **decentralized** actor maps each member’s local observation `(8,)` to actions `(2,)`. **Centralized** critics take the joint observation `(N·8,)` and output per-member values `(N,)` for each objective. The Gym `step` return `reward` is the mean over members of total weighted reward (for logging); training uses `reward_matrix`.
-
-**Checkpoints** from before the CTDE refactor are **not** compatible with the new `ActorCriticMO` (different architecture); retrain or rename old `model_latest.pt`.
-
-The scalar episode CSV / `last_objectives` summaries are **means over members** for readability.
-
-Current workflow in this repo:
-
-- **Optimization** (PPO updates) uses per-agent weighted columns from `reward_matrix` with factorized policy log-probs.
-- **Objective plotting** uses mean objectives over agents from `last_objectives`.
-
-## Outputs and Artifacts
-
-Training and logs are written under `run/<folder_name>/...`.
-
-Common artifacts include:
-
-- `configuration.txt` - simulation/swarm/flow settings snapshot
-- `hyperparameters_*.txt` - training hyperparameters
-- TensorBoard logs in `MOMAPPO_tb`
-- model checkpoints in `MOMAPPO/models`
-- plots:
-  - `rewards.jpg`
-  - `rewards_objectives.jpg`
-  - `locations.jpg`
-  - `velocities.jpg`
-  - plus CSV exports for corresponding series
-
-## TensorBoard
-
-The training loop may launch TensorBoard automatically.  
-If needed, run manually:
+## Figures
 
 ```bash
-tensorboard --logdir run/<folder_name>/MOMAPPO_tb --port 6006 --host 127.0.0.1
+python -m fluxswarm.cli figures --run runs_new/<run_id>
+python -m fluxswarm.cli figures --run runs_new/<with_pcgrad> --compare-pcgrad runs_new/<without>
 ```
 
-Then open [http://127.0.0.1:6006](http://127.0.0.1:6006).
+Single-run figures land in `runs_new/<run_id>/figures/`. Comparisons go to `runs_new/_comparisons/<slug>/`.
 
-## Notes and Caveats
+## Key flags
 
-- The code currently includes interactive prompts in `main.py`; for batch automation you may want to replace prompts with explicit flags.
-- Some defaults are tuned for experimentation rather than production packaging.
-- Large simulations can be memory/compute heavy; start with smaller `--total-time` and fewer environments when validating setup.
+| Flag | Meaning |
+|------|---------|
+| `--coupling {two-way,one-way}` | Obstacle coupling in pressure solve |
+| `--obs-localization {none,imu,displacement,absolute-y,full}` | Localization ablation |
+| `--progress-reward {potential,fluid-relative,legacy}` | Progress objective |
+| `--no-pcgrad` | Disable gradient surgery |
+| `--output-root` | Default `runs_new` |
+| `--batch-envs` | Env batch size (default 64) |
 
-## Development
+See `python -m fluxswarm.cli train --help` for the full list.
 
-Recommended basic workflow:
+## Layout
 
-1. Create a virtual environment.
-2. Install `requirements.txt`.
-3. Run a short training job to verify end-to-end execution.
-4. Inspect TensorBoard and generated plots.
+```
+fluxswarm/
+  config.py          CLI + dataclasses
+  physics/           batched PhiFlow + swarm mechanics
+  envs/              BatchedSwarmEnv, observations, rewards
+  agents/            MOMAPPO, networks, PCGrad
+  baselines/         brute + PPO
+  runs/              recorder → runs_new/
+  analysis/plots/    figure generators
+  cli/               train / evaluate / baseline / figures
+```
 
 ## Citation
 
-If you use FluxSwarm in academic work, please cite this project.
-
-- Preferred metadata source: `CITATION.cff`
-- Repository: [https://github.com/josefberman/FluxSwarm](https://github.com/josefberman/FluxSwarm)
-
-Example BibTeX:
-
-```bibtex
-@software{berman_2026_fluxswarm,
-  author = {Berman, Josef},
-  title = {FluxSwarm},
-  year = {2026},
-  version = {0.1.0},
-  url = {https://github.com/josefberman/FluxSwarm},
-  license = {Apache-2.0}
-}
-```
-
-## License
-
-This project is licensed under the Apache License 2.0. See the `LICENSE` file for details.
-
+See `CITATION.cff`. License: Apache-2.0.

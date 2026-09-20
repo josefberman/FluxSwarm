@@ -1,4 +1,4 @@
-"""Batched PhiFlow fluid solver with one-way and two-way coupling."""
+"""Batched fluid solver: PhiFlow one-way, GPU Brinkman/DCT two-way."""
 from __future__ import annotations
 
 import math
@@ -53,10 +53,8 @@ class BatchedFluidSolver:
         self.sim: SimConfig = cfg.sim
         self.batch = batch
         self.device = torch.device(device if torch.cuda.is_available() or device == "cpu" else "cpu")
-        if self.device.type == "cuda":
-            # PhiFlow default device
+        if self.device.type == "cuda" and self.sim.coupling != "two-way":
             from phi.torch import flow as _flow  # noqa: F401
-            from phi import math as phimath
 
             try:
                 from phi.torch.flow import backend
@@ -66,7 +64,15 @@ class BatchedFluidSolver:
                 pass
         self.domain = Domain.from_config(self.sim)
         self.swarm = SwarmState(batch, cfg.swarm, cfg.sim, self.device)
-        self._init_fields()
+        self.torch_fluid = None
+        self.v = None
+        self.p = None
+        if self.sim.coupling == "two-way":
+            from fluxswarm.physics.torch_fluid import TorchFluidSolver
+
+            self.torch_fluid = TorchFluidSolver(self.sim, batch, self.device)
+        else:
+            self._init_fields()
         self.episode_time = torch.zeros(batch, dtype=torch.float64, device=self.device)
         self.ring_k = cfg.obs.ring_points
         self.angles = torch.linspace(0, 2 * math.pi, self.ring_k + 1, device=self.device, dtype=torch.float64)[:-1]
@@ -138,26 +144,31 @@ class BatchedFluidSolver:
         # Full-field reset is expensive; for partial resets we only zero members.
         # On full reset, re-init fields.
         if env_ids.numel() == self.batch:
-            self._init_fields()
+            if self.torch_fluid is not None:
+                self.torch_fluid.reset()
+            else:
+                self._init_fields()
 
     def _sample_rings(self) -> None:
         """Sample pressure and velocity on rings around each member."""
-        from phi.torch.flow import field as phifield
-        from phi import math as phimath
-
         B, N = self.batch, self.swarm.n
         k = self.ring_k
         factor = self.cfg.obs.ring_radius_factor
-        r = self.swarm.radii * factor  # (B, N)
-        angles = self.angles  # (K,)
-        # Sample points (B, N, K, 2)
+        r = self.swarm.radii * factor
         cx = self.swarm.pos[..., 0:1]
         cy = self.swarm.pos[..., 1:2]
-        sx = cx + r.unsqueeze(-1) * torch.cos(angles)
-        sy = cy + r.unsqueeze(-1) * torch.sin(angles)
-        # Clip to domain
-        sx = sx.clamp(0.0, self.sim.length_x)
-        sy = sy.clamp(0.0, self.sim.length_y)
+        sx = (cx + r.unsqueeze(-1) * torch.cos(self.angles)).clamp(0.0, self.sim.length_x)
+        sy = (cy + r.unsqueeze(-1) * torch.sin(self.angles)).clamp(0.0, self.sim.length_y)
+        if self.torch_fluid is not None:
+            p, u, v = self.torch_fluid.sample_at(sx, sy)
+            self.last_pressure_ring = p
+            self.last_vel_ring_u = u
+            self.last_vel_ring_v = v
+            self.last_fluid_center_u = u.mean(dim=-1)
+            self.last_fluid_center_v = v.mean(dim=-1)
+            return
+
+        from phi import math as phimath
 
         # Flatten for PhiFlow sample: use numpy bridge
         pts = torch.stack([sx, sy], dim=-1).detach().cpu().numpy()  # (B,N,K,2)
@@ -208,10 +219,6 @@ class BatchedFluidSolver:
 
     def step(self, actions: torch.Tensor) -> None:
         """One RL step: swarm forces then fluid substeps. actions: (B, N, 2)."""
-        from phi.torch.flow import Sphere, Obstacle, union, StaggeredGrid, diffuse, advect, fluid, Solve, vec
-        from phi import math as phimath
-        from phiml.math._optimize import Diverged, NotConverged, SolveTape
-
         actions = project_actions_to_unit_disk(actions.to(self.device, dtype=torch.float64))
         # Early override like legacy
         early = self.episode_time <= 0.005
@@ -225,7 +232,7 @@ class BatchedFluidSolver:
 
         t0 = self.episode_time  # (B,)
         # Sample fields for forces (skip if first instant with no pressure)
-        if self.p is not None or float(t0.min()) > 0:
+        if (self.torch_fluid is None and self.p is not None) or float(t0.min()) > 0:
             self._sample_rings()
         else:
             B, N, k = self.batch, self.swarm.n, self.ring_k
@@ -264,28 +271,33 @@ class BatchedFluidSolver:
         dt_sub = dt / self.sim.substeps
         Re_inv = self.sim.viscosity / max(self.sim.inflow_velocity * self.sim.length_y, 1e-8)
 
+        if self.torch_fluid is not None:
+            self.torch_fluid.substep_loop(
+                t0=float(self.episode_time.mean().item()),
+                dt=dt,
+                n_sub=self.sim.substeps,
+                pos=self.swarm.pos,
+                vel=self.swarm.vel,
+                radii=self.swarm.radii,
+                nu=Re_inv,
+            )
+            self.episode_time = self.episode_time + dt
+            self._sample_rings()
+            return
+
+        from phi.torch.flow import advect, diffuse, fluid, Solve
+        from phiml.math._optimize import Diverged, NotConverged, SolveTape
+
         coupling = self.sim.coupling
-        obst_list: list = self._build_obstacles() if coupling == "two-way" else []
         one_way_mask = self._obstacle_mask() if coupling == "one-way" else None
-        if obst_list:
-            pressure_solve_kw = dict(
-                method="scipy-CG",
-                rel_tol=1e-2,
-                abs_tol=1e-3,
-                max_iterations=1000,
-                rank_deficiency=0,
-                preconditioner="ilu",
-                suppress=[NotConverged, Diverged],
-            )
-        else:
-            pressure_solve_kw = dict(
-                method="CG",
-                rel_tol=1e-2,
-                abs_tol=1e-3,
-                max_iterations=1000,
-                rank_deficiency=0,
-                suppress=[NotConverged, Diverged],
-            )
+        pressure_solve_kw = dict(
+            method="CG",
+            rel_tol=1e-2,
+            abs_tol=1e-3,
+            max_iterations=1000,
+            rank_deficiency=0,
+            suppress=[NotConverged, Diverged],
+        )
 
         for s in range(self.sim.substeps):
             t_sub = float(self.episode_time.mean().item()) + s * dt_sub
@@ -303,7 +315,7 @@ class BatchedFluidSolver:
                 with SolveTape() as solves:
                     v_proj, p_proj = fluid.make_incompressible(
                         velocity=self.v,
-                        obstacles=obst_list,
+                        obstacles=[],
                         solve=pressure_solve,
                     )
                 info = solves[pressure_solve]
@@ -326,7 +338,7 @@ class BatchedFluidSolver:
             else:
                 v_proj, p_proj = fluid.make_incompressible(
                     velocity=self.v,
-                    obstacles=obst_list,
+                    obstacles=[],
                     solve=pressure_solve,
                 )
                 self.v, self.p = v_proj, p_proj
@@ -412,6 +424,9 @@ class BatchedFluidSolver:
 
     def export_fields(self, env_index: int = 0) -> FieldSnapshot:
         """Export numpy field arrays for one env."""
+        if self.torch_fluid is not None:
+            vx, vy, p = self.torch_fluid.export(env_index)
+            return FieldSnapshot(vx=vx, vy=vy, p=p, t=float(self.episode_time[env_index].item()))
         vx, vy, p = _fields_to_numpy(self.v, self.p, env_index, self.batch)
         return FieldSnapshot(vx=vx, vy=vy, p=p, t=float(self.episode_time[env_index].item()))
 

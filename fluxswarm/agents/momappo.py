@@ -125,10 +125,6 @@ def train_momappo(
 
     device = torch.device(resolve_device(cfg.train.device))
     gpu_n, cpu_n = split_batch_sizes(cfg)
-    if cfg.sim.coupling == "two-way" and cpu_n > 0:
-        # Two-way pressure is SciPy on CPU; a second CPU env just serializes more work.
-        cpu_n = 0
-        gpu_n = cfg.train.batch_envs
     if env is None:
         # Primary env on GPU (or CPU if no CUDA). CPU shard is optional and
         # stepped after the GPU batch when device_split=cpu-shard.

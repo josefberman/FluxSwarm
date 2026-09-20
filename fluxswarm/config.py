@@ -264,8 +264,8 @@ def build_argparser(description: str | None = None) -> argparse.ArgumentParser:
         choices=["two-way", "one-way"],
         default=None,
         help=(
-            f"fluid–swarm coupling ({d.sim.coupling}); two-way rebuilds a CPU Poisson "
-            f"solve every fluid substep and is ~6–10× slower"
+            f"fluid–swarm coupling ({d.sim.coupling}); two-way uses GPU Brinkman "
+            f"penalization and a DCT Poisson solve"
         ),
     )
 
@@ -376,10 +376,7 @@ def build_argparser(description: str | None = None) -> argparse.ArgumentParser:
         "--device-split",
         choices=["gpu", "cpu-shard"],
         default=None,
-        help=(
-            f"env device placement ({d.train.device_split}); cpu-shard only helps "
-            f"one-way GPU runs — with two-way both shards fight over the CPU"
-        ),
+        help=f"env device placement ({d.train.device_split})",
     )
     g.add_argument("--seed", type=int, default=None, help=f"RNG seed ({d.train.seed})")
     g.add_argument(

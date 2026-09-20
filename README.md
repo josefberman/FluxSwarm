@@ -5,7 +5,7 @@ Physics-informed multi-objective multi-agent RL for controlling a microrobot swa
 ## Highlights
 
 - **Batched PhiFlow solver** — all environments share one process and a GPU batch dimension (no `SubprocVecEnv` CUDA contention).
-- **One-way coupling** by default (`--coupling two-way` for obstacle-in-Poisson coupling; much slower).
+- **One-way coupling** by default (`--coupling two-way` for GPU Brinkman/DCT obstacle coupling).
 - **MOMAPPO** — CTDE multi-objective PPO (progress, energy, smoothness) with corrected tanh-Gaussian log-probs, per-agent ratios, and actor-only PCGrad.
 - **Position-blind local observations** with an observability ladder (`--obs-localization`).
 - **Baselines**: brute-upstream, brute-wall, and standard single-objective PPO.
@@ -51,7 +51,7 @@ Single-run figures land in `runs_new/<run_id>/figures/`. Comparisons go to `runs
 
 | Flag | Meaning |
 |------|---------|
-| `--coupling {one-way,two-way}` | Default `one-way`. `two-way` is much slower |
+| `--coupling {one-way,two-way}` | Default `one-way`. `two-way` is GPU Brinkman + DCT Poisson |
 | `--obs-localization {none,imu,displacement,absolute-y,full}` | Localization ablation |
 | `--progress-reward {potential,fluid-relative,legacy}` | Progress objective |
 | `--no-pcgrad` | Disable gradient surgery |
@@ -65,7 +65,7 @@ See `python -m fluxswarm.cli train --help` for the full list.
 ```
 fluxswarm/
   config.py          CLI + dataclasses
-  physics/           batched PhiFlow + swarm mechanics
+  physics/           batched PhiFlow (one-way) + GPU Brinkman/DCT (two-way)
   envs/              BatchedSwarmEnv, observations, rewards
   agents/            MOMAPPO, networks, PCGrad
   baselines/         brute + PPO

@@ -165,9 +165,9 @@ def train_momappo(
     obs = obs_norm.normalize(obs)
 
     n_steps = cfg.train.n_steps
-    total = cfg.train.total_timesteps
     # Count true env-steps across all shards
     envs_per_step = B + (cpu_n if cpu_env is not None else 0)
+    total = cfg.train.total_timesteps_per_env * envs_per_step
     num_updates = max(1, total // (n_steps * envs_per_step))
     global_steps = 0
     prior_warmup_rows = max(1, int(num_updates * n_steps * cfg.train.action_x_prior_warmup_fraction))

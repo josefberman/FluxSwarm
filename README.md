@@ -24,7 +24,7 @@ pip install -e .
 python -m fluxswarm.cli train \
   --batch-envs 64 \
   --coupling two-way \
-  --total-timesteps 200000 \
+  --total-timesteps-per-env 25000 \
   --obs-localization none \
   --progress-reward potential \
   --tag momappo_exp1
@@ -35,7 +35,7 @@ python -m fluxswarm.cli train \
 ```bash
 python -m fluxswarm.cli baseline --policy upstream --max-steps 5000 --coupling one-way
 python -m fluxswarm.cli baseline --policy wall --wall-policy-mode static
-python -m fluxswarm.cli baseline --policy ppo --total-timesteps 200000
+python -m fluxswarm.cli baseline --policy ppo --total-timesteps-per-env 25000
 ```
 
 ## Figures

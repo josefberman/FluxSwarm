@@ -106,7 +106,7 @@ class TrainConfig:
     gae_lambda: float = 0.95
     vf_coef: float = 0.5
     lr: float = 1e-3
-    total_timesteps: int = 200_000
+    total_timesteps_per_env: int = 25_000
     use_pcgrad: bool = True
     use_action_x_prior: bool = True
     action_x_prior_warmup_fraction: float = 0.2
@@ -208,7 +208,7 @@ def _apply_cli_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "clip_coef": ("train", "clip_coef"),
         "gamma": ("train", "gamma"),
         "lr": ("train", "lr"),
-        "total_timesteps": ("train", "total_timesteps"),
+        "total_timesteps_per_env": ("train", "total_timesteps_per_env"),
         "device_split": ("train", "device_split"),
         "seed": ("train", "seed"),
         "save_fields": ("train", "save_fields"),
@@ -240,76 +240,166 @@ def _apply_cli_overrides(cfg: Config, args: argparse.Namespace) -> Config:
 
 
 def build_argparser(description: str | None = None) -> argparse.ArgumentParser:
+    """Build CLI parser. Arg defaults are None (unset); help shows Config defaults."""
+    d = Config()  # source of truth for documented defaults
     parser = argparse.ArgumentParser(
         description=description
         or "FluxSwarm: multi-objective multi-agent PPO for swarms in fluid channels.",
     )
-    parser.add_argument("--config", type=str, default=None, help="YAML config file (CLI overrides it).")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="YAML config file; CLI flags override it (default: none)",
+    )
 
     g = parser.add_argument_group("simulation")
-    g.add_argument("--sim-length-x", type=float, default=None)
-    g.add_argument("--sim-length-y", type=float, default=None)
-    g.add_argument("--resolution-scale", type=float, default=None)
-    g.add_argument("--dt", type=float, default=None)
-    g.add_argument("--total-time", type=float, default=None)
-    g.add_argument("--dt-substeps", type=int, default=None)
-    g.add_argument("--inflow-velocity", type=float, default=None)
-    g.add_argument("--coupling", choices=["two-way", "one-way"], default=None)
+    g.add_argument("--sim-length-x", type=float, default=None, help=f"domain length x, mm ({d.sim.length_x})")
+    g.add_argument("--sim-length-y", type=float, default=None, help=f"domain length y, mm ({d.sim.length_y})")
+    g.add_argument("--resolution-scale", type=float, default=None, help=f"grid cells per mm ({d.sim.resolution_scale})")
+    g.add_argument("--dt", type=float, default=None, help=f"RL timestep, s ({d.sim.dt})")
+    g.add_argument("--total-time", type=float, default=None, help=f"sim horizon used for time_steps, s ({d.sim.total_time})")
+    g.add_argument("--dt-substeps", type=int, default=None, help=f"fluid substeps per RL step ({d.sim.dt_substeps})")
+    g.add_argument("--inflow-velocity", type=float, default=None, help=f"peak inflow centerline velocity, mm/s ({d.sim.inflow_velocity})")
+    g.add_argument(
+        "--coupling",
+        choices=["two-way", "one-way"],
+        default=None,
+        help=f"fluid–swarm coupling ({d.sim.coupling})",
+    )
 
     g = parser.add_argument_group("swarm")
-    g.add_argument("--swarm-num-x", type=int, default=None)
-    g.add_argument("--swarm-num-y", type=int, default=None)
-    g.add_argument("--member-radius", type=float, default=None)
-    g.add_argument("--swarm-max-force", type=float, default=None)
+    g.add_argument("--swarm-num-x", type=int, default=None, help=f"members along x ({d.swarm.num_x})")
+    g.add_argument("--swarm-num-y", type=int, default=None, help=f"members along y ({d.swarm.num_y})")
+    g.add_argument("--member-radius", type=float, default=None, help=f"member radius, mm ({d.swarm.member_radius})")
+    g.add_argument("--swarm-max-force", type=float, default=None, help=f"max thrust per member, mg·mm/s² ({d.swarm.member_max_force})")
 
     g = parser.add_argument_group("task")
-    g.add_argument("--episode-duration", type=float, default=None)
-    g.add_argument("--success-x", type=float, default=None)
-    g.add_argument("--failure-x", type=float, default=None)
-    g.add_argument("--progress-reward", choices=["potential", "fluid-relative", "legacy"], default=None)
-    g.add_argument("--w-progress", type=float, default=None)
-    g.add_argument("--w-energy", type=float, default=None)
-    g.add_argument("--w-smooth", type=float, default=None)
+    g.add_argument("--episode-duration", type=float, default=None, help=f"episode truncation time, s ({d.task.episode_duration})")
+    g.add_argument("--success-x", type=float, default=None, help=f"success if mean member x ≤ this, mm ({d.task.success_x})")
+    g.add_argument("--failure-x", type=float, default=None, help=f"failure if any member x > this, mm ({d.task.failure_x})")
+    g.add_argument(
+        "--progress-reward",
+        choices=["potential", "fluid-relative", "legacy"],
+        default=None,
+        help=f"progress objective formulation ({d.task.progress_reward})",
+    )
+    g.add_argument("--w-progress", type=float, default=None, help=f"progress reward weight ({d.task.w_progress})")
+    g.add_argument("--w-energy", type=float, default=None, help=f"energy reward weight ({d.task.w_energy})")
+    g.add_argument("--w-smooth", type=float, default=None, help=f"smoothness reward weight ({d.task.w_smooth})")
 
     g = parser.add_argument_group("observations")
-    g.add_argument("--obs-preset", choices=["rich", "legacy"], default=None)
+    g.add_argument(
+        "--obs-preset",
+        choices=["rich", "legacy"],
+        default=None,
+        help=f"observation preset ({d.obs.preset})",
+    )
     g.add_argument(
         "--obs-localization",
         choices=["none", "imu", "displacement", "absolute-y", "full"],
         default=None,
+        help=f"localization ablation rung ({d.obs.localization})",
     )
-    g.add_argument("--obs-ring-points", type=int, default=None)
-    g.add_argument("--obs-history", type=int, default=None)
-    g.add_argument("--neighbor-radius", type=float, default=None)
-    g.add_argument("--neighbor-k", type=int, default=None)
-    g.add_argument("--velocity-frame", choices=["fluid", "lab"], default=None)
-    g.add_argument("--imu-bias", type=float, default=None)
-    g.add_argument("--imu-noise", type=float, default=None)
+    g.add_argument("--obs-ring-points", type=int, default=None, help=f"pressure/velocity ring samples ({d.obs.ring_points})")
+    g.add_argument("--obs-history", type=int, default=None, help=f"stacked observation frames ({d.obs.history})")
+    g.add_argument("--neighbor-radius", type=float, default=None, help=f"neighbor sensing radius, mm ({d.obs.neighbor_radius})")
+    g.add_argument("--neighbor-k", type=int, default=None, help=f"k nearest neighbors ({d.obs.neighbor_k})")
+    g.add_argument(
+        "--velocity-frame",
+        choices=["fluid", "lab"],
+        default=None,
+        help=f"own-velocity frame ({d.obs.velocity_frame})",
+    )
+    g.add_argument("--imu-bias", type=float, default=None, help=f"IMU bias std, mm/s² ({d.obs.imu_bias})")
+    g.add_argument("--imu-noise", type=float, default=None, help=f"IMU white-noise std per step, mm/s² ({d.obs.imu_noise})")
 
     g = parser.add_argument_group("training")
-    g.add_argument("--batch-envs", "--num-envs", dest="batch_envs", type=int, default=None)
-    g.add_argument("--n-steps", type=int, default=None)
-    g.add_argument("--batch-size", type=int, default=None)
-    g.add_argument("--update-epochs", type=int, default=None)
-    g.add_argument("--ent-coef", type=float, default=None)
-    g.add_argument("--clip-coef", type=float, default=None)
-    g.add_argument("--gamma", type=float, default=None)
-    g.add_argument("--lr", type=float, default=None)
-    g.add_argument("--total-timesteps", type=int, default=None)
-    g.add_argument("--no-pcgrad", action="store_true", default=False)
-    g.add_argument("--no-action-x-prior", dest="use_action_x_prior", action="store_false", default=None)
-    g.add_argument("--action-x-prior-warmup-fraction", type=float, default=None)
-    g.add_argument("--actor", choices=["mlp", "recurrent"], default=None)
-    g.add_argument("--device-split", choices=["gpu", "cpu-shard"], default=None)
-    g.add_argument("--seed", type=int, default=None)
-    g.add_argument("--save-fields", dest="save_fields", action="store_true", default=None)
-    g.add_argument("--no-save-fields", action="store_true", default=False)
-    g.add_argument("--tensorboard-port", type=int, default=None)
+    g.add_argument(
+        "--batch-envs",
+        "--num-envs",
+        dest="batch_envs",
+        type=int,
+        default=None,
+        help=f"parallel environments in one batched step ({d.train.batch_envs})",
+    )
+    g.add_argument("--n-steps", type=int, default=None, help=f"rollout steps per update ({d.train.n_steps})")
+    g.add_argument("--batch-size", type=int, default=None, help=f"PPO minibatch size ({d.train.batch_size})")
+    g.add_argument("--update-epochs", type=int, default=None, help=f"PPO epochs per update ({d.train.update_epochs})")
+    g.add_argument("--ent-coef", type=float, default=None, help=f"entropy coefficient ({d.train.ent_coef})")
+    g.add_argument("--clip-coef", type=float, default=None, help=f"PPO clip coefficient ({d.train.clip_coef})")
+    g.add_argument("--gamma", type=float, default=None, help=f"discount factor ({d.train.gamma})")
+    g.add_argument("--lr", type=float, default=None, help=f"Adam learning rate ({d.train.lr})")
+    g.add_argument(
+        "--total-timesteps-per-env",
+        type=int,
+        default=None,
+        help=(
+            f"environment steps per parallel env; multiplied by batch-envs for the run "
+            f"({d.train.total_timesteps_per_env})"
+        ),
+    )
+    g.add_argument(
+        "--no-pcgrad",
+        action="store_true",
+        default=False,
+        help=f"disable PCGrad on actor gradients (default use_pcgrad={d.train.use_pcgrad})",
+    )
+    g.add_argument(
+        "--no-action-x-prior",
+        dest="use_action_x_prior",
+        action="store_false",
+        default=None,
+        help=f"disable −x action prior (default use_action_x_prior={d.train.use_action_x_prior})",
+    )
+    g.add_argument(
+        "--action-x-prior-warmup-fraction",
+        type=float,
+        default=None,
+        help=f"fraction of training to relax −x prior ({d.train.action_x_prior_warmup_fraction})",
+    )
+    g.add_argument(
+        "--actor",
+        choices=["mlp", "recurrent"],
+        default=None,
+        help=f"actor architecture ({d.train.actor})",
+    )
+    g.add_argument(
+        "--device-split",
+        choices=["gpu", "cpu-shard"],
+        default=None,
+        help=f"env device placement ({d.train.device_split})",
+    )
+    g.add_argument("--seed", type=int, default=None, help=f"RNG seed ({d.train.seed})")
+    g.add_argument(
+        "--save-fields",
+        dest="save_fields",
+        action="store_true",
+        default=None,
+        help=f"save velocity/pressure npz snapshots (default={d.train.save_fields})",
+    )
+    g.add_argument(
+        "--no-save-fields",
+        action="store_true",
+        default=False,
+        help="disable field saving",
+    )
+    g.add_argument(
+        "--tensorboard-port",
+        type=int,
+        default=None,
+        help=f"TensorBoard port ({d.train.tensorboard_port})",
+    )
 
     g = parser.add_argument_group("run")
-    g.add_argument("--output-root", type=str, default=None)
-    g.add_argument("--tag", type=str, default=None)
-    g.add_argument("--wall-policy-mode", choices=["static", "dynamic"], default=None)
+    g.add_argument("--output-root", type=str, default=None, help=f"run output directory ({d.run.output_root})")
+    g.add_argument("--tag", type=str, default=None, help=f"suffix for run folder name ({d.run.tag!r})")
+    g.add_argument(
+        "--wall-policy-mode",
+        choices=["static", "dynamic"],
+        default=None,
+        help=f"brute-wall baseline row assignment ({d.run.wall_policy_mode})",
+    )
 
     return parser
 

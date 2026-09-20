@@ -58,7 +58,8 @@ def train_ppo_baseline(
     obs = obs_norm.normalize(obs)
 
     n_steps = cfg.train.n_steps
-    num_updates = max(1, cfg.train.total_timesteps // (n_steps * B))
+    total = cfg.train.total_timesteps_per_env * B
+    num_updates = max(1, total // (n_steps * B))
     global_steps = 0
     w = torch.tensor(
         [cfg.task.w_progress, cfg.task.w_energy, cfg.task.w_smooth],

@@ -49,7 +49,10 @@ def run_brute(
     recorder.save_config(cfg_d)
     env.reset(seed=cfg_d.train.seed)
 
-    steps = max_steps or min(cfg_d.train.total_timesteps, 5000)
+    steps = max_steps or min(
+        cfg_d.train.total_timesteps_per_env * cfg_d.train.batch_envs,
+        5000,
+    )
     global_steps = 0
     while global_steps < steps:
         if policy == "upstream":

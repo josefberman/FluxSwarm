@@ -277,6 +277,9 @@ def train_momappo(
             success_x=cfg.task.success_x,
             failure_x=cfg.task.failure_x,
             radius=cfg.swarm.member_radius,
+            dpi=cfg.train.live_swarm_tb_dpi,
+            fig_scale=cfg.train.live_swarm_tb_scale,
+            display_wh_ratio=cfg.train.live_swarm_tb_aspect,
         )
     obs_np, _ = env.reset(seed=cfg.train.seed)
     cpu_obs_np = None
@@ -387,6 +390,10 @@ def train_momappo(
                         float(torch.linalg.norm(sol.last_thrust[0, 0])),
                         global_steps,
                     )
+                tf = sol.torch_fluid
+                writer.add_scalar("fluid/max_u", tf.max_speed(0), global_steps)
+                writer.add_scalar("fluid/max_p", tf.max_pressure(0), global_steps)
+                writer.add_scalar("fluid/chi_wall", tf.chi_wall(0), global_steps)
                 if swarm_renderer is not None and swarm_tb_every > 0:
                     bucket = global_steps // swarm_tb_every
                     if bucket != last_swarm_tb_bucket:

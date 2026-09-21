@@ -18,10 +18,12 @@ def _style_axis(
     length_y: float,
     success_x: float,
     failure_x: float,
+    *,
+    axis_aspect: str | float = "equal",
 ) -> None:
     ax.set_xlim(0.0, length_x)
     ax.set_ylim(0.0, length_y)
-    ax.set_aspect("equal")
+    ax.set_aspect(axis_aspect)
     ax.set_xlabel("x (mm)")
     ax.set_ylabel("y (mm)")
     ax.axvline(success_x, color="#2E8B57", ls="--", lw=1.0, alpha=0.8, label="success")
@@ -42,6 +44,8 @@ def render_swarm_frame(
     trail: Optional[Sequence[np.ndarray]] = None,
     title: str = "",
     dpi: int = 80,
+    fig_scale: float = 1.0,
+    display_wh_ratio: float | None = None,
 ) -> np.ndarray:
     """Render agent positions to an RGB uint8 array shaped (H, W, 3).
 
@@ -49,25 +53,53 @@ def render_swarm_frame(
     (oldest first) drawn with increasing transparency.
     """
     pos = np.asarray(pos, dtype=np.float64)
-    # Keep a readable channel strip without multi-megapixel frames.
-    fig_w = min(10.0, max(5.0, length_x / max(length_y, 1e-6) * 0.12))
-    fig_h = 2.0
+    scale = max(0.5, float(fig_scale))
+    fig_h = 2.5 * scale
+    if display_wh_ratio is not None:
+        wh = max(1.0, float(display_wh_ratio))
+        fig_w = wh * fig_h
+        axis_aspect = "auto"
+    else:
+        aspect = length_x / max(length_y, 1e-6)
+        fig_w = min(14.0, max(6.0, aspect * 0.14)) * scale
+        axis_aspect = "equal"
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
-    _style_axis(ax, length_x, length_y, success_x, failure_x)
+    _style_axis(
+        ax,
+        length_x,
+        length_y,
+        success_x,
+        failure_x,
+        axis_aspect=axis_aspect,
+    )
 
+    pt_scale = scale * dpi / 72.0
     if trail:
         n_t = len(trail)
         for i, tp in enumerate(trail):
             alpha = 0.08 + 0.35 * ((i + 1) / n_t)
-            ax.scatter(tp[:, 0], tp[:, 1], s=8, c="#4C78A8", alpha=alpha, linewidths=0)
+            ax.scatter(
+                tp[:, 0],
+                tp[:, 1],
+                s=8 * pt_scale,
+                c="#4C78A8",
+                alpha=alpha,
+                linewidths=0,
+            )
 
     if pos.size:
-        ax.scatter(pos[:, 0], pos[:, 1], s=max(12.0, 40.0 * radius), c="#1F4E79", zorder=3)
+        ax.scatter(
+            pos[:, 0],
+            pos[:, 1],
+            s=max(12.0, 40.0 * radius) * pt_scale,
+            c="#1F4E79",
+            zorder=3,
+        )
         for i, (x, y) in enumerate(pos):
             ax.add_patch(plt.Circle((x, y), radius, color="#1F4E79", alpha=0.35, zorder=2))
 
     if title:
-        ax.set_title(title, fontsize=9)
+        ax.set_title(title, fontsize=max(9, int(9 * scale)))
     fig.tight_layout(pad=0.3)
     fig.canvas.draw()
     w, h = fig.canvas.get_width_height()
@@ -92,8 +124,10 @@ class SwarmTrailRenderer:
         success_x: float,
         failure_x: float,
         radius: float,
-        trail_len: int = 40,
-        dpi: int = 72,
+        trail_len: int = 0,
+        dpi: int = 150,
+        fig_scale: float = 1.5,
+        display_wh_ratio: float = 4.0,
     ):
         self.length_x = float(length_x)
         self.length_y = float(length_y)
@@ -101,7 +135,10 @@ class SwarmTrailRenderer:
         self.failure_x = float(failure_x)
         self.radius = float(radius)
         self.dpi = int(dpi)
-        self._trail: Deque[np.ndarray] = deque(maxlen=max(1, int(trail_len)))
+        self.fig_scale = float(fig_scale)
+        self.display_wh_ratio = float(display_wh_ratio)
+        self.trail_len = max(0, int(trail_len))
+        self._trail: Deque[np.ndarray] = deque(maxlen=max(1, self.trail_len)) if self.trail_len > 0 else deque()
 
     def reset_trail(self) -> None:
         self._trail.clear()
@@ -109,7 +146,7 @@ class SwarmTrailRenderer:
     def render(self, pos: np.ndarray, title: str = "") -> np.ndarray:
         """Return CHW float image; updates the trail with ``pos`` (N, 2)."""
         pos = np.asarray(pos, dtype=np.float64)
-        trail = list(self._trail)
+        trail = list(self._trail) if self.trail_len > 0 else None
         rgb = render_swarm_frame(
             pos,
             length_x=self.length_x,
@@ -120,8 +157,11 @@ class SwarmTrailRenderer:
             trail=trail,
             title=title,
             dpi=self.dpi,
+            fig_scale=self.fig_scale,
+            display_wh_ratio=self.display_wh_ratio,
         )
-        self._trail.append(pos.copy())
+        if self.trail_len > 0:
+            self._trail.append(pos.copy())
         return rgb_to_chw_float(rgb)
 
 
@@ -175,7 +215,6 @@ def animate_swarm_from_run(
     out.parent.mkdir(parents=True, exist_ok=True)
 
     frames: list[np.ndarray] = []
-    trail: Deque[np.ndarray] = deque(maxlen=40)
     for i in idx:
         row = steps.iloc[int(i)]
         pos = np.stack(
@@ -190,11 +229,10 @@ def animate_swarm_from_run(
             success_x=success_x,
             failure_x=failure_x,
             radius=radius,
-            trail=list(trail),
             title=title,
             dpi=dpi,
+            display_wh_ratio=4.0,
         )
-        trail.append(pos.copy())
         frames.append(rgb)
 
     if not frames:

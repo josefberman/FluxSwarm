@@ -74,7 +74,7 @@ class TaskConfig:
     success_x: float = 20.0
     failure_x: float = 80.0
     progress_reward: Literal["potential", "fluid-relative", "legacy"] = "potential"
-    w_progress: float = 9.0
+    w_progress: float = 1.0
     w_energy: float = 1.0
     w_smooth: float = 1.0
 
@@ -95,12 +95,12 @@ class ObsConfig:
 @dataclass
 class TrainConfig:
     batch_envs: int = 64
-    n_steps: int = 16
+    n_steps: int = 200
     batch_size: int = 4
     update_epochs: int = 4
     ent_coef: float = 0.01
     clip_coef: float = 0.2
-    gamma: float = 0.95
+    gamma: float = 0.99
     gae_lambda: float = 0.95
     vf_coef: float = 0.5
     lr: float = 1e-3
@@ -118,6 +118,9 @@ class TrainConfig:
     seed: int = 0
     save_fields: bool = False
     live_swarm_tb_every: int = 100  # 0 disables; env-0 position image to TensorBoard
+    live_swarm_tb_dpi: int = 150
+    live_swarm_tb_scale: float = 1.5
+    live_swarm_tb_aspect: float = 4.0  # figure width:height (x:y display)
     tensorboard_port: int = 6006
     resume: bool = True
     resume_from: Optional[str] = None
@@ -211,6 +214,9 @@ def _apply_cli_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "seed": ("train", "seed"),
         "save_fields": ("train", "save_fields"),
         "live_swarm_tb_every": ("train", "live_swarm_tb_every"),
+        "live_swarm_tb_dpi": ("train", "live_swarm_tb_dpi"),
+        "live_swarm_tb_scale": ("train", "live_swarm_tb_scale"),
+        "live_swarm_tb_aspect": ("train", "live_swarm_tb_aspect"),
         "tensorboard_port": ("train", "tensorboard_port"),
         "resume_from": ("train", "resume_from"),
         "actor": ("train", "actor"),
@@ -396,6 +402,24 @@ def build_argparser(description: str | None = None) -> argparse.ArgumentParser:
             f"log env-0 swarm position image to TensorBoard every N global steps "
             f"(0=off; default {d.train.live_swarm_tb_every})"
         ),
+    )
+    g.add_argument(
+        "--live-swarm-tb-dpi",
+        type=int,
+        default=None,
+        help=f"TensorBoard swarm image DPI (default {d.train.live_swarm_tb_dpi})",
+    )
+    g.add_argument(
+        "--live-swarm-tb-scale",
+        type=float,
+        default=None,
+        help=f"TensorBoard swarm figure scale (default {d.train.live_swarm_tb_scale})",
+    )
+    g.add_argument(
+        "--live-swarm-tb-aspect",
+        type=float,
+        default=None,
+        help=f"TensorBoard swarm figure width:height ratio (default {d.train.live_swarm_tb_aspect})",
     )
     g.add_argument(
         "--tensorboard-port",

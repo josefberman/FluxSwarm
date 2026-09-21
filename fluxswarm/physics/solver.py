@@ -59,17 +59,29 @@ class BatchedFluidSolver:
             env_ids = torch.arange(self.batch, device=self.device)
         self.swarm.reset_envs(env_ids, self.cfg.swarm, self.sim)
         self.episode_time[env_ids] = 0.0
-        if env_ids.numel() == self.batch:
-            self.torch_fluid.reset()
+        self.torch_fluid.reset(env_ids)
 
     def _sample_rings(self) -> None:
-        """Sample pressure and velocity on rings around each member."""
-        factor = self.cfg.obs.ring_radius_factor
-        r = self.swarm.radii * factor
+        """Sample pressure and velocity on rings in the fluid around each disc."""
+        delta = min(self.sim.dx, self.sim.dy)
+        ly, lx = self.sim.length_y, self.sim.length_x
+        r_agent = self.swarm.radii
+        r = torch.maximum(r_agent * self.cfg.obs.ring_radius_factor, r_agent + delta)
         cx = self.swarm.pos[..., 0:1]
         cy = self.swarm.pos[..., 1:2]
-        sx = (cx + r.unsqueeze(-1) * torch.cos(self.angles)).clamp(0.0, self.sim.length_x)
-        sy = (cy + r.unsqueeze(-1) * torch.sin(self.angles)).clamp(0.0, self.sim.length_y)
+        sx = cx + r.unsqueeze(-1) * torch.cos(self.angles)
+        sy = cy + r.unsqueeze(-1) * torch.sin(self.angles)
+        r_min = (r_agent + delta).unsqueeze(-1)
+        for _ in range(2):
+            sy = sy.clamp(delta, ly - delta)
+            dx = sx - cx
+            dy = sy - cy
+            dist = torch.sqrt(dx * dx + dy * dy).clamp(min=1e-12)
+            scale = torch.clamp(r_min / dist, min=1.0)
+            sx = cx + dx * scale
+            sy = cy + dy * scale
+        sy = sy.clamp(delta, ly - delta)
+        sx = sx.clamp(0.0, lx)
         p, u, v = self.torch_fluid.sample_at(sx, sy)
         self.last_pressure_ring = p
         self.last_vel_ring_u = u

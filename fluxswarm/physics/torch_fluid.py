@@ -115,27 +115,52 @@ class TorchFluidSolver:
 
         self.parabolic = poiseuille_on_grid(ny, sim.length_y, device=device)
         self.delta_chi = 0.5 * min(dx, dy)
+        self.last_chi_u: torch.Tensor | None = None
+        self.last_chi_v: torch.Tensor | None = None
 
         self.u = torch.zeros(batch, nx + 1, ny, device=device, dtype=self.dtype)
         self.v = torch.zeros(batch, nx, ny + 1, device=device, dtype=self.dtype)
         self.p = torch.zeros(batch, nx, ny, device=device, dtype=self.dtype)
         self.apply_inflow(0.0, 0.0, absolute=True)
 
-    def reset(self) -> None:
-        self.u.zero_()
-        self.v.zero_()
-        self.p.zero_()
-        self.apply_inflow(0.0, 0.0, absolute=True)
+    def reset(self, env_ids: torch.Tensor | None = None) -> None:
+        if env_ids is None or env_ids.numel() == self.batch:
+            self.u.zero_()
+            self.v.zero_()
+            self.p.zero_()
+            self.apply_inflow(0.0, 0.0, absolute=True)
+            return
+        ids = env_ids.long()
+        self.u[ids] = 0
+        self.v[ids] = 0
+        self.p[ids] = 0
+        self.apply_inflow(0.0, 0.0, absolute=True, env_ids=ids)
 
-    def apply_inflow(self, t: float, dt_sub: float, absolute: bool = False) -> None:
+    def apply_inflow(
+        self,
+        t: float,
+        dt_sub: float,
+        absolute: bool = False,
+        chi_u: torch.Tensor | None = None,
+        env_ids: torch.Tensor | None = None,
+    ) -> None:
         amp, period = self.sim.inflow_velocity, self.sim.inflow_period
         if absolute:
             scale = beat_waveform(t, amp, period)
-            self.u[:] = scale * self.parabolic[None, None, :]
-            self.v.zero_()
+            profile = scale * self.parabolic[None, None, :]
+            if env_ids is None:
+                self.u[:] = profile
+                self.v.zero_()
+            else:
+                ids = env_ids.long()
+                self.u[ids] = profile
+                self.v[ids] = 0
             return
         scale = beat_waveform(t + dt_sub, amp, period) - beat_waveform(t, amp, period)
-        self.u.add_(scale * self.parabolic[None, None, :])
+        delta = scale * self.parabolic[None, None, :]
+        if chi_u is not None:
+            delta = delta * (1.0 - chi_u)
+        self.u.add_(delta)
 
     def _lap_u(self) -> torch.Tensor:
         u = self.u
@@ -153,9 +178,21 @@ class TorchFluidSolver:
         d2y = (vy[:, :, 2:] - 2.0 * v + vy[:, :, :-2]) / self.dy**2
         return d2x + d2y
 
-    def diffuse(self, nu: float, dt: float) -> None:
-        self.u = self.u + dt * nu * self._lap_u()
-        self.v = self.v + dt * nu * self._lap_v()
+    def diffuse(
+        self,
+        nu: float,
+        dt: float,
+        chi_u: torch.Tensor | None = None,
+        chi_v: torch.Tensor | None = None,
+    ) -> None:
+        du = dt * nu * self._lap_u()
+        dv = dt * nu * self._lap_v()
+        if chi_u is not None:
+            du = du * (1.0 - chi_u)
+        if chi_v is not None:
+            dv = dv * (1.0 - chi_v)
+        self.u = self.u + du
+        self.v = self.v + dv
         self.enforce_bc()
 
     def _v_on_u(self) -> torch.Tensor:
@@ -218,14 +255,27 @@ class TorchFluidSolver:
         dx = xs[None, None, :, None] - pos[:, :, 0, None, None]
         dy = ys[None, None, None, :] - pos[:, :, 1, None, None]
         dist = torch.sqrt(dx * dx + dy * dy)
-        sdf = dist - radii[:, :, None, None]
-        sdf_min, idx = sdf.min(dim=1)
+        sdf_disc = dist - radii[:, :, None, None]
+        sdf_min, idx = sdf_disc.min(dim=1)
+        # Disc ∪ channel walls (half-planes y≤0 and y≥L) so a touching body
+        # does not poke through the no-slip boundary. obs still comes from the
+        # nearest disc; wall faces override below.
+        sdf_wall = torch.minimum(ys[None, None, :], self.ly - ys[None, None, :])
+        sdf_min = torch.minimum(sdf_min, sdf_wall)
         chi = 0.5 * (1.0 - torch.tanh(sdf_min / self.delta_chi))
         b = torch.arange(self.batch, device=self.device)[:, None, None].expand_as(idx)
         if component is None:
-            # u-faces (x_off==0) take vx; v-faces take vy
             component = 0 if x_off == 0.0 else 1
         obs = vel[b, idx, component]
+        # Wall faces: no-slip, never write agent velocity onto the wall layer.
+        if y_off == 0.0:
+            chi[:, :, 0] = 1.0
+            chi[:, :, -1] = 1.0
+            obs[:, :, 0] = 0.0
+            obs[:, :, -1] = 0.0
+        else:
+            obs[:, :, 0] = 0.0
+            obs[:, :, -1] = 0.0
         return chi, obs
 
     def brinkman(
@@ -234,9 +284,16 @@ class TorchFluidSolver:
         chi_v: torch.Tensor,
         u_obs: torch.Tensor,
         v_obs: torch.Tensor,
+        dt: float,
+        eta: float | None = None,
     ) -> None:
-        self.u = self.u * (1.0 - chi_u) + chi_u * u_obs
-        self.v = self.v * (1.0 - chi_v) + chi_v * v_obs
+        """Implicit finite-η volume penalization (still two-way)."""
+        if eta is None:
+            eta = max(dt, 1e-12)
+        k = (dt / eta) * chi_u
+        self.u = (self.u + k * u_obs) / (1.0 + k)
+        k = (dt / eta) * chi_v
+        self.v = (self.v + k * v_obs) / (1.0 + k)
 
     def project(self) -> None:
         div = (self.u[:, 1:, :] - self.u[:, :-1, :]) / self.dx + (self.v[:, :, 1:] - self.v[:, :, :-1]) / self.dy
@@ -249,6 +306,9 @@ class TorchFluidSolver:
     def enforce_bc(self) -> None:
         self.v[:, :, 0] = 0.0
         self.v[:, :, -1] = 0.0
+        # Wall-adjacent staggered-u rows (cell centers nearest y=0 and y=L).
+        self.u[:, :, 0] = 0.0
+        self.u[:, :, -1] = 0.0
 
     def substep_loop(
         self,
@@ -262,15 +322,30 @@ class TorchFluidSolver:
     ) -> None:
         dt_sub = dt / n_sub
         chi_u, chi_v, u_obs, v_obs = self.rasterize(pos, vel, radii)
+        self.last_chi_u, self.last_chi_v = chi_u, chi_v
+        eta = dt_sub
         for s in range(n_sub):
             t_sub = t0 + s * dt_sub
-            self.apply_inflow(t_sub, dt_sub, absolute=False)
-            self.diffuse(nu, dt_sub)
+            self.apply_inflow(t_sub, dt_sub, absolute=False, chi_u=chi_u)
+            self.diffuse(nu, dt_sub, chi_u=chi_u, chi_v=chi_v)
             self.advect(dt_sub)
-            self.brinkman(chi_u, chi_v, u_obs, v_obs)
+            self.brinkman(chi_u, chi_v, u_obs, v_obs, dt_sub, eta=eta)
             self.project()
-            self.brinkman(chi_u, chi_v, u_obs, v_obs)
+            self.brinkman(chi_u, chi_v, u_obs, v_obs, dt_sub, eta=eta)
             self.enforce_bc()
+
+    def max_speed(self, env_index: int = 0) -> float:
+        i = env_index
+        return float(torch.maximum(self.u[i].abs().amax(), self.v[i].abs().amax()).item())
+
+    def max_pressure(self, env_index: int = 0) -> float:
+        return float(self.p[env_index].abs().amax().item())
+
+    def chi_wall(self, env_index: int = 0) -> float:
+        if self.last_chi_v is None:
+            return 0.0
+        chi = self.last_chi_v[env_index]
+        return float(0.5 * (chi[:, 0].mean() + chi[:, -1].mean()).item())
 
     def sample_at(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         p = _nn_sample(self.p, x, y, 0.5 * self.dx, 0.5 * self.dy, self.dx, self.dy)

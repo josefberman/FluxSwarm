@@ -44,7 +44,7 @@ def _progress(solver: BatchedFluidSolver, task: TaskConfig, prev_pos: torch.Tens
 
     if mode == "potential":
         dx = prev_pos[..., 0] - pos[..., 0]  # positive when moving upstream
-        prog = dx / L
+        prog = 100.0 * dx / L
         # Terminal bonuses applied by env on done; keep step shaping clean
         return prog
 

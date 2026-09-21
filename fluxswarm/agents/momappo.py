@@ -39,6 +39,89 @@ class RunningNorm:
     def normalize(self, x: torch.Tensor) -> torch.Tensor:
         return (x - self.mean) / (self.var.sqrt() + 1e-8)
 
+    def state_dict(self) -> dict:
+        return {
+            "mean": self.mean.detach().cpu(),
+            "var": self.var.detach().cpu(),
+            "count": float(self.count),
+        }
+
+    def load_state_dict(self, state: dict, device: torch.device) -> None:
+        self.mean = state["mean"].to(device=device, dtype=self.mean.dtype)
+        self.var = state["var"].to(device=device, dtype=self.var.dtype)
+        self.count = float(state["count"])
+
+
+def resolve_resume_dir(spec: str, output_root: str | Path) -> Path:
+    """Resolve a former run folder from a name, relative path, or absolute path."""
+    raw = Path(spec).expanduser()
+    candidates = [raw]
+    if not raw.is_absolute():
+        candidates.append(Path(output_root) / spec)
+        candidates.append(Path.cwd() / spec)
+    for cand in candidates:
+        if cand.is_dir() and ((cand / "models").is_dir() or (cand / "config.yaml").exists()):
+            return cand.resolve()
+    raise FileNotFoundError(
+        f"resume-from run folder not found: {spec!r} (looked under {output_root})"
+    )
+
+
+def find_resume_checkpoint(run_dir: Path) -> Path:
+    latest = run_dir / "models" / "model_latest.pt"
+    if latest.is_file():
+        return latest
+    numbered = sorted((run_dir / "models").glob("model_*.pt")) if (run_dir / "models").is_dir() else []
+    if numbered:
+        return numbered[-1]
+    raise FileNotFoundError(f"no checkpoint in {run_dir / 'models'}")
+
+
+def pack_checkpoint(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    obs_norm: RunningNorm,
+    *,
+    num_members: int,
+    obs_local_dim: int,
+    global_steps: int,
+    use_pcgrad: bool,
+) -> dict:
+    return {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "obs_norm": obs_norm.state_dict(),
+        "num_members": num_members,
+        "obs_local_dim": obs_local_dim,
+        "total_timesteps": global_steps,
+        "use_pcgrad": use_pcgrad,
+    }
+
+
+def apply_checkpoint(
+    ckpt: dict,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    obs_norm: RunningNorm,
+    device: torch.device,
+    *,
+    num_members: int,
+    obs_local_dim: int,
+) -> int:
+    if int(ckpt.get("num_members", num_members)) != num_members:
+        raise ValueError(
+            f"checkpoint num_members={ckpt.get('num_members')} != current {num_members}"
+        )
+    if int(ckpt.get("obs_local_dim", obs_local_dim)) != obs_local_dim:
+        raise ValueError(
+            f"checkpoint obs_local_dim={ckpt.get('obs_local_dim')} != current {obs_local_dim}"
+        )
+    model.load_state_dict(ckpt["model"])
+    optimizer.load_state_dict(ckpt["optimizer"])
+    if "obs_norm" in ckpt:
+        obs_norm.load_state_dict(ckpt["obs_norm"], device)
+    return int(ckpt.get("total_timesteps", 0))
+
 
 def blend_preset_x(raw: torch.Tensor, relax: float, preset_x: float = -0.95) -> torch.Tensor:
     """Blend toward upstream thrust, staying strictly inside the open unit disk.
@@ -158,12 +241,43 @@ def train_momappo(
     models_dir = recorder.run_dir / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
     latest = models_dir / "model_latest.pt"
-    if cfg.train.resume and latest.exists():
-        ckpt = torch.load(latest, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model"])
-        optimizer.load_state_dict(ckpt["optimizer"])
+
+    global_steps = 0
+    skip_prior_warmup = False
+    resume_ckpt_path: Optional[Path] = None
+    if cfg.train.resume_from:
+        src = resolve_resume_dir(cfg.train.resume_from, cfg.run.output_root)
+        resume_ckpt_path = find_resume_checkpoint(src)
+        skip_prior_warmup = True
+    elif cfg.train.resume and latest.exists():
+        resume_ckpt_path = latest
+
+    if resume_ckpt_path is not None:
+        ckpt = torch.load(resume_ckpt_path, map_location=device, weights_only=False)
+        global_steps = apply_checkpoint(
+            ckpt,
+            model,
+            optimizer,
+            obs_norm,
+            device,
+            num_members=N,
+            obs_local_dim=obs_dim,
+        )
+        print(f"Resumed from {resume_ckpt_path} at global_steps={global_steps}")
 
     writer = SummaryWriter(log_dir=str(recorder.run_dir / "tb"))
+    swarm_tb_every = int(cfg.train.live_swarm_tb_every)
+    swarm_renderer = None
+    if swarm_tb_every > 0:
+        from fluxswarm.analysis.swarm_viz import SwarmTrailRenderer
+
+        swarm_renderer = SwarmTrailRenderer(
+            length_x=cfg.sim.length_x,
+            length_y=cfg.sim.length_y,
+            success_x=cfg.task.success_x,
+            failure_x=cfg.task.failure_x,
+            radius=cfg.swarm.member_radius,
+        )
     obs_np, _ = env.reset(seed=cfg.train.seed)
     cpu_obs_np = None
     if cpu_env is not None:
@@ -177,8 +291,8 @@ def train_momappo(
     envs_per_step = B + (cpu_n if cpu_env is not None else 0)
     total = cfg.train.total_timesteps_per_env * envs_per_step
     num_updates = max(1, total // (n_steps * envs_per_step))
-    global_steps = 0
     prior_warmup_rows = max(1, int(num_updates * n_steps * cfg.train.action_x_prior_warmup_fraction))
+    last_swarm_tb_bucket = -1
 
     pbar = trange(num_updates, desc="MOMAPPO")
     for update in pbar:
@@ -189,7 +303,7 @@ def train_momappo(
                 raw_action, logp_pre = tanh_sample(dist)
                 logp = logp_pre.sum(dim=-1)
                 relax = 1.0
-                if cfg.train.use_action_x_prior:
+                if cfg.train.use_action_x_prior and not skip_prior_warmup:
                     row = update * n_steps + t
                     relax = min(1.0, (row + 1) / prior_warmup_rows)
                     action = blend_preset_x(raw_action, relax)
@@ -273,6 +387,18 @@ def train_momappo(
                         float(torch.linalg.norm(sol.last_thrust[0, 0])),
                         global_steps,
                     )
+                if swarm_renderer is not None and swarm_tb_every > 0:
+                    bucket = global_steps // swarm_tb_every
+                    if bucket != last_swarm_tb_bucket:
+                        last_swarm_tb_bucket = bucket
+                        if info["infos"][0].get("episode") is not None:
+                            swarm_renderer.reset_trail()
+                        pos0 = a0.pos[0].detach().cpu().numpy()
+                        img = swarm_renderer.render(
+                            pos0,
+                            title=f"step {global_steps}  t={float(env.solver.episode_time[0]):.2f}s",
+                        )
+                        writer.add_image("swarm/positions", img, global_steps)
 
             next_obs = torch.tensor(next_obs_np, device=device)
             next_obs = torch.nan_to_num(next_obs, nan=0.0, posinf=0.0, neginf=0.0)
@@ -365,14 +491,15 @@ def train_momappo(
                 nn.utils.clip_grad_norm_(model.parameters(), cfg.train.max_grad_norm)
                 optimizer.step()
 
-        ckpt = {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "num_members": N,
-            "obs_local_dim": obs_dim,
-            "total_timesteps": global_steps,
-            "use_pcgrad": cfg.train.use_pcgrad,
-        }
+        ckpt = pack_checkpoint(
+            model,
+            optimizer,
+            obs_norm,
+            num_members=N,
+            obs_local_dim=obs_dim,
+            global_steps=global_steps,
+            use_pcgrad=cfg.train.use_pcgrad,
+        )
         torch.save(ckpt, latest)
         torch.save(ckpt, models_dir / f"model_{update:05d}.pt")
         pbar.set_postfix(steps=global_steps, ent=float(entropy.detach()))
@@ -381,4 +508,12 @@ def train_momappo(
     recorder.close()
     if cpu_pool is not None:
         cpu_pool.shutdown(wait=True)
+    try:
+        from fluxswarm.analysis.swarm_viz import animate_swarm_from_run
+
+        anim = animate_swarm_from_run(recorder.run_dir)
+        if anim is not None:
+            print(f"Wrote swarm animation {anim}")
+    except Exception as exc:
+        print(f"Swarm animation skipped: {exc}")
     return recorder.run_dir

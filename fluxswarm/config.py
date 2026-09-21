@@ -117,8 +117,10 @@ class TrainConfig:
     cpu_shard_fraction: float = 0.25
     seed: int = 0
     save_fields: bool = False
+    live_swarm_tb_every: int = 100  # 0 disables; env-0 position image to TensorBoard
     tensorboard_port: int = 6006
     resume: bool = True
+    resume_from: Optional[str] = None
 
 
 @dataclass
@@ -208,7 +210,9 @@ def _apply_cli_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "device_split": ("train", "device_split"),
         "seed": ("train", "seed"),
         "save_fields": ("train", "save_fields"),
+        "live_swarm_tb_every": ("train", "live_swarm_tb_every"),
         "tensorboard_port": ("train", "tensorboard_port"),
+        "resume_from": ("train", "resume_from"),
         "actor": ("train", "actor"),
         "output_root": ("run", "output_root"),
         "tag": ("run", "tag"),
@@ -385,10 +389,28 @@ def build_argparser(description: str | None = None) -> argparse.ArgumentParser:
         help="disable field saving",
     )
     g.add_argument(
+        "--live-swarm-tb-every",
+        type=int,
+        default=None,
+        help=(
+            f"log env-0 swarm position image to TensorBoard every N global steps "
+            f"(0=off; default {d.train.live_swarm_tb_every})"
+        ),
+    )
+    g.add_argument(
         "--tensorboard-port",
         type=int,
         default=None,
         help=f"TensorBoard port ({d.train.tensorboard_port})",
+    )
+    g.add_argument(
+        "--resume-from",
+        type=str,
+        default=None,
+        help=(
+            "former run folder name or path; start a new run from that checkpoint "
+            "(weights, optimizer, obs-norm, global steps; skip action-x-prior warmup)"
+        ),
     )
 
     g = parser.add_argument_group("run")

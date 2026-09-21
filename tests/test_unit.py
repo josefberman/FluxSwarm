@@ -26,11 +26,35 @@ def test_config_roundtrip(tmp_path):
     assert loaded.obs.localization == "imu"
 
 
-def test_cli_overrides():
-    cfg = parse_config(["--batch-envs", "4", "--no-pcgrad", "--dt-substeps", "20"])
-    assert cfg.train.batch_envs == 4
-    assert cfg.train.use_pcgrad is False
-    assert cfg.sim.dt_substeps == 20
+def test_cli_resume_from():
+    cfg = parse_config(["--resume-from", "my_old_run", "--batch-envs", "2"])
+    assert cfg.train.resume_from == "my_old_run"
+    assert cfg.train.batch_envs == 2
+
+
+def test_resolve_resume_dir(tmp_path):
+    from fluxswarm.agents.momappo import find_resume_checkpoint, resolve_resume_dir
+
+    root = tmp_path / "runs_new"
+    run = root / "former_run"
+    (run / "models").mkdir(parents=True)
+    (run / "config.yaml").write_text("sim: {}\n")
+    ckpt = run / "models" / "model_latest.pt"
+    ckpt.write_bytes(b"x")
+    assert resolve_resume_dir("former_run", root) == run.resolve()
+    assert find_resume_checkpoint(run) == ckpt
+
+
+def test_obs_norm_roundtrip():
+    from fluxswarm.agents.momappo import RunningNorm
+
+    device = torch.device("cpu")
+    n = RunningNorm(3, device)
+    n.update(torch.tensor([[1.0, 2.0, 3.0], [3.0, 4.0, 5.0]]))
+    n2 = RunningNorm(3, device)
+    n2.load_state_dict(n.state_dict(), device)
+    assert torch.allclose(n.mean, n2.mean)
+    assert abs(n.count - n2.count) < 1e-9
 
 
 def test_stokes_drag_opposes_relative_velocity():

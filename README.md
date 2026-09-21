@@ -30,6 +30,17 @@ python -m fluxswarm.cli train \
 
 Prefer `--progress-reward potential` (dense upstream displacement shaping) over `legacy` for stable learning under pulsatile inflow.
 
+Continue a finished run in a **new** folder (weights, optimizer, obs-norm, global steps; no action-x-prior warmup). `--total-timesteps-per-env` is additional budget:
+
+```bash
+python -m fluxswarm.cli train \
+  --resume-from 2026-09-21_11-30-51_momappo \
+  --total-timesteps-per-env 25000 \
+  --tag continued
+```
+
+Live swarm positions appear in TensorBoard under `swarm/positions` (every `--live-swarm-tb-every` steps, default 100). After training (or via `python -m fluxswarm.cli figures --run …`), a subsampled GIF is written to `figures/swarm_motion.gif`.
+
 ## Baselines
 
 ```bash
@@ -54,6 +65,8 @@ Single-run figures land in `runs_new/<run_id>/figures/`. Comparisons go to `runs
 | `--obs-localization {none,imu,displacement,absolute-y,full}` | Localization ablation |
 | `--progress-reward {potential,fluid-relative,legacy}` | Progress objective (prefer `potential`) |
 | `--dt-substeps` | Fluid substeps per RL step (default 40; CFL headroom) |
+| `--live-swarm-tb-every` | TB swarm image every N steps (default 100; `0`=off) |
+| `--resume-from` | Former run folder name or path; new run continues from that checkpoint |
 | `--no-pcgrad` | Disable gradient surgery |
 | `--output-root` | Default `runs_new` |
 | `--batch-envs` | Env batch size (default 64) |

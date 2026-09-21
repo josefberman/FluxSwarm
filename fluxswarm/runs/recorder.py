@@ -53,6 +53,7 @@ class RunRecorder:
             "git_commit": _git_commit(),
             "run_id": self.run_id,
             "use_pcgrad": cfg.train.use_pcgrad,
+            "resume_from": cfg.train.resume_from,
         }
         with (self.run_dir / "meta.json").open("w") as f:
             json.dump(meta, f, indent=2)

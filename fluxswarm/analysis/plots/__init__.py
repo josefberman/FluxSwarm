@@ -308,7 +308,7 @@ def plot_pcgrad_comparison(with_dir: Path, without_dir: Path, out_dir: Optional[
 
 def generate_all_for_run(run_dir: Path) -> list[Path]:
     run_dir = Path(run_dir)
-    return [
+    paths = [
         plot_reward_per_episode(run_dir),
         plot_episode_length(run_dir),
         plot_center_of_mass(run_dir),
@@ -318,3 +318,12 @@ def generate_all_for_run(run_dir: Path) -> list[Path]:
         plot_architecture(run_dir, "actor"),
         plot_architecture(run_dir, "critic"),
     ]
+    try:
+        from fluxswarm.analysis.swarm_viz import animate_swarm_from_run
+
+        anim = animate_swarm_from_run(run_dir)
+        if anim is not None:
+            paths.append(anim)
+    except Exception:
+        pass
+    return paths

@@ -230,6 +230,24 @@ def train_momappo(
                 writer.add_scalar("objectives/progress", float(reward_matrix[0, :, 0].mean()), global_steps)
                 writer.add_scalar("objectives/energy", float(reward_matrix[0, :, 1].mean()), global_steps)
                 writer.add_scalar("objectives/smoothness", float(reward_matrix[0, :, 2].mean()), global_steps)
+                ep0 = info["infos"][0].get("episode")
+                if ep0 is not None:
+                    cum_p, cum_e, cum_s = (
+                        ep0["cum_progress"],
+                        ep0["cum_energy_efficiency"],
+                        ep0["cum_smoothness"],
+                    )
+                    n_steps_ep = max(int(ep0["steps"]), 1)
+                else:
+                    cum0 = env.cum_objectives[0]
+                    cum_p, cum_e, cum_s = float(cum0[0]), float(cum0[1]), float(cum0[2])
+                    n_steps_ep = max(int(env.episode_steps[0].item()), 1)
+                writer.add_scalar("objectives/cum_progress", cum_p, global_steps)
+                writer.add_scalar("objectives/cum_energy", cum_e, global_steps)
+                writer.add_scalar("objectives/cum_smoothness", cum_s, global_steps)
+                writer.add_scalar("objectives/mean_progress", cum_p / n_steps_ep, global_steps)
+                writer.add_scalar("objectives/mean_energy", cum_e / n_steps_ep, global_steps)
+                writer.add_scalar("objectives/mean_smoothness", cum_s / n_steps_ep, global_steps)
                 writer.add_scalar("training/action_x_prior_relax", relax, global_steps)
                 a0 = env.solver.swarm
                 writer.add_scalar("agent0/pos_x", float(a0.pos[0, 0, 0]), global_steps)

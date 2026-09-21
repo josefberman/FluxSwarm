@@ -1,4 +1,4 @@
-"""Unit tests that do not require a full PhiFlow GPU solve."""
+"""Unit tests that do not require a full fluid solve."""
 from __future__ import annotations
 
 import math
@@ -12,26 +12,35 @@ from fluxswarm.config import Config, parse_config
 from fluxswarm.envs.observations import ObservationBuilder, obs_dim, obs_dim_stacked
 from fluxswarm.envs.rewards import _energy, _smoothness
 from fluxswarm.physics.inflow import beat_waveform, poiseuille_profile
-from fluxswarm.physics.swarm import member_mass_2d, project_actions_to_unit_disk, resolve_collisions
+from fluxswarm.physics.swarm import member_mass_2d, project_actions_to_unit_disk, resolve_collisions, stokes_drag_2d
 from fluxswarm.physics.domain import Domain
 
 
 def test_config_roundtrip(tmp_path):
     cfg = Config()
-    cfg.sim.coupling = "one-way"
     cfg.obs.localization = "imu"
     path = tmp_path / "cfg.yaml"
     cfg.save(path)
     loaded = Config.load(path)
-    assert loaded.sim.coupling == "one-way"
+    assert loaded.sim.dt_substeps == 40
     assert loaded.obs.localization == "imu"
 
 
 def test_cli_overrides():
-    cfg = parse_config(["--batch-envs", "4", "--no-pcgrad", "--coupling", "one-way"])
+    cfg = parse_config(["--batch-envs", "4", "--no-pcgrad", "--dt-substeps", "20"])
     assert cfg.train.batch_envs == 4
     assert cfg.train.use_pcgrad is False
-    assert cfg.sim.coupling == "one-way"
+    assert cfg.sim.dt_substeps == 20
+
+
+def test_stokes_drag_opposes_relative_velocity():
+    vel = torch.tensor([[[10.0, 0.0]]])
+    fu = torch.tensor([[0.0]])
+    fv = torch.tensor([[0.0]])
+    f = stokes_drag_2d(vel, fu, fv, mu=3.0)
+    # Agent faster than fluid in +x → drag in -x
+    assert float(f[0, 0, 0]) < 0.0
+    assert abs(float(f[0, 0, 1])) < 1e-9
 
 
 def test_mass_is_2d_disc():

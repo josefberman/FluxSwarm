@@ -41,9 +41,6 @@ def run_brute(
     cfg_d = Config.from_dict(cfg.to_dict())
     cfg_d.train.batch_envs = min(cfg_d.train.batch_envs, 8)
     cfg_d.run.tag = cfg_d.run.tag or f"brute_{policy}"
-    # Prefer one-way for fast baselines
-    if cfg_d.sim.coupling == "two-way" and max_steps is None:
-        pass  # honor config
     env = BatchedSwarmEnv(cfg_d, batch=cfg_d.train.batch_envs)
     recorder = RunRecorder(cfg_d, algorithm=f"brute_{policy}")
     recorder.save_config(cfg_d)

@@ -13,7 +13,7 @@ from fluxswarm.physics.solver import BatchedFluidSolver
 
 
 class BatchedSwarmEnv:
-    """Vector-native env: steps all batch_envs in one PhiFlow call.
+    """Vector-native env: steps all batch_envs in one GPU fluid call.
 
     API mirrors gymnasium VectorEnv enough for our trainers:
       reset() -> obs (B,N,D), info

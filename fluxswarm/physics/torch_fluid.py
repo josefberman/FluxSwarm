@@ -1,6 +1,6 @@
 """GPU Navier–Stokes with Brinkman obstacles and a DCT Poisson solve.
 
-Used for two-way coupling. The Poisson matrix stays obstacle-free, so each
+Two-way Brinkman/DCT solver. The Poisson matrix stays obstacle-free, so each
 pressure projection is a pair of batched DCTs instead of SciPy CG+ILU.
 """
 from __future__ import annotations

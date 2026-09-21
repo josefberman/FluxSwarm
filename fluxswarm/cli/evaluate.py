@@ -25,7 +25,6 @@ def main(argv: list[str] | None = None) -> None:
     ).exists() else parse_config([])
     # Apply overrides from remaining known flags via a second parse is awkward; use defaults + checkpoint
     cfg.train.batch_envs = 1
-    cfg.sim.coupling = getattr(args, "coupling", None) or cfg.sim.coupling
 
     env = BatchedSwarmEnv(cfg, batch=1)
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)

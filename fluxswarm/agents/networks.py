@@ -72,7 +72,7 @@ def tanh_sample(dist: Normal) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 def tanh_log_prob(dist: Normal, action: torch.Tensor) -> torch.Tensor:
-    a = action.clamp(-0.999999, 0.999999)
+    a = action.clamp(-0.999, 0.999)
     z = 0.5 * torch.log((1 + a) / (1 - a))
     return dist.log_prob(z) - torch.log(1.0 - a.pow(2) + 1e-6)
 

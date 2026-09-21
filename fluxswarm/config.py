@@ -20,11 +20,10 @@ class SimConfig:
     resolution_scale: float = 10.0  # cells per mm
     dt: float = 0.005
     total_time: float = 100.0
-    dt_substeps: int = 20
+    dt_substeps: int = 40
     viscosity: float = 3.0
     inflow_velocity: float = 400.0
     inflow_period: float = 1.0
-    coupling: Literal["two-way", "one-way"] = "one-way"
     fluid_density: float = 1.06
 
     @property
@@ -178,7 +177,6 @@ def _apply_cli_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "total_time": ("sim", "total_time"),
         "dt_substeps": ("sim", "dt_substeps"),
         "inflow_velocity": ("sim", "inflow_velocity"),
-        "coupling": ("sim", "coupling"),
         "swarm_num_x": ("swarm", "num_x"),
         "swarm_num_y": ("swarm", "num_y"),
         "member_radius": ("swarm", "member_radius"),
@@ -259,15 +257,6 @@ def build_argparser(description: str | None = None) -> argparse.ArgumentParser:
     g.add_argument("--total-time", type=float, default=None, help=f"sim horizon used for time_steps, s ({d.sim.total_time})")
     g.add_argument("--dt-substeps", type=int, default=None, help=f"fluid substeps per RL step ({d.sim.dt_substeps})")
     g.add_argument("--inflow-velocity", type=float, default=None, help=f"peak inflow centerline velocity, mm/s ({d.sim.inflow_velocity})")
-    g.add_argument(
-        "--coupling",
-        choices=["two-way", "one-way"],
-        default=None,
-        help=(
-            f"fluid–swarm coupling ({d.sim.coupling}); two-way uses GPU Brinkman "
-            f"penalization and a DCT Poisson solve"
-        ),
-    )
 
     g = parser.add_argument_group("swarm")
     g.add_argument("--swarm-num-x", type=int, default=None, help=f"members along x ({d.swarm.num_x})")
@@ -283,7 +272,10 @@ def build_argparser(description: str | None = None) -> argparse.ArgumentParser:
         "--progress-reward",
         choices=["potential", "fluid-relative", "legacy"],
         default=None,
-        help=f"progress objective formulation ({d.task.progress_reward})",
+        help=(
+            f"progress objective formulation ({d.task.progress_reward}); "
+            f"prefer 'potential' for dense upstream gradients"
+        ),
     )
     g.add_argument("--w-progress", type=float, default=None, help=f"progress reward weight ({d.task.w_progress})")
     g.add_argument("--w-energy", type=float, default=None, help=f"energy reward weight ({d.task.w_energy})")

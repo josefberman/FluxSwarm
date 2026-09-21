@@ -40,13 +40,17 @@ class RunningNorm:
         return (x - self.mean) / (self.var.sqrt() + 1e-8)
 
 
-def blend_preset_x(raw: torch.Tensor, relax: float, preset_x: float = -1.0) -> torch.Tensor:
-    """Blend toward -x thrust prior, then project to unit disk via tanh already applied."""
+def blend_preset_x(raw: torch.Tensor, relax: float, preset_x: float = -0.95) -> torch.Tensor:
+    """Blend toward upstream thrust, staying strictly inside the open unit disk.
+
+    ``preset_x`` must be in (-1, 0] so atanh stays finite for PPO log-probs.
+    """
     r = float(np.clip(relax, 0.0, 1.0))
     out = raw.clone()
-    out[..., 0] = (1 - r) * preset_x + r * raw[..., 0]
+    out[..., 0] = (1.0 - r) * preset_x + r * raw[..., 0]
+    out = out.clamp(-0.999, 0.999)
     norms = torch.linalg.norm(out, dim=-1, keepdim=True).clamp_min(1e-8)
-    return out / torch.clamp(norms, min=1.0) * torch.clamp(norms, max=1.0)
+    return torch.where(norms > 1.0, out / norms, out)
 
 
 def compute_gae(
@@ -227,8 +231,33 @@ def train_momappo(
                 writer.add_scalar("objectives/energy", float(reward_matrix[0, :, 1].mean()), global_steps)
                 writer.add_scalar("objectives/smoothness", float(reward_matrix[0, :, 2].mean()), global_steps)
                 writer.add_scalar("training/action_x_prior_relax", relax, global_steps)
+                a0 = env.solver.swarm
+                writer.add_scalar("agent0/pos_x", float(a0.pos[0, 0, 0]), global_steps)
+                writer.add_scalar("agent0/pos_y", float(a0.pos[0, 0, 1]), global_steps)
+                writer.add_scalar("agent0/vel_x", float(a0.vel[0, 0, 0]), global_steps)
+                writer.add_scalar("agent0/vel_y", float(a0.vel[0, 0, 1]), global_steps)
+                writer.add_scalar("agent0/act_x", float(a0.action[0, 0, 0]), global_steps)
+                writer.add_scalar("agent0/act_y", float(a0.action[0, 0, 1]), global_steps)
+                sol = env.solver
+                if sol.last_drag is not None:
+                    writer.add_scalar(
+                        "agent0/force_drag_mag",
+                        float(torch.linalg.norm(sol.last_drag[0, 0])),
+                        global_steps,
+                    )
+                    writer.add_scalar(
+                        "agent0/force_pressure_mag",
+                        float(torch.linalg.norm(sol.last_pressure_force[0, 0])),
+                        global_steps,
+                    )
+                    writer.add_scalar(
+                        "agent0/force_thrust_mag",
+                        float(torch.linalg.norm(sol.last_thrust[0, 0])),
+                        global_steps,
+                    )
 
             next_obs = torch.tensor(next_obs_np, device=device)
+            next_obs = torch.nan_to_num(next_obs, nan=0.0, posinf=0.0, neginf=0.0)
             obs_norm.update(next_obs)
             obs = obs_norm.normalize(next_obs)
             global_steps += envs_per_step
@@ -251,6 +280,8 @@ def train_momappo(
                 cfg.train.gae_lambda,
             )
             adv_k = (adv_k - adv_k.mean()) / (adv_k.std() + 1e-8)
+            adv_k = torch.nan_to_num(adv_k, nan=0.0, posinf=0.0, neginf=0.0)
+            ret_k = torch.nan_to_num(ret_k, nan=0.0, posinf=0.0, neginf=0.0)
             advs.append(adv_k)
             rets.append(ret_k)
         adv = torch.stack(advs, dim=-1)
@@ -266,26 +297,38 @@ def train_momappo(
             for start in range(0, n_samples, batch_size):
                 mb = idxs[start : start + batch_size]
                 b_obs = data["obs"][mb]
-                b_act = data["actions"][mb]
+                if not torch.isfinite(b_obs).all():
+                    continue
+                b_act = data["actions"][mb].clamp(-0.999, 0.999)
                 b_old_logp = data["logprobs"][mb]
                 b_adv = data["adv"][mb]
                 b_ret = data["ret"][mb]
 
                 dist, _ = model.actor.dist(b_obs)
                 new_logp = tanh_log_prob(dist, b_act).sum(dim=-1)
-                ratio = torch.exp(new_logp - b_old_logp)
+                log_ratio = (new_logp - b_old_logp).clamp(-10.0, 10.0)
+                ratio = log_ratio.exp()
 
                 loss_pis = []
+                clip = cfg.train.clip_coef
                 for k in range(3):
                     adv_k = b_adv[..., k]
                     surr1 = ratio * adv_k
-                    surr2 = torch.clamp(ratio, 1 - cfg.train.clip_coef, 1 + cfg.train.clip_coef) * adv_k
-                    loss_pis.append(-torch.min(surr1, surr2).mean())
+                    surr2 = ratio.clamp(1.0 - clip, 1.0 + clip) * adv_k
+                    surr = torch.min(surr1, surr2)
+                    # Dual-clip: PPO's min() does not bound the loss when A<0 and ratio→∞.
+                    surr = torch.where(adv_k < 0, torch.max(surr, 3.0 * adv_k), surr)
+                    loss_pis.append(-surr.mean())
+
+                if not all(torch.isfinite(lp) for lp in loss_pis):
+                    continue
 
                 joint = b_obs.reshape(b_obs.shape[0], N * obs_dim)
                 values = model.critic(joint).permute(0, 2, 1)
                 loss_v = 0.5 * ((values - b_ret) ** 2).mean()
                 entropy = dist.entropy().sum(dim=-1).mean()
+                if not torch.isfinite(loss_v) or not torch.isfinite(entropy):
+                    continue
 
                 optimizer.zero_grad(set_to_none=True)
                 if cfg.train.use_pcgrad:
@@ -295,6 +338,12 @@ def train_momappo(
 
                 aux = cfg.train.vf_coef * loss_v - cfg.train.ent_coef * entropy
                 aux.backward()
+                if any(
+                    p.grad is not None and not torch.isfinite(p.grad).all()
+                    for p in model.parameters()
+                ):
+                    optimizer.zero_grad(set_to_none=True)
+                    continue
                 nn.utils.clip_grad_norm_(model.parameters(), cfg.train.max_grad_norm)
                 optimizer.step()
 

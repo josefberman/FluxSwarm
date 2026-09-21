@@ -95,8 +95,18 @@ def apply_force_integrate(
     radii: torch.Tensor,
     domain: Domain,
     dt: float,
+    max_force_mag: float | None = None,
+    v_max: float | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Semi-implicit Euler with wall prediction, per-axis."""
+    """Semi-implicit Euler with wall prediction, per-axis.
+
+    Optional ``max_force_mag`` / ``v_max`` are safety ceilings (never bind under
+    correct physics; prevent runaway if a force bug appears).
+    """
+    if max_force_mag is not None and max_force_mag > 0:
+        f_mag = torch.linalg.norm(force, dim=-1, keepdim=True).clamp_min(1e-12)
+        force = torch.where(f_mag > max_force_mag, force * (max_force_mag / f_mag), force)
+
     accel = force / masses.unsqueeze(-1)
     # X then Y separately (matches legacy ordering)
     for axis in (0, 1):
@@ -116,28 +126,28 @@ def apply_force_integrate(
         pos = pos.clone()
         vel[..., axis] = v_new
         pos[..., axis] = pos_new
+
+    if v_max is not None and v_max > 0:
+        v_mag = torch.linalg.norm(vel, dim=-1, keepdim=True).clamp_min(1e-12)
+        vel = torch.where(v_mag > v_max, vel * (v_max / v_mag), vel)
     return pos, vel
 
 
-def viscous_drag_force(
-    pos: torch.Tensor,
+def stokes_drag_2d(
     vel: torch.Tensor,
     fluid_u: torch.Tensor,
     fluid_v: torch.Tensor,
-    radii: torch.Tensor,
-    rho: float = 1.06,
+    mu: float = 3.0,
 ) -> torch.Tensor:
-    """Drag aligned with relative velocity (fluid - member). Area = 2r (2D)."""
-    # fluid_* : (B, N) ring-mean or center samples
-    v_rel = torch.stack([fluid_u - vel[..., 0], fluid_v - vel[..., 1]], dim=-1)
-    v_mag = torch.linalg.norm(v_rel, dim=-1).clamp_min(1e-12)
-    # Re based on relative speed and diameter
-    mu = 3.0  # blood viscosity; caller can override via rho/mu elsewhere if needed
-    Re = rho * v_mag * (2 * radii) / mu
-    cd = torch.where(Re < 0.1, 24.0 / Re.clamp_min(1e-8), 24.0 / Re * (1.0 + 0.15 * Re.pow(0.687)))
-    area = 2.0 * radii
-    f_mag = 0.5 * rho * v_mag ** 2 * area * cd
-    return f_mag.unsqueeze(-1) * v_rel / v_mag.unsqueeze(-1)
+    """Viscous-only 2D Stokes drag per unit depth (pressure drag from the ring).
+
+    ``F = -4 π μ (v_agent - v_fluid)`` with unit depth = 1 mm.
+    """
+    v_agent_minus_fluid = torch.stack(
+        [vel[..., 0] - fluid_u, vel[..., 1] - fluid_v],
+        dim=-1,
+    )
+    return -4.0 * math.pi * mu * v_agent_minus_fluid
 
 
 def pressure_force(

@@ -3,13 +3,24 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-from typing import Deque, Optional, Sequence
+from typing import Any, Deque, Optional, Sequence
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+
+plt.rcParams.update(
+    {
+        "font.size": 14,
+        "axes.titlesize": 16,
+        "axes.labelsize": 14,
+        "xtick.labelsize": 13,
+        "ytick.labelsize": 13,
+        "legend.fontsize": 13,
+    }
+)
 
 
 def _style_axis(
@@ -99,7 +110,7 @@ def render_swarm_frame(
             ax.add_patch(plt.Circle((x, y), radius, color="#1F4E79", alpha=0.35, zorder=2))
 
     if title:
-        ax.set_title(title, fontsize=max(9, int(9 * scale)))
+        ax.set_title(title, fontsize=max(16, int(16 * scale)))
     fig.tight_layout(pad=0.3)
     fig.canvas.draw()
     w, h = fig.canvas.get_width_height()
@@ -165,27 +176,96 @@ class SwarmTrailRenderer:
         return rgb_to_chw_float(rgb)
 
 
+def _even(n: int) -> int:
+    return n if n % 2 == 0 else n - 1
+
+
+def _ffmpeg_writer(out: Path, width: int, height: int, fps: int):
+    """Start an ffmpeg stdin writer for RGB24 → H.264. None if ffmpeg is missing."""
+    import subprocess
+
+    w_e, h_e = _even(width), _even(height)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "rawvideo",
+        "-vcodec",
+        "rawvideo",
+        "-s",
+        f"{w_e}x{h_e}",
+        "-pix_fmt",
+        "rgb24",
+        "-r",
+        str(max(1, int(fps))),
+        "-i",
+        "-",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(out),
+    ]
+    try:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    except (FileNotFoundError, OSError):
+        return None, w_e, h_e
+    return proc, w_e, h_e
+
+
+def _write_mp4(frames: list[np.ndarray], out: Path, fps: int) -> Optional[Path]:
+    """Encode RGB frames to H.264 MP4 via ffmpeg. Returns None if encoding fails."""
+    if not frames:
+        return None
+    h, w, _ = frames[0].shape
+    proc, w_e, h_e = _ffmpeg_writer(out, w, h, fps)
+    if proc is None or proc.stdin is None:
+        return None
+    try:
+        for fr in frames:
+            rgb = np.ascontiguousarray(fr[:h_e, :w_e, :3], dtype=np.uint8)
+            proc.stdin.write(rgb.tobytes())
+        proc.stdin.close()
+        proc.communicate()
+        if proc.returncode != 0:
+            return None
+        return out if out.exists() else None
+    except OSError:
+        return None
+
+
 def animate_swarm_from_run(
     run_dir: Path,
     out: Optional[Path] = None,
     *,
-    max_frames: int = 400,
-    fps: int = 12,
-    dpi: int = 72,
+    steps: Optional[Any] = None,
+    frame_every: int = 10,
+    fps: int = 30,
+    dpi: int = 150,
+    fig_scale: float = 1.5,
 ) -> Optional[Path]:
-    """Build a GIF of env-0 swarm motion from ``steps.parquet``.
+    """Build an MP4 of env-0 swarm motion from ``steps.parquet``.
 
-    Subsamples rows so the GIF has at most ``max_frames`` frames. Returns
-    ``None`` if there is no usable step log or Pillow is unavailable.
+    One frame every ``frame_every`` env-0 timesteps (logged rows; default 10)
+    at ``fps`` (default 30). Optional ``steps`` is a preloaded / stitched
+    DataFrame (resume chain). Returns ``None`` if there is no usable step log.
     """
     import pandas as pd
     import yaml
 
     run_dir = Path(run_dir)
-    steps_path = run_dir / "steps.parquet"
-    if not steps_path.exists():
+    if steps is None:
+        steps_path = run_dir / "steps.parquet"
+        if not steps_path.exists():
+            return None
+        steps = pd.read_parquet(steps_path)
+    if steps is None or len(steps) == 0:
         return None
-    steps = pd.read_parquet(steps_path)
     xs = sorted(c for c in steps.columns if c.startswith("location_") and c.endswith("_x"))
     ys = sorted(c for c in steps.columns if c.startswith("location_") and c.endswith("_y"))
     if not xs or len(xs) != len(ys):
@@ -206,23 +286,21 @@ def animate_swarm_from_run(
     radius = float(swarm.get("member_radius", 0.25))
 
     n = len(steps)
-    stride = max(1, int(np.ceil(n / max(1, max_frames))))
-    idx = np.arange(0, n, stride)
-    if len(idx) > max_frames:
-        idx = idx[:max_frames]
+    every = max(1, int(frame_every))
+    idx = np.arange(0, n, every)
 
-    out = out or (run_dir / "figures" / "swarm_motion.gif")
+    out = out or (run_dir / "figures" / "swarm_motion.mp4")
+    out = Path(out).with_suffix(".mp4")
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    frames: list[np.ndarray] = []
-    for i in idx:
+    def _frame(i: int) -> np.ndarray:
         row = steps.iloc[int(i)]
         pos = np.stack(
             [np.array([row[c] for c in xs], dtype=np.float64), np.array([row[c] for c in ys], dtype=np.float64)],
             axis=1,
         )
         title = f"step {int(row.get('global_step', i))}  t={float(row.get('episode_time', 0.0)):.2f}s"
-        rgb = render_swarm_frame(
+        return render_swarm_frame(
             pos,
             length_x=length_x,
             length_y=length_y,
@@ -231,37 +309,28 @@ def animate_swarm_from_run(
             radius=radius,
             title=title,
             dpi=dpi,
+            fig_scale=fig_scale,
             display_wh_ratio=4.0,
         )
-        frames.append(rgb)
 
-    if not frames:
+    if idx.size == 0:
         return None
 
-    try:
-        from PIL import Image
-    except ImportError:
-        k = min(8, len(frames))
-        picks = [frames[int(j)] for j in np.linspace(0, len(frames) - 1, k)]
-        h, w, _ = picks[0].shape
-        cols = min(4, k)
-        rows = (k + cols - 1) // cols
-        sheet = np.zeros((h * rows, w * cols, 3), dtype=np.uint8)
-        for j, fr in enumerate(picks):
-            r, c = divmod(j, cols)
-            sheet[r * h : (r + 1) * h, c * w : (c + 1) * w] = fr
-        png = out.with_suffix(".png")
-        plt.imsave(png, sheet)
-        return png
+    first = _frame(int(idx[0]))
+    proc, w_e, h_e = _ffmpeg_writer(out, first.shape[1], first.shape[0], fps)
+    if proc is not None and proc.stdin is not None:
+        try:
+            proc.stdin.write(np.ascontiguousarray(first[:h_e, :w_e, :3], dtype=np.uint8).tobytes())
+            for i in idx[1:]:
+                rgb = _frame(int(i))
+                proc.stdin.write(np.ascontiguousarray(rgb[:h_e, :w_e, :3], dtype=np.uint8).tobytes())
+            proc.stdin.close()
+            proc.communicate()
+            if proc.returncode == 0 and out.exists():
+                return out
+        except OSError:
+            pass
 
-    imgs = [Image.fromarray(f) for f in frames]
-    duration_ms = max(1, int(1000 / max(1, fps)))
-    imgs[0].save(
-        out,
-        save_all=True,
-        append_images=imgs[1:],
-        duration=duration_ms,
-        loop=0,
-        optimize=True,
-    )
-    return out
+    png = out.with_suffix(".png")
+    plt.imsave(png, first)
+    return png

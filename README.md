@@ -39,7 +39,7 @@ python -m fluxswarm.cli train \
   --tag continued
 ```
 
-Live swarm positions appear in TensorBoard under `swarm/positions` (every `--live-swarm-tb-every` steps, default 100). After training (or via `python -m fluxswarm.cli figures --run …`), a subsampled GIF is written to `figures/swarm_motion.gif`.
+Live swarm positions appear in TensorBoard under `swarm/positions` (every `--live-swarm-tb-every` steps, default 100). After training (or via `python -m fluxswarm.cli figures --run …`), a subsampled MP4 is written to `figures/swarm_motion.mp4`.
 
 ## Baselines
 

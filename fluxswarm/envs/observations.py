@@ -12,14 +12,19 @@ from fluxswarm.physics.solver import BatchedFluidSolver
 def obs_dim(cfg: ObsConfig, num_members: int) -> int:
     """Per-agent observation dimension (single frame, before history stack)."""
     if cfg.preset == "legacy":
+        # legacy = 8 means the observation vector is 8 dimensional, which is the position, velocity, and pressure
         return 8
     k = cfg.ring_points
-    base = 2 + k + 2 * k + num_members * 4 + 2
+    nk = max(0, cfg.neighbor_k)
+    # base = k (ring pressure) + 2*k (ring velocities) +
+    #        neighbor_k*4 (neighbor Δpos, Δvel) + 2 (prev action)
+    base = k + 2 * k + nk * 4 + 2
     if cfg.localization == "none":
         loc = 0
     elif cfg.localization == "absolute-y":
         loc = 1
     elif cfg.localization in ("displacement", "imu", "full"):
+        # displacement/imu: dead-reckoned (Δpos, Δvel); full: lab (pos, vel)
         loc = 4
     else:
         loc = 0
@@ -72,16 +77,6 @@ class ObservationBuilder:
         B, N = self.batch, self.n
         pos = solver.swarm.pos
         vel = solver.swarm.vel
-        fu = solver.last_fluid_center_u
-        fv = solver.last_fluid_center_v
-        if fu is None:
-            fu = torch.zeros(B, N, device=self.device, dtype=torch.float64)
-            fv = torch.zeros(B, N, device=self.device, dtype=torch.float64)
-
-        if cfg.velocity_frame == "fluid":
-            own_vel = torch.stack([vel[..., 0] - fu, vel[..., 1] - fv], dim=-1)
-        else:
-            own_vel = vel
 
         pr = solver.last_pressure_ring
         vu = solver.last_vel_ring_u
@@ -95,17 +90,15 @@ class ObservationBuilder:
         ring_v = vv - vel[..., 1:2]
         ring_rel = torch.stack([ring_u, ring_v], dim=-1).reshape(B, N, 2 * k)
 
-        neigh = self._neighbors(pos, vel, N, cfg.neighbor_radius)
+        neigh = self._neighbors(pos, vel, cfg.neighbor_k, cfg.neighbor_radius)
         prev_a = solver.swarm.prev_action
-        parts = [own_vel, pr, ring_rel, neigh, prev_a]
+        parts = [pr, ring_rel, neigh, prev_a]
 
         loc = cfg.localization
         if loc == "absolute-y":
             parts.append(pos[..., 1:2])
-        elif loc == "displacement":
-            parts.append(pos - solver.swarm.pos0)
-            parts.append(vel)
-        elif loc == "imu":
+        elif loc in ("displacement", "imu"):
+            # displacement = IMU integrator without bias/noise; imu adds both
             parts.append(solver.swarm.imu_pos)
             parts.append(solver.swarm.imu_vel)
         elif loc == "full":

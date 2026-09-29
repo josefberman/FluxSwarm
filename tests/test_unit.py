@@ -96,9 +96,13 @@ def test_obs_dim_no_position_in_rich_none():
     cfg.preset = "rich"
     cfg.localization = "none"
     d = obs_dim(cfg, 16)
-    # Should not include absolute x,y; neighbor slots = swarm size
-    assert d == 2 + cfg.ring_points + 2 * cfg.ring_points + 16 * 4 + 2
+    # rings + neighbor_k slots + prev action; no self velocity unless localization adds it
+    assert d == cfg.ring_points + 2 * cfg.ring_points + cfg.neighbor_k * 4 + 2
     assert obs_dim_stacked(cfg, 16) == d * cfg.history
+    cfg.localization = "displacement"
+    assert obs_dim(cfg, 16) == d + 4
+    cfg.localization = "full"
+    assert obs_dim(cfg, 16) == d + 4
 
 
 def test_tanh_logprob_consistency():
@@ -135,7 +139,8 @@ def test_energy_and_smooth_bounds():
     sm = _smoothness(_S())
     assert float(e[0, 0]) == 0.0
     assert float(e[0, 1]) == 1.0
-    assert 0.0 <= float(sm[0, 0]) <= 1.0
+    assert abs(float(sm[0, 0]) - 1.0) < 1e-6
+    assert float(sm[0, 1]) == 0.0
 
 
 def test_domain_clamp():

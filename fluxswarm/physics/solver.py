@@ -163,8 +163,11 @@ class BatchedFluidSolver:
     def _update_imu(self, force: torch.Tensor) -> None:
         dt = self.sim.dt
         true_accel = force / self.swarm.masses.unsqueeze(-1)
-        noise = torch.randn_like(true_accel) * self.cfg.obs.imu_noise
-        measured = true_accel + self.swarm.imu_bias + noise
+        if self.cfg.obs.localization == "imu":
+            noise = torch.randn_like(true_accel) * self.cfg.obs.imu_noise
+            measured = true_accel + self.swarm.imu_bias + noise
+        else:
+            measured = true_accel
         self.swarm.imu_vel = self.swarm.imu_vel + measured * dt
         self.swarm.imu_pos = self.swarm.imu_pos + self.swarm.imu_vel * dt
 

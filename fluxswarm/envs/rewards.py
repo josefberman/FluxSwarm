@@ -45,6 +45,8 @@ def _progress(solver: BatchedFluidSolver, task: TaskConfig, prev_pos: torch.Tens
     if mode == "potential":
         dx = prev_pos[..., 0] - pos[..., 0]  # positive when moving upstream
         prog = 100.0 * dx / L
+        # Clamp between -1 and 1
+        prog = torch.clamp(prog, -1.0, 1.0)
         # Terminal bonuses applied by env on done; keep step shaping clean
         return prog
 
@@ -60,19 +62,23 @@ def _progress(solver: BatchedFluidSolver, task: TaskConfig, prev_pos: torch.Tens
     xs = pos[..., 0]
     mean_x = xs.mean(dim=-1, keepdim=True)
     success = mean_x <= task.success_x
-    prog = torch.where(success.expand_as(prog), torch.full_like(prog, 10.0), prog)
+    prog = torch.where(success.expand_as(prog), torch.full_like(prog, 1.0), prog)
 
     x_t = xs
     x_prev = prev_pos[..., 0]
     moving_left = x_t < x_prev
     delta = (x_prev - x_t) / L
     tanh_term = torch.tanh(3.0 * delta) / math.tanh(3.0) * 100.0 - 0.1
-    linear_term = delta * 100.0 - 0.1
+    # tanh_term = torch.tanh(3.0 * delta) / math.tanh(3.0) * 10.0 - 0.01
+    # linear_term = delta * 100.0 - 0.1
+    linear_term = 0.0 - 0.1 # no progress penalty
     step_r = torch.where(moving_left, tanh_term, linear_term)
     failed = x_t >= task.failure_x
-    step_r = torch.where(failed, torch.full_like(step_r, -10.0), step_r)
+    step_r = torch.where(failed, torch.full_like(step_r, -1.0), step_r)
     # Don't overwrite success bonus unless failure
     prog = torch.where(success.expand_as(prog) & ~failed, prog, step_r)
+    # Clamp progress between -1 and 1
+    prog = torch.clamp(prog, -1.0, 1.0)
     return prog
 
 
@@ -83,13 +89,16 @@ def _energy(solver: BatchedFluidSolver) -> torch.Tensor:
     return 1.0 - mag
 
 
+_SMOOTH_P = 2.0
+
+
 def _smoothness(solver: BatchedFluidSolver) -> torch.Tensor:
+    """S_p(θ) = 2*((1 + cos θ)/2)^p − 1, p = 2."""
     a = solver.swarm.action
     p = solver.swarm.prev_action
-    na = torch.linalg.norm(a, dim=-1).clamp_min(1e-8)
-    np_ = torch.linalg.norm(p, dim=-1).clamp_min(1e-8)
-    cos = (a * p).sum(dim=-1) / (na * np_)
-    cos = cos.clamp(-1.0, 1.0)
-    # If prev action is zero (first step), return 0.5 neutral
-    first = np_ < 1e-7
-    return torch.where(first, torch.full_like(cos, 0.5), (cos + 1.0) / 2.0)
+    na = torch.linalg.norm(a, dim=-1)
+    np_ = torch.linalg.norm(p, dim=-1)
+    undefined = (na < 1e-8) | (np_ < 1e-8)
+    cos = ((a * p).sum(dim=-1) / (na.clamp_min(1e-8) * np_.clamp_min(1e-8))).clamp(-1.0, 1.0)
+    s = 2.0 * ((1.0 + cos) / 2.0).pow(_SMOOTH_P) - 1.0
+    return torch.where(undefined, torch.zeros_like(s), s)

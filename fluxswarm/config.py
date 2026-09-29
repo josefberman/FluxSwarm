@@ -74,19 +74,20 @@ class TaskConfig:
     success_x: float = 20.0
     failure_x: float = 80.0
     progress_reward: Literal["potential", "fluid-relative", "legacy"] = "potential"
-    w_progress: float = 1.0
+    w_progress: float = 8.0
     w_energy: float = 1.0
-    w_smooth: float = 1.0
+    w_smooth: float = 4.0
 
 
 @dataclass
 class ObsConfig:
     preset: Literal["rich", "legacy"] = "rich"
     localization: Literal["none", "imu", "displacement", "absolute-y", "full"] = "none"
-    ring_points: int = 8
+    ring_points: int = 4
     ring_radius_factor: float = 3.0
     history: int = 4
-    neighbor_radius: float = 2.0
+    neighbor_k: int = 5
+    neighbor_radius: float = 10.0
     velocity_frame: Literal["fluid", "lab"] = "fluid"
     imu_bias: float = 1.0
     imu_noise: float = 0.1
@@ -197,6 +198,7 @@ def _apply_cli_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "obs_localization": ("obs", "localization"),
         "obs_ring_points": ("obs", "ring_points"),
         "obs_history": ("obs", "history"),
+        "neighbor_k": ("obs", "neighbor_k"),
         "neighbor_radius": ("obs", "neighbor_radius"),
         "velocity_frame": ("obs", "velocity_frame"),
         "imu_bias": ("obs", "imu_bias"),
@@ -302,24 +304,37 @@ def build_argparser(description: str | None = None) -> argparse.ArgumentParser:
         "--obs-localization",
         choices=["none", "imu", "displacement", "absolute-y", "full"],
         default=None,
-        help=f"localization ablation rung ({d.obs.localization})",
+        help=(
+            f"localization rung ({d.obs.localization}): none=no self pose/vel; "
+            f"displacement=unbiased IMU deltas; imu=biased IMU; "
+            f"absolute-y=lab y; full=lab pos+vel"
+        ),
     )
     g.add_argument("--obs-ring-points", type=int, default=None, help=f"pressure/velocity ring samples ({d.obs.ring_points})")
     g.add_argument("--obs-history", type=int, default=None, help=f"stacked observation frames ({d.obs.history})")
+    g.add_argument(
+        "--neighbor-k",
+        type=int,
+        default=None,
+        help=f"k-nearest neighbor slots ({d.obs.neighbor_k})",
+    )
     g.add_argument(
         "--neighbor-radius",
         type=float,
         default=None,
         help=(
-            f"neighbor sensing radius, mm; k is always the swarm size so this is "
-            f"the only neighbor cutoff ({d.obs.neighbor_radius})"
+            f"neighbor sensing radius, mm; zeros any k-NN beyond this "
+            f"({d.obs.neighbor_radius})"
         ),
     )
     g.add_argument(
         "--velocity-frame",
         choices=["fluid", "lab"],
         default=None,
-        help=f"own-velocity frame ({d.obs.velocity_frame})",
+        help=(
+            f"unused for rich obs; self-velocity comes from --obs-localization "
+            f"({d.obs.velocity_frame})"
+        ),
     )
     g.add_argument("--imu-bias", type=float, default=None, help=f"IMU bias std, mm/s² ({d.obs.imu_bias})")
     g.add_argument("--imu-noise", type=float, default=None, help=f"IMU white-noise std per step, mm/s² ({d.obs.imu_noise})")

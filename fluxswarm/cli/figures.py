@@ -12,6 +12,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--run", type=str, required=True, help="Path to a run directory under runs_new/")
     parser.add_argument("--out", type=str, default=None, help="Override output directory")
     parser.add_argument("--compare-pcgrad", type=str, default=None, help="Second run (without PCGrad)")
+    parser.add_argument(
+        "--video",
+        action="store_true",
+        help="also write swarm_motion.mp4 (off by default)",
+    )
     args = parser.parse_args(argv)
 
     run_dir = Path(args.run)
@@ -19,7 +24,7 @@ def main(argv: list[str] | None = None) -> None:
         out = plot_pcgrad_comparison(run_dir, Path(args.compare_pcgrad), Path(args.out) if args.out else None)
         print(f"Wrote {out}")
     else:
-        paths = generate_all_for_run(run_dir)
+        paths = generate_all_for_run(run_dir, video=args.video)
         if args.out:
             # copy/rewrite into override — regenerate with out as run figures dir surrogate
             out_root = Path(args.out)

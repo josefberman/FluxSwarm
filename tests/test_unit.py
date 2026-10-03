@@ -140,7 +140,7 @@ def test_energy_and_smooth_bounds():
     assert float(e[0, 0]) == 0.0
     assert float(e[0, 1]) == 1.0
     assert abs(float(sm[0, 0]) - 1.0) < 1e-6
-    assert float(sm[0, 1]) == 0.0
+    assert abs(float(sm[0, 1]) - 1.0) < 1e-6
 
 
 def test_domain_clamp():

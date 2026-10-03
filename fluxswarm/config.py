@@ -74,9 +74,9 @@ class TaskConfig:
     success_x: float = 20.0
     failure_x: float = 80.0
     progress_reward: Literal["potential", "fluid-relative", "legacy"] = "potential"
-    w_progress: float = 8.0
+    w_progress: float = 1.0
     w_energy: float = 1.0
-    w_smooth: float = 4.0
+    w_smooth: float = 1.0
 
 
 @dataclass

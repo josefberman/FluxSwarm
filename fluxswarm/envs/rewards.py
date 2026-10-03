@@ -89,16 +89,11 @@ def _energy(solver: BatchedFluidSolver) -> torch.Tensor:
     return 1.0 - mag
 
 
-_SMOOTH_P = 2.0
+_SMOOTH_SIGMA = 0.25
 
 
 def _smoothness(solver: BatchedFluidSolver) -> torch.Tensor:
-    """S_p(θ) = 2*((1 + cos θ)/2)^p − 1, p = 2."""
-    a = solver.swarm.action
-    p = solver.swarm.prev_action
-    na = torch.linalg.norm(a, dim=-1)
-    np_ = torch.linalg.norm(p, dim=-1)
-    undefined = (na < 1e-8) | (np_ < 1e-8)
-    cos = ((a * p).sum(dim=-1) / (na.clamp_min(1e-8) * np_.clamp_min(1e-8))).clamp(-1.0, 1.0)
-    s = 2.0 * ((1.0 + cos) / 2.0).pow(_SMOOTH_P) - 1.0
-    return torch.where(undefined, torch.zeros_like(s), s)
+    """r = 2 exp(-||a_t − a_{t-1}||² / (2σ²)) − 1, σ = 0.25."""
+    delta = solver.swarm.action - solver.swarm.prev_action
+    d2 = (delta * delta).sum(dim=-1)
+    return (2.0 * torch.exp(-d2 / (2.0 * _SMOOTH_SIGMA**2)) - 1.0).clamp(-1.0, 1.0)

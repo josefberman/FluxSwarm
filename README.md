@@ -39,7 +39,7 @@ python -m fluxswarm.cli train \
   --tag continued
 ```
 
-Live swarm positions appear in TensorBoard under `swarm/positions` (every `--live-swarm-tb-every` steps, default 100). After training (or via `python -m fluxswarm.cli figures --run …`), a subsampled MP4 is written to `figures/swarm_motion.mp4`.
+Live swarm positions appear in TensorBoard under `swarm/positions` (every `--live-swarm-tb-every` steps, default 100). After training a subsampled MP4 is written to `figures/swarm_motion.mp4`. The figures CLI writes it only with `--video`.
 
 ## Baselines
 
@@ -53,6 +53,7 @@ python -m fluxswarm.cli baseline --policy ppo --total-timesteps-per-env 25000
 
 ```bash
 python -m fluxswarm.cli figures --run runs_new/<run_id>
+python -m fluxswarm.cli figures --run runs_new/<run_id> --video
 python -m fluxswarm.cli figures --run runs_new/<with_pcgrad> --compare-pcgrad runs_new/<without>
 ```
 

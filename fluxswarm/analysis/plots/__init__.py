@@ -214,31 +214,44 @@ def plot_reward_per_episode(run_dir: Path, out: Optional[Path] = None) -> Path:
         for ax, m, c in zip(axes, metrics, colors):
             if m not in steps.columns:
                 continue
-            g = steps.groupby("episode")[m].mean()
+            how = "sum" if m == "progress" else "mean"
+            keys = ["episode", "env"] if "env" in steps.columns else ["episode"]
+            ep = steps.groupby(keys, sort=True)[m].agg(how)
             if "env" in steps.columns and steps["env"].nunique() > 1:
-                per = steps.groupby(["episode", "env"])[m].mean().groupby("episode")
-                roll = per.mean()
-                std = per.std().fillna(0)
+                per = ep.groupby("episode")
+                roll, std = per.mean(), per.std().fillna(0)
             else:
-                roll = g.rolling(5, center=True, min_periods=1).mean()
-                std = g.rolling(5, min_periods=1).std().fillna(0)
+                if isinstance(ep.index, pd.MultiIndex):
+                    ep = ep.droplevel("env")
+                roll = ep.rolling(5, center=True, min_periods=1).mean()
+                std = ep.rolling(5, min_periods=1).std().fillna(0)
             ax.plot(roll.index, roll.values, color=c, label=m)
             ax.fill_between(roll.index, roll - std, roll + std, color=c, alpha=0.2)
             ax.set_ylabel(m)
             ax.grid(True, alpha=0.3)
     elif eps is not None:
         for ax, m, c in zip(axes, metrics, colors):
-            col = f"cum_{m}" if f"cum_{m}" in eps.columns else m
-            if col not in eps.columns:
+            cum = f"cum_{m}"
+            if m == "progress":
+                col = cum if cum in eps.columns else m
+                series = eps[col] if col in eps.columns else None
+            elif cum in eps.columns and "steps" in eps.columns:
+                series = eps[cum] / eps["steps"].clip(lower=1)
+                col = m
+            else:
+                col = cum if cum in eps.columns else m
+                series = eps[col] if col in eps.columns else None
+            if series is None:
                 continue
             if "env" in eps.columns and "episode" in eps.columns and eps["env"].nunique() > 1:
-                per = eps.groupby("episode")[col]
+                tmp = eps.assign(_v=series)
+                per = tmp.groupby("episode")["_v"]
                 roll, std = per.mean(), per.std().fillna(0)
                 x = roll.index
             else:
-                x = eps.index
-                roll = eps[col].rolling(5, center=True, min_periods=1).mean()
-                std = eps[col].rolling(5, min_periods=1).std().fillna(0)
+                x = eps["episode"] if "episode" in eps.columns else eps.index
+                roll = series.rolling(5, center=True, min_periods=1).mean()
+                std = series.rolling(5, min_periods=1).std().fillna(0)
             ax.plot(x, roll, color=c)
             ax.fill_between(x, roll - std, roll + std, color=c, alpha=0.2)
             ax.set_ylabel(col)
@@ -523,7 +536,7 @@ def plot_pcgrad_comparison(with_dir: Path, without_dir: Path, out_dir: Optional[
     return out
 
 
-def generate_all_for_run(run_dir: Path) -> list[Path]:
+def generate_all_for_run(run_dir: Path, *, video: bool = False) -> list[Path]:
     run_dir = Path(run_dir)
     ids = _chain_ids(run_dir)
     if len(ids) > 1:
@@ -536,12 +549,13 @@ def generate_all_for_run(run_dir: Path) -> list[Path]:
         plot_velocity_temporal_profile(run_dir),
         plot_domain(run_dir),
     ]
-    try:
-        from fluxswarm.analysis.swarm_viz import animate_swarm_from_run
+    if video:
+        try:
+            from fluxswarm.analysis.swarm_viz import animate_swarm_from_run
 
-        anim = animate_swarm_from_run(run_dir, steps=_load_steps(run_dir))
-        if anim is not None:
-            paths.append(anim)
-    except Exception:
-        pass
+            anim = animate_swarm_from_run(run_dir, steps=_load_steps(run_dir))
+            if anim is not None:
+                paths.append(anim)
+        except Exception:
+            pass
     return paths
